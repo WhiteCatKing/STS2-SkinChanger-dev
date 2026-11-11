@@ -1,0 +1,60 @@
+--- OLD/STS2SkinChanger.Catalog\CardArtPackScanPolicy.cs
++++ NEW/STS2SkinChanger.Catalog\CardArtPackScanPolicy.cs
+@@ -22,45 +22,45 @@
+ 	private static readonly byte[] PngSignature = new byte[8] { 137, 80, 78, 71, 13, 10, 26, 10 };
+ 
+ 	[GeneratedRegex("\"source_path\"\\s*:\\s*\"(?<v>[^\"]+)\"")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	public static Regex SourcePathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__SourcePathRegex_0.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__SourcePathRegex_0.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("\"display_mode\"\\s*:\\s*\"(?<v>[^\"]*)\"")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex DisplayModeRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__DisplayModeRegex_1.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__DisplayModeRegex_1.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("\"type\"\\s*:\\s*\"(?<v>[^\"]*)\"")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex TypeRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__TypeRegex_2.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__TypeRegex_2.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("\"png_base64\"\\s*:\\s*\"(?<v>[A-Za-z0-9+/=]*)\"")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	public static Regex RenderedRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RenderedRegex_3.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RenderedRegex_3.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("\"edit_source_png_base64\"\\s*:\\s*\"(?<v>[A-Za-z0-9+/=]*)\"")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex EditSourceRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__EditSourceRegex_4.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__EditSourceRegex_4.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex SafeIdRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__SafeIdRegex_5.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__SafeIdRegex_5.Instance;
+ 	}
+ 
+ 	public static bool IsBundleHeader(ReadOnlySpan<char> head)

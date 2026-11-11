@@ -1,0 +1,86 @@
+--- OLD/STS2SkinChanger.Core\OnlineSkinCache.cs
++++ NEW/STS2SkinChanger.Core\OnlineSkinCache.cs
+@@ -1344,65 +1344,65 @@
+ 	}
+ 
+ 	[GeneratedRegex("^[0-9A-Fa-f]{64}$")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex FingerprintRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__FingerprintRegex_47.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__FingerprintRegex_47.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("/workshop/content/2868840/([0-9]+)(?:/|$)", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex WorkshopPathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__WorkshopPathRegex_48.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__WorkshopPathRegex_48.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("res://[^\\x00\\\"'\\r\\n\\t\\]\\[(){}<>]+", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex ResourcePathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__ResourcePathRegex_49.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__ResourcePathRegex_49.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?im)^([^\\r\\n]+\\.(?:png|webp|jpe?g))\\s*$")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AtlasPageRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AtlasPageRegex_50.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AtlasPageRegex_50.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?i)(?:ext_resource[^\\r\\n]*(?:Script|Shader)|script\\s*=|shader\\s*=|ShaderMaterial|GDExtension|type\\s*=\\s*[\\\"'](?:Shader|GDScript|CSharpScript|GDExtension|PackedScene)[\\\"']|\\.(?:dll|cs|gd|gdc|gdshader)(?:\\\"|'|\\s|$))")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex ForbiddenTextRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__ForbiddenTextRegex_51.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__ForbiddenTextRegex_51.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?i)(?:GDScript|CSharpScript|GDExtension|ExtensionLibrary|local://Shader_)")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex ForbiddenBinaryResourceRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__ForbiddenBinaryResourceRegex_52.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__ForbiddenBinaryResourceRegex_52.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?i)res://[^\\x00]*?\\.(?:dll|cs|gd|gdc|gdshader|gdextension)(?=\\x00|$)")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex BinaryExecutableResourcePathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__BinaryExecutableResourcePathRegex_53.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__BinaryExecutableResourcePathRegex_53.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?im)^\\[ext_resource[^\\]]*type=\\\"(Script|Shader)\\\"[^\\]]*path=\\\"(res://[^\\\"]+)\\\"[^\\]]*\\]$")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex SceneExecutableResourceRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__SceneExecutableResourceRegex_54.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__SceneExecutableResourceRegex_54.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?i)(?:GDExtension|ExtensionLibrary|type\\s*=\\s*\\\"(?:GDScript|CSharpScript|Shader)\\\"|shader/code\\s*=|(?m)^code\\s*=)")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex UnsafeTextSceneTokenRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__UnsafeTextSceneTokenRegex_55.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__UnsafeTextSceneTokenRegex_55.Instance;
+ 	}
+ }

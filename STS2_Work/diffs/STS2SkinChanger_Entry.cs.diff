@@ -1,0 +1,89 @@
+--- OLD/STS2SkinChanger\Entry.cs
++++ NEW/STS2SkinChanger\Entry.cs
+@@ -1,4 +1,6 @@
+ using System;
++using System.Collections.Generic;
++using System.Linq;
+ using System.Reflection;
+ using HarmonyLib;
+ using MegaCrit.Sts2.Core.Modding;
+@@ -13,7 +15,7 @@
+ 
+ 	public const string LegacyModId = "STS2SkinChanger";
+ 
+-	public const string InternalTestVersion = "1.0.19.0";
++	public const string InternalTestVersion = "1.0.19.11";
+ 
+ 	public static bool IsSelfModId(string? modId)
+ 	{
+@@ -31,31 +33,57 @@
+ 	public static void Initialize()
+ 	{
+ 		//IL_00c8: Unknown result type (might be due to invalid IL or missing references)
+-		//IL_00ce: Expected O, but got Unknown
++		//IL_00d8: Expected O, but got Unknown
+ 		Assembly assembly = typeof(Entry).Assembly;
+-		ModLog.Info($"内测版本 {"1.0.19.0"}；程序集={assembly.GetName().Name} {assembly.GetName().Version}；路径={assembly.Location}");
++		ModLog.Info($"内测版本 {"1.0.19.11"}；程序集={assembly.GetName().Name} {assembly.GetName().Version}；路径={assembly.Location}");
+ 		ModPrivateDependencyResolver.Install(ModLog.Info);
+ 		SkinChangerPaths.Initialize();
+ 		FrameworkCompatibilityLayer.Initialize();
+ 		ManagedSkinModLoader.Initialize();
+-		Harmony val = new Harmony("Gurio.SkinChanger");
+-		try
++		List<string> list = InstallPatchClasses(new Harmony("Gurio.SkinChanger"), GetLoadableTypes(assembly));
++		ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
++		ModLog.Info((list.Count == 0) ? "代码补丁已加载。等待游戏资源初始化。" : $"代码补丁已加载（{list.Count} 个类失败被跳过：{string.Join("、", list)}）。");
++	}
++
++	internal static List<string> InstallPatchClasses(Harmony harmony, IEnumerable<Type> types)
++	{
++		List<string> list = new List<string>();
++		foreach (Type type in types)
+ 		{
+-			val.PatchAll();
+-			ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
+-			ModLog.Info("代码补丁已加载。等待游戏资源初始化。");
+-		}
+-		catch (Exception ex2)
+-		{
++			if (!type.IsClass || !type.IsDefined(typeof(HarmonyPatch), inherit: false))
++			{
++				continue;
++			}
+ 			try
+ 			{
+-				val.UnpatchAll("Gurio.SkinChanger");
++				harmony.CreateClassProcessor(type).Patch();
+ 			}
+ 			catch (Exception ex)
+ 			{
+-				ModLog.Error("回滚已安装补丁失败：" + ex.GetBaseException().Message);
++				try
++				{
++					harmony.CreateClassProcessor(type).Unpatch();
++				}
++				catch
++				{
++				}
++				list.Add(type.Name);
++				ModLog.Error("补丁类 " + type.Name + " 安装失败，已跳过该类：" + ex.GetBaseException().Message);
+ 			}
+-			ModLog.Error("安装代码补丁失败，本 Mod 已停用本次会话的代码接管：" + ex2);
++		}
++		return list;
++	}
++
++	private static Type[] GetLoadableTypes(Assembly assembly)
++	{
++		try
++		{
++			return assembly.GetTypes();
++		}
++		catch (ReflectionTypeLoadException ex)
++		{
++			ModLog.Warn($"程序集类型枚举部分失败，仅对 {ex.Types.Count((Type type) => type != null)} 个可加载类型继续：{ex.LoaderExceptions.Length} 个加载异常。");
++			return ex.Types.OfType<Type>().ToArray();
+ 		}
+ 	}
+ }

@@ -1,0 +1,14 @@
+{
+  "id": "CustomSkeletonLoader",
+  "pck_name": "CustomSkeletonLoader",
+  "name": "CustomSkeletonLoader",
+  "author": "Khiral",
+  "description": "Replaces Spine skeleton files (.atlas, .png, .skel) from the ReplaceResources folder",
+  "version": "0.0.1",
+  "has_pck": true,
+  "has_dll": true,
+  "affects_gameplay": false,
+  "dependencies": [
+    "ModConfig"
+  ]
+}

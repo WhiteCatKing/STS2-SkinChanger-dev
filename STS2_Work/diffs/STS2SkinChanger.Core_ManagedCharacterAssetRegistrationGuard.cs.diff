@@ -1,0 +1,20 @@
+--- OLD/STS2SkinChanger.Core\ManagedCharacterAssetRegistrationGuard.cs
++++ NEW/STS2SkinChanger.Core\ManagedCharacterAssetRegistrationGuard.cs
+@@ -72,7 +72,7 @@
+ 			return;
+ 		}
+ 		foreach (Type item in (from assembly in AppDomain.CurrentDomain.GetAssemblies()
+-			select assembly.GetType("STS2RitsuLib.Content.ModContentRegistry", throwOnError: false) into type
++			select FrameworkCardVisualGuard.TryGetType(assembly, "STS2RitsuLib.Content.ModContentRegistry") into type
+ 			where type != null
+ 			select type).Cast<Type>().Distinct())
+ 		{
+@@ -136,7 +136,7 @@
+ 			return;
+ 		}
+ 		foreach (Type item in (from assembly in AppDomain.CurrentDomain.GetAssemblies()
+-			select assembly.GetType("STS2RitsuLib.RitsuLibFramework", throwOnError: false) into type
++			select FrameworkCardVisualGuard.TryGetType(assembly, "STS2RitsuLib.RitsuLibFramework") into type
+ 			where type != null
+ 			select type).Cast<Type>().Distinct())
+ 		{

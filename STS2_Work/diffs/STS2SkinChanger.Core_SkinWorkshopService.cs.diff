@@ -1,0 +1,11 @@
+--- OLD/STS2SkinChanger.Core\SkinWorkshopService.cs
++++ NEW/STS2SkinChanger.Core\SkinWorkshopService.cs
+@@ -312,7 +312,7 @@
+ 				{
+ 					try
+ 					{
+-						list2.AddRange(WorkshopSubmissionCodec.Encode(workshopScanResult.Item, "1.0.19.0", gameVersion));
++						list2.AddRange(WorkshopSubmissionCodec.Encode(workshopScanResult.Item, "1.0.19.11", gameVersion));
+ 						list.Add(workshopScanResult.Item);
+ 					}
+ 					catch (Exception ex) when (!(ex is OperationCanceledException))

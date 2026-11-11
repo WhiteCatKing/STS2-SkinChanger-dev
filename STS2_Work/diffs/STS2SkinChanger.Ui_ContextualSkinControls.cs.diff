@@ -1,0 +1,64 @@
+--- OLD/STS2SkinChanger.Ui\ContextualSkinControls.cs
++++ NEW/STS2SkinChanger.Ui\ContextualSkinControls.cs
+@@ -2104,6 +2104,7 @@
+ 
+ 	private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
+ 	{
++		ModLog.Info("开始重建选角预览：" + groupId + "。");
+ 		CharacterModelPreviewControls.Hide(screen);
+ 		ManagedSkinModLoader.RestoreCharacterPresentation(screen);
+ 		RestoreCharacterBackgroundHostLayout(screen);
+@@ -2619,12 +2620,38 @@
+ 	internal static SkinGroup? FindGroup(string modelId, string? modelTypeName = null)
+ 	{
+ 		HashSet<string> tokens = BuildModelIdentityTokens(modelId, modelTypeName);
+-		return SkinService.Catalog?.Groups.FirstOrDefault((SkinGroup group) => tokens.Contains(NormalizeToken(group.Id)));
++		SkinGroup skinGroup = SkinService.Catalog?.Groups.FirstOrDefault((SkinGroup group) => tokens.Contains(NormalizeToken(group.Id)));
++		if (skinGroup != null)
++		{
++			return skinGroup;
++		}
++		return SkinService.Catalog?.Groups.FirstOrDefault((SkinGroup group) => GroupMatchesSharedAnimationLayout(group.Id, modelId, modelTypeName));
+ 	}
+ 
+ 	internal static bool MatchesGroupIdentity(string groupId, string modelId, string? modelTypeName = null)
+ 	{
+-		return BuildModelIdentityTokens(modelId, modelTypeName).Contains(NormalizeToken(groupId));
++		if (!BuildModelIdentityTokens(modelId, modelTypeName).Contains(NormalizeToken(groupId)))
++		{
++			return GroupMatchesSharedAnimationLayout(groupId, modelId, modelTypeName);
++		}
++		return true;
++	}
++
++	private static bool GroupMatchesSharedAnimationLayout(string groupId, string modelId, string? modelTypeName)
++	{
++		if (SkinCatalog.SharedAnimationModelIds.TryGetValue(groupId, out string[] value))
++		{
++			if (!value.Contains<string>(modelId, StringComparer.OrdinalIgnoreCase))
++			{
++				if (!string.IsNullOrWhiteSpace(modelTypeName))
++				{
++					return value.Any((string id) => NormalizeToken(id).Equals(NormalizeToken(modelTypeName), StringComparison.OrdinalIgnoreCase));
++				}
++				return false;
++			}
++			return true;
++		}
++		return false;
+ 	}
+ 
+ 	private static HashSet<string> BuildModelIdentityTokens(string modelId, string? modelTypeName)
+@@ -2640,10 +2667,10 @@
+ 	}
+ 
+ 	[GeneratedRegex("[^a-zA-Z0-9]")]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex NonAlphanumericRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__NonAlphanumericRegex_56.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__NonAlphanumericRegex_56.Instance;
+ 	}
+ 
+ 	internal static void ReplaceCreatedVisuals(string modelId, string visualsPath, ref NCreatureVisuals result)

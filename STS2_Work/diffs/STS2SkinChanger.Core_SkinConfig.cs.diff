@@ -1,0 +1,37 @@
+--- OLD/STS2SkinChanger.Core\SkinConfig.cs
++++ NEW/STS2SkinChanger.Core\SkinConfig.cs
+@@ -78,9 +78,13 @@
+ 
+ 	public bool? LastKnownBeforeAllSkinMods { get; set; }
+ 
++	public List<string> RespectedLoadOrderProviders { get; set; } = new List<string>();
++
+ 	public bool MultiplayerSkinSyncEnabled { get; set; } = true;
+ 
+ 	public bool LoadOtherPlayersCustomSkins { get; set; } = true;
++
++	public EventSkinPrioritySettings AncientSkinPriorities { get; set; } = new EventSkinPrioritySettings();
+ 
+ 	public bool ShowInRunAppearanceEntry { get; set; } = true;
+ 
+@@ -133,6 +137,7 @@
+ 		obj.MonsterGroupsFollowingCategory = MonsterGroupsFollowingCategory.ToList();
+ 		obj.MonsterGroupsWithManualSelection = MonsterGroupsWithManualSelection.ToList();
+ 		obj.EventSkinPriorities = EventSkinPriorities.Clone();
++		obj.AncientSkinPriorities = AncientSkinPriorities.Clone();
+ 		return obj;
+ 	}
+ 
+@@ -200,6 +205,12 @@
+ 			EventSkinPrioritySettings eventSkinPrioritySettings2 = (skinConfig.EventSkinPriorities = new EventSkinPrioritySettings());
+ 		}
+ 		config.EventSkinPriorities.Normalize();
++		skinConfig = config;
++		if (skinConfig.AncientSkinPriorities == null)
++		{
++			EventSkinPrioritySettings eventSkinPrioritySettings2 = (skinConfig.AncientSkinPriorities = new EventSkinPrioritySettings());
++		}
++		config.AncientSkinPriorities.Normalize((string _) => true);
+ 		config.RandomCharacterSkinGroups = (from id in config.RandomCharacterSkinGroups ?? new List<string>()
+ 			where !string.IsNullOrWhiteSpace(id)
+ 			select id.Trim()).Distinct<string>(StringComparer.OrdinalIgnoreCase).ToList();

@@ -1,0 +1,102 @@
+using System.CodeDom.Compiler;
+
+namespace System.Text.RegularExpressions.Generated;
+
+[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
+internal sealed class _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__MerchantHandPartPathRegex_12 : Regex
+{
+	private sealed class RunnerFactory : RegexRunnerFactory
+	{
+		private sealed class Runner : RegexRunner
+		{
+			protected override void Scan(ReadOnlySpan<char> inputSpan)
+			{
+				if (TryFindNextPossibleStartingPosition(inputSpan) && !TryMatchAtCurrentPosition(inputSpan))
+				{
+					runtextpos = inputSpan.Length;
+				}
+			}
+
+			private bool TryFindNextPossibleStartingPosition(ReadOnlySpan<char> inputSpan)
+			{
+				int num = runtextpos;
+				if (num <= inputSpan.Length - 48 && num == 0)
+				{
+					return true;
+				}
+				runtextpos = inputSpan.Length;
+				return false;
+			}
+
+			private bool TryMatchAtCurrentPosition(ReadOnlySpan<char> inputSpan)
+			{
+				int num = runtextpos;
+				int start = num;
+				int num2 = 0;
+				int pos = 0;
+				ReadOnlySpan<char> span = inputSpan.Slice(num);
+				if (num != 0)
+				{
+					return false;
+				}
+				char c;
+				if ((uint)span.Length < 29u || !span.StartsWith("res://animations/bac", StringComparison.OrdinalIgnoreCase) || (((c = span[20]) | 0x20) != 107 && c != 'K') || !span.Slice(21).StartsWith("grounds/", StringComparison.OrdinalIgnoreCase))
+				{
+					return false;
+				}
+				num += 29;
+				span = inputSpan.Slice(num);
+				num2 = 0;
+				while (true)
+				{
+					_003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__Utilities.StackPush(ref runstack, ref pos, num);
+					num2++;
+					if ((uint)span.Length < 5u || !span.StartsWith("fa", StringComparison.OrdinalIgnoreCase) || (((c = span[2]) | 0x20) != 107 && c != 'K') || !span.Slice(3).StartsWith("e_", StringComparison.OrdinalIgnoreCase))
+					{
+						goto IL_010e;
+					}
+					num += 5;
+					span = inputSpan.Slice(num);
+					if (num2 == 0)
+					{
+						continue;
+					}
+					goto IL_0131;
+					IL_010e:
+					if (--num2 < 0)
+					{
+						return false;
+					}
+					num = runstack[--pos];
+					span = inputSpan.Slice(num);
+					goto IL_0131;
+					IL_0131:
+					if ((uint)span.Length >= 19u && span.StartsWith("merchant_room/hand/", StringComparison.OrdinalIgnoreCase))
+					{
+						break;
+					}
+					goto IL_010e;
+				}
+				Capture(0, start, runtextpos = num + 19);
+				return true;
+			}
+		}
+
+		protected override RegexRunner CreateInstance()
+		{
+			return new Runner();
+		}
+	}
+
+	internal static readonly _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__MerchantHandPartPathRegex_12 Instance = new _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__MerchantHandPartPathRegex_12();
+
+	private _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__MerchantHandPartPathRegex_12()
+	{
+		pattern = "^res://animations/backgrounds/(?:fake_)?merchant_room/hand/";
+		roptions = RegexOptions.IgnoreCase;
+		Regex.ValidateMatchTimeout(_003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__Utilities.s_defaultTimeout);
+		internalMatchTimeout = _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__Utilities.s_defaultTimeout;
+		factory = new RunnerFactory();
+		capsize = 1;
+	}
+}

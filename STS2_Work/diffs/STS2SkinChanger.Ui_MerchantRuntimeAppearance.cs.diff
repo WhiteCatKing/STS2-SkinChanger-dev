@@ -1,0 +1,11 @@
+--- OLD/STS2SkinChanger.Ui\MerchantRuntimeAppearance.cs
++++ NEW/STS2SkinChanger.Ui\MerchantRuntimeAppearance.cs
+@@ -215,7 +215,7 @@
+ 
+ 	internal const string FakeMerchantGroupId = "fake_merchant_monster";
+ 
+-	private const string MerchantRoomScenePath = "res://scenes/rooms/merchant_room.tscn";
++	internal const string MerchantRoomScenePath = "res://scenes/rooms/merchant_room.tscn";
+ 
+ 	private const string FakeMerchantScenePath = "res://scenes/events/custom/fake_merchant.tscn";
+ 

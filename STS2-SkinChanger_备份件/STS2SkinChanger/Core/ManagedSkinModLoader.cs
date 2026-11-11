@@ -1,0 +1,4424 @@
+using Godot;
+using MegaCrit.Sts2.Core.Entities.Creatures;
+using HarmonyLib;
+using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Debug;
+using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Nodes.Audio;
+using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Pck;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.Loader;
+using System.Security.Cryptography;
+
+namespace STS2SkinChanger.Core;
+
+internal static class ManagedSkinModLoader
+{
+    private static readonly MethodInfo? InvokeOnModDetectedMethod =
+        AccessTools.Method(typeof(ModManager), "InvokeOnModDetected");
+    private static readonly FieldInfo? OnModDetectedField =
+        AccessTools.Field(typeof(ModManager), "OnModDetected");
+    private static readonly FieldInfo? GameVersionField =
+        AccessTools.Field(typeof(ModManager), "_gameVersion");
+    private static readonly FieldInfo? CircularDependenciesField =
+        AccessTools.Field(typeof(ModManager), "_circularDependencies");
+    private static readonly FieldInfo? ModSettingsField =
+        AccessTools.Field(typeof(ModManager), "_settings");
+    private static readonly HashSet<Mod> ManagedModInstances = new(ReferenceEqualityComparer.Instance);
+    // A Workshop item may contain several independent manifests/DLLs in the same folder.
+    // Root-only keys let the last probe overwrite its siblings (and register their DLLs under
+    // the wrong provider). Keep manifest identity for lookup, root paths only for pack cleanup.
+    private static readonly Dictionary<string, SkinProviderProbe> ProvidersByIdentity =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ProviderRootPaths =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ProviderManifestIds =
+        new(StringComparer.OrdinalIgnoreCase);
+    // Pure asset card-art packs have no PCK and no DLL, so no probe ever sees them, yet the Mod
+    // they were installed with is content this mod took over. Keep their ids so the Mod list
+    // marks them like any other taken-over provider.
+    private static readonly HashSet<string> ArtPackProviderIds =
+        new(StringComparer.OrdinalIgnoreCase);
+    // A part takeover is announced once per session, not once per loader pass.
+    private static readonly List<ProviderPatch> SuspendedPartTakeoverFeedback = [];
+    private static bool _partTakeoverFeedbackSuspended;
+    private static readonly HashSet<string> PartTakeoverLogged =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> NegativeProviderIdentities =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, bool> SelectableCosmeticProbeResults =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<Assembly> RegisteredProviderAssemblies = [];
+    private static readonly Dictionary<string, ProviderAssembly> ProviderAssemblies =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, ProviderAssemblySourceIdentity>
+        ProviderAssemblySourcesByIdentity = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Assembly> LoadedProviderAssemblies =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Assembly> LoadedProviderAssembliesByFingerprint =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, LoadedProviderAssemblyIdentity>
+        LoadedProviderAssembliesByIdentity = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ReportedProviderAssemblyIdentityConflicts =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, IReadOnlyList<ManagedVisualPostfix>> VisualPostfixesByProvider =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, ActiveProviderRuntime> ActiveProviderRuntimes =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, ProviderRuntimeBlueprint> ProviderRuntimeBlueprints =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<Assembly, string> ScopedMonsterProviderAssemblies = new();
+    private static readonly Dictionary<Assembly, HashSet<string>> ProviderIdsByAssembly = new();
+    private static readonly Dictionary<Assembly, Dictionary<ulong, ProviderNodeProcessState>>
+        SuspendedProviderNodes = new();
+    private static readonly HashSet<Assembly> ActivatingProviderAssemblies = [];
+    private static readonly HashSet<MethodBase> ScopedMonsterIsEnabledMethods = [];
+    private static readonly HashSet<MethodBase> ScopedMonsterSetEnabledMethods = [];
+    private static readonly HashSet<MethodBase> RunEnvironmentCallbackMethods = [];
+    private static readonly HashSet<MethodBase> DirectCharacterSkinPathMethods = [];
+    private static readonly Dictionary<MethodBase, Assembly> DirectCharacterSkinPathProviders = new();
+    private static readonly HashSet<string> RunEnvironmentProviderIds =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<MethodBase, Func<object, string?>>
+        ScopedMonsterIdAccessors = new();
+    private static readonly Harmony ScopedMonsterSelectionHarmony =
+        new($"{Entry.ModId}.scoped-monster-selection");
+    private static readonly Harmony RunEnvironmentCallbackHarmony =
+        new($"{Entry.ModId}.run-environment-callbacks");
+    private static readonly Harmony DirectCharacterSkinPathHarmony =
+        new($"{Entry.ModId}.direct-character-runtime");
+    // ModInitializer methods are commonly used to subscribe to SceneTree signals.  Harmony can
+    // remove the provider's patches when it is deselected, but it cannot undo a direct C# event
+    // subscription. Remember successful initializers so a hot re-selection does not register the
+    // same signal twice (or throw before the scene can be rebuilt).
+    private static readonly HashSet<string> InvokedProviderInitializers =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ReportedVisualPostfixes =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> FailedVisualPostfixes =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, bool> ProviderSettingsEligibility =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, OptionalSkinFrameworkEvidence>
+        OptionalFrameworkEvidence = new(StringComparer.OrdinalIgnoreCase);
+    private static bool _initialized;
+    private static bool _reflectionTargetsReady;
+    private static SceneTree? _providerNodeMonitorTree;
+    private static long _runEnvironmentRefreshGeneration;
+
+    public static bool IsBeforeAllSkinProviders { get; private set; } = true;
+    public static IReadOnlyList<Mod> SkinProvidersBeforeSelf { get; private set; } = [];
+    public static IReadOnlyList<Mod> SkinProvidersInLoadOrder { get; private set; } = [];
+    public static IReadOnlyCollection<string> ProviderRoots => ProviderRootPaths;
+
+    /// <summary>
+    /// Roots of the style/UI packages whose parts this Mod takes over. Such a package is not a skin:
+    /// it keeps loading through the game's own loader and keeps drawing its own shop scene, merchant
+    /// model and shop interface, while only the appearance resources it overrides at a path the game
+    /// also ships become selectable here.
+    /// </summary>
+    public static IReadOnlyCollection<string> PartTakeoverRoots =>
+        [.. ProvidersByIdentity.Values
+            .Where(provider => provider.IsBaselinePartTakeover &&
+                               !string.IsNullOrWhiteSpace(provider.RootPath))
+            .Select(provider => NormalizePath(provider.RootPath!))
+            .Distinct(StringComparer.OrdinalIgnoreCase)];
+
+    public static IReadOnlyCollection<string> GetPreservedRuntimeRoots(IEnumerable<Mod> sourceMods)
+    {
+        var mods = sourceMods.ToArray();
+        // Never remove gameplay/framework callbacks, even if stale candidate roots include
+        // them. A real resource-backed skin pack may itself have dependents: keep managing its
+        // visual callbacks while the original loader preserves its non-visual DLL functions.
+        return mods.Where(mod => mod.manifest != null &&
+                                 (Entry.IsSelfModId(mod.manifest.id) ||
+                                  ShouldTreatAsGameplayBaseline(mod, mods)))
+            .Select(mod => NormalizePath(mod.path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public static bool IsManagedProviderForDisplay(Mod? mod)
+    {
+        if (mod == null || Entry.IsSelfModId(mod.manifest?.id))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (SkinWorkshopService.IsHotRegisteredResourceMod(mod)) return true;
+            var isFunctionalHost = FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id);
+            return ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ProviderManifestIds, isFunctionalHost) ||
+                   ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ArtPackProviderIds, isFunctionalHost);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Remembers the pure asset card-art packs whose artwork this mod now serves, so their Mod
+    /// rows read as taken over. Called only for packs that actually registered cards.
+    /// </summary>
+    public static void RememberArtPackProviders(IEnumerable<string> packIds)
+    {
+        foreach (var packId in packIds)
+        {
+            if (!string.IsNullOrWhiteSpace(packId))
+            {
+                ArtPackProviderIds.Add(packId);
+            }
+        }
+    }
+
+    public static bool IsProviderAssemblyActive(Assembly assembly) =>
+        ActiveProviderRuntimes.Values.Any(runtime => ReferenceEquals(runtime.Assembly, assembly));
+
+    internal static bool IsProviderAssemblyFor(string providerId, Assembly assembly) =>
+        ProviderIdsByAssembly.TryGetValue(assembly, out var providers) && providers.Contains(providerId);
+
+    internal static Assembly? GetActiveProviderAssembly(string providerId) =>
+        ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ? runtime.Assembly : null;
+
+    internal static Assembly? GetStatefulCardArtAssembly(string providerId)
+    {
+        if (!ProviderAssemblies.TryGetValue(providerId, out var provider) ||
+            StatefulCardArtContract.Read(provider.AssemblyPath) == null) return null;
+        var assembly = GetOrLoadProviderAssembly(provider);
+        if (assembly != null) EnsureProviderGodotScripts(providerId);
+        return assembly;
+    }
+
+    internal static void EnsureProviderSettings(Mod mod)
+    {
+        // A details-page request may precede the first selection. Do not initialize every DLL
+        // on startup or restore it to ReflectionHelper's global ModTypes registry.
+        if (!ManagedModInstances.Contains(mod) || mod.manifest?.id == null ||
+            !ProvidersByIdentity.TryGetValue(ProviderLookupKey(mod.path, mod.manifest.id), out var probe) ||
+            !ProviderAssemblies.TryGetValue(probe.Id, out var provider)) return;
+        try
+        {
+            // Opening an arbitrary skin's details must not load its executable module. First
+            // inspect only metadata, and load only the supported, rewritten settings contract.
+            if (!ProviderSettingsEligibility.TryGetValue(provider.AssemblyPath, out var eligible))
+            {
+                using var source = File.OpenRead(provider.AssemblyPath);
+                using var adapted = MerchantSettingsAssemblyCompatibility.Rewrite(source, out var changed);
+                eligible = adapted != null && changed > 0;
+                ProviderSettingsEligibility[provider.AssemblyPath] = eligible;
+            }
+            if (!eligible) return;
+            var assembly = GetOrLoadProviderAssembly(provider);
+            if (assembly != null) RegisterProviderAssembly(probe.Id, assembly);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("读取皮肤原设置失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    public static void ConfigureRunEnvironmentProviders(IEnumerable<string> providerIds)
+    {
+        var next = providerIds
+            .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (RunEnvironmentProviderIds.SetEquals(next))
+        {
+            return;
+        }
+
+        var runtimesToDisable = ActiveProviderRuntimes
+            .Where(pair => pair.Value.RunEnvironmentEnabled && !next.Contains(pair.Key))
+            .Select(pair => pair.Value)
+            .ToArray();
+        // Invoke a provider's own stop/reset callback while its authorization guard still allows
+        // the call. This clears state such as "combat active" as well as its audio node, so
+        // re-enabling the same region provider after combat cannot remain stuck in the old room.
+        foreach (var runtime in runtimesToDisable)
+        {
+            ResetRunEnvironmentControllers(runtime.RunEnvironmentControllers);
+        }
+
+        RunEnvironmentProviderIds.Clear();
+        RunEnvironmentProviderIds.UnionWith(next);
+        var shouldRefreshPresentation = runtimesToDisable.Length > 0;
+        foreach (var pair in ActiveProviderRuntimes.ToArray())
+        {
+            var shouldEnable = next.Contains(pair.Key);
+            if (pair.Value.RunEnvironmentEnabled == shouldEnable)
+            {
+                continue;
+            }
+
+            if (shouldEnable)
+            {
+                PatchProviderCallbacks(pair.Value.RunEnvironmentPatches);
+            }
+            else
+            {
+                UnpatchProviderCallbacks(pair.Value.RunEnvironmentPatches);
+                StopRunEnvironmentControllers(pair.Value.RunEnvironmentControllers);
+            }
+
+            pair.Value.RunEnvironmentEnabled = shouldEnable;
+            shouldRefreshPresentation = true;
+            ModLog.Info(
+                $"已{(shouldEnable ? "启用" : "停用")} {pair.Key} 的地区背景与音乐行为；" +
+                "怪物模型、动作和 Boss 图标仍按各自皮肤选择独立生效。");
+        }
+
+        if (shouldRefreshPresentation)
+        {
+            ScheduleRunEnvironmentPresentationRefresh();
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the active run audio from the state that is actually on screen. In combat this
+    /// deliberately re-enters each selected provider's combat callback; calling UpdateMusic alone
+    /// tells providers such as CZN that the map is active and replaces battle music with act music.
+    /// </summary>
+    public static void RefreshRunEnvironmentPresentation()
+    {
+        Interlocked.Increment(ref _runEnvironmentRefreshGeneration);
+        RefreshRunEnvironmentPresentationCore();
+    }
+
+    private static void ScheduleRunEnvironmentPresentationRefresh()
+    {
+        var generation = Interlocked.Increment(ref _runEnvironmentRefreshGeneration);
+        if (Engine.GetMainLoop() is not SceneTree)
+        {
+            return;
+        }
+
+        Callable.From(() =>
+        {
+            if (generation == Volatile.Read(ref _runEnvironmentRefreshGeneration))
+            {
+                RefreshRunEnvironmentPresentationCore();
+            }
+        }).CallDeferred();
+    }
+
+    private static void RefreshRunEnvironmentPresentationCore()
+    {
+        if (NRunMusicController.Instance is not { } musicController)
+        {
+            return;
+        }
+
+        try
+        {
+            var combatManager = CombatManager.Instance;
+            var combatState = combatManager.DebugOnlyGetState();
+            var mode = RunEnvironmentRefreshPolicy.SelectMusicMode(
+                combatManager.IsInProgress &&
+                NCombatRoom.Instance is { } combatRoom &&
+                combatRoom.IsInsideTree(),
+                combatState != null);
+            var controllers = ActiveProviderRuntimes.Values
+                .Where(runtime => runtime.RunEnvironmentEnabled)
+                .SelectMany(runtime => runtime.RunEnvironmentControllers)
+                .Distinct(ReferenceEqualityComparer.Instance)
+                .ToArray();
+
+            ResetRunEnvironmentControllers(controllers);
+            musicController.StopCustomMusic();
+            if (mode == RunEnvironmentMusicMode.Combat && combatState != null)
+            {
+                // StopCustomMusic restores the native act track. Set its progress and ambience to
+                // the current encounter before a selected provider optionally suppresses it with
+                // that encounter's custom battle track.
+                musicController.UpdateTrack();
+                musicController.UpdateAmbience();
+                RestartRunEnvironmentControllersForCombat(controllers, combatState);
+                ModLog.Info("已按当前遭遇重新加载战斗 BGM 与环境音。");
+                return;
+            }
+
+            musicController.UpdateMusic();
+            musicController.UpdateTrack();
+            musicController.UpdateAmbience();
+            ModLog.Info("已按当前地区重新加载地图 BGM 与环境音。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "重新加载当前背景音乐失败：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    public static void EnsureScopedMonsterSelectionRouter(string providerId)
+    {
+        if (!ProviderAssemblies.TryGetValue(providerId, out var provider))
+        {
+            return;
+        }
+
+        try
+        {
+            var assembly = GetOrLoadProviderAssembly(provider);
+            if (assembly == null)
+            {
+                return;
+            }
+
+            ScopedMonsterProviderAssemblies[assembly] = providerId;
+            var prefix = new HarmonyMethod(AccessTools.Method(
+                typeof(ManagedSkinModLoader),
+                nameof(ScopedMonsterIsEnabledPrefix)));
+            var setterPostfix = new HarmonyMethod(AccessTools.Method(
+                typeof(ManagedSkinModLoader),
+                nameof(ScopedMonsterSetEnabledPostfix)));
+            var patched = 0;
+            var methods = GetLoadableTypes(assembly)
+                .SelectMany(type => type.GetMethods(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.DeclaredOnly))
+                .ToArray();
+            foreach (var method in methods.Where(IsScopedMonsterIsEnabledMethod))
+            {
+                if (!ScopedMonsterIsEnabledMethods.Add(method))
+                {
+                    continue;
+                }
+
+                ScopedMonsterIdAccessors[method] =
+                    ScopedMonsterRoutePolicy.CreateMonsterIdAccessor(
+                        method.GetParameters()[0].ParameterType);
+                ScopedMonsterSelectionHarmony.Patch(method, prefix: prefix);
+                patched++;
+            }
+
+            var settersPatched = 0;
+            foreach (var method in methods.Where(IsScopedMonsterSetEnabledMethod))
+            {
+                if (!ScopedMonsterSetEnabledMethods.Add(method))
+                {
+                    continue;
+                }
+
+                ScopedMonsterSelectionHarmony.Patch(method, postfix: setterPostfix);
+                settersPatched++;
+            }
+
+            if (patched > 0 || settersPatched > 0)
+            {
+                ModLog.Info(
+                    $"已接管 {provider.Name} 的逐怪物启用判断；" +
+                    $"{patched} 个读取入口、{settersPatched} 个写入入口现在直接跟随" +
+                    "每个怪物在皮肤切换器中的选择。");
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                $"接管 {provider.Name} 的逐怪物启用判断失败，将保留原作者配置：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static bool IsScopedMonsterIsEnabledMethod(MethodInfo method)
+    {
+        if (!method.Name.Equals("IsEnabled", StringComparison.Ordinal) ||
+            method.ReturnType != typeof(bool) ||
+            method.GetParameters() is not [{ ParameterType: var profileType }])
+        {
+            return false;
+        }
+
+        var targetProperty = profileType.GetProperty(
+            "Target",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return targetProperty?.PropertyType.GetProperty(
+            "MonsterId",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.PropertyType == typeof(string);
+    }
+
+    private static bool IsScopedMonsterSetEnabledMethod(MethodInfo method)
+    {
+        if (!method.Name.Equals("SetEnabled", StringComparison.Ordinal) ||
+            method.ReturnType != typeof(void) ||
+            method.GetParameters() is not
+                [{ ParameterType: var profileType }, { ParameterType: var enabledType }] ||
+            enabledType != typeof(bool))
+        {
+            return false;
+        }
+
+        var targetProperty = profileType.GetProperty(
+            "Target",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return targetProperty?.PropertyType.GetProperty(
+            "MonsterId",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.PropertyType == typeof(string);
+    }
+
+    private static bool ScopedMonsterIsEnabledPrefix(
+        MethodBase __originalMethod,
+        object __0,
+        ref bool __result)
+    {
+        try
+        {
+            var assembly = __originalMethod.DeclaringType?.Assembly;
+            if (assembly == null ||
+                !ScopedMonsterProviderAssemblies.TryGetValue(assembly, out var providerId))
+            {
+                return true;
+            }
+
+            if (!ScopedMonsterIdAccessors.TryGetValue(__originalMethod, out var getMonsterId))
+            {
+                return true;
+            }
+
+            var monsterId = getMonsterId(__0);
+            if (string.IsNullOrWhiteSpace(monsterId))
+            {
+                return true;
+            }
+
+            __result = SkinService.IsScopedMonsterRuntimeProviderSelected(providerId, monsterId);
+            return false;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static void EnsureDirectCharacterSkinPathRouter(
+        string providerId,
+        Assembly assembly)
+    {
+        var prefix = new HarmonyMethod(AccessTools.Method(
+            typeof(ManagedSkinModLoader),
+            nameof(DirectCharacterSkinPathPrefix)));
+        var patched = 0;
+        foreach (var method in GetLoadableTypes(assembly)
+                     .SelectMany(type => type.GetMethods(
+                         BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic |
+                         BindingFlags.DeclaredOnly))
+                     .Where(IsDirectCharacterSkinPathMethod))
+        {
+            if (!DirectCharacterSkinPathMethods.Add(method))
+            {
+                continue;
+            }
+
+            DirectCharacterSkinPathProviders[method] = assembly;
+            DirectCharacterSkinPathHarmony.Patch(method, prefix: prefix);
+            patched++;
+        }
+
+        if (patched > 0)
+        {
+            ModLog.Info(
+                $"已为 {providerId} 接管 {patched} 个按角色分发的 Spine 外观路径；" +
+                "未选中的角色会得到空路径，不再被同一套运行时皮肤污染。 ");
+        }
+    }
+
+    private static bool IsDirectCharacterSkinPathMethod(MethodInfo method) =>
+        method.ReturnType == typeof(string) &&
+        method.GetParameters() is [{ ParameterType: var parameterType }] &&
+        parameterType == typeof(string) &&
+        method.Name.Contains("SkinPath", StringComparison.OrdinalIgnoreCase);
+
+    internal static IReadOnlyList<MethodInfo> GetSelectedCharacterSkinPathMethods(string groupId)
+    {
+        var providerId = SkinService.GetSelectedCreatureRuntimeProvider(groupId);
+        if (providerId == null || !ActiveProviderRuntimes.TryGetValue(providerId, out var runtime)) return [];
+        // Reuse only path dispatchers already registered for the selected owner. Never search
+        // all loaded assemblies or invoke a whole combat Ready callback from a menu preview.
+        return DirectCharacterSkinPathProviders
+            .Where(pair => ReferenceEquals(pair.Value, runtime.Assembly))
+            .Select(pair => (MethodInfo)pair.Key).ToArray();
+    }
+
+    private static bool DirectCharacterSkinPathPrefix(
+        MethodBase __originalMethod,
+        object[] __args,
+        ref string __result)
+    {
+        try
+        {
+            if (!DirectCharacterSkinPathProviders.TryGetValue(__originalMethod, out var assembly) ||
+                !ProviderIdsByAssembly.TryGetValue(assembly, out var providerIds))
+            {
+                return true;
+            }
+
+            var characterName = __args.OfType<string>().FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(characterName) ||
+                providerIds.Any(providerId =>
+                    !ActiveProviderRuntimes.ContainsKey(providerId) ||
+                    SkinService.IsDirectCharacterRuntimeProviderSelected(
+                        providerId,
+                        characterName)))
+            {
+                return true;
+            }
+
+            __result = string.Empty;
+            return false;
+        }
+        catch
+        {
+            // A failed route must never prevent the provider's original method from returning a
+            // path. This keeps unknown game-version character names compatible with old packs.
+            return true;
+        }
+    }
+
+    private static void ScopedMonsterSetEnabledPostfix(
+        MethodBase __originalMethod,
+        object __0,
+        bool __1)
+    {
+        try
+        {
+            var assembly = __originalMethod.DeclaringType?.Assembly;
+            if (assembly == null ||
+                !ScopedMonsterProviderAssemblies.TryGetValue(assembly, out var providerId))
+            {
+                return;
+            }
+
+            var target = __0.GetType().GetProperty(
+                "Target",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(__0);
+            var monsterId = target?.GetType().GetProperty(
+                "MonsterId",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(target) as string;
+            if (!string.IsNullOrWhiteSpace(monsterId))
+            {
+                SkinService.ApplyScopedMonsterRuntimeProviderSelection(providerId, monsterId, __1);
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "同步提供者怪物开关失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    public static void Initialize()
+    {
+        if (_initialized)
+        {
+            return;
+        }
+
+        _initialized = true;
+        // 在产生任何副作用前预检游戏内部反射目标，避免运行到一半因句柄缺失而进入"脏回退"。
+        _reflectionTargetsReady = (InvokeOnModDetectedMethod != null || OnModDetectedField != null) &&
+                                  GameVersionField != null &&
+                                  CircularDependenciesField != null;
+        if (!_reflectionTargetsReady)
+        {
+            ModLog.Error(
+                "无法解析游戏内部加载器接口，托管加载模式已禁用（游戏版本可能不兼容）。" +
+                "皮肤切换仍可工作，但 DLL 皮肤提供者的呈现补丁不会被接管。");
+        }
+
+        var mods = ModManager.Mods.ToArray();
+        var descriptors = GetProviderProbeDescriptors(mods);
+        string? gamePckPath = null;
+        try
+        {
+            gamePckPath = GamePackLocator.Resolve(
+                OS.GetExecutablePath(),
+                GameCommandLine.Arguments(),
+                message => ModLog.Warn("定位游戏主资源包：" + message));
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "加载前无法建立游戏资源映射，少数仅含导入载荷的皮肤可能无法接管：" +
+                exception.GetBaseException().Message);
+        }
+
+        var probes = SkinCatalog.ProbeSkinProviders(descriptors, gamePckPath);
+        foreach (var probe in probes)
+        {
+            if (probe.RootPath == null)
+            {
+                continue;
+            }
+
+            RememberProviderProbe(probe);
+        }
+
+        var selfIndex = Array.FindIndex(mods, mod => Entry.IsSelfModId(mod.manifest?.id));
+        SkinProvidersInLoadOrder = mods
+            .Where(IsProviderLoadCandidate)
+            .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
+            .Where(mod => IsManagedProvider(mod, out _))
+            .ToArray();
+        SkinProvidersBeforeSelf = selfIndex < 0
+            ? SkinProvidersInLoadOrder.Where(IsIsolatedProvider).ToArray()
+            : mods.Take(selfIndex)
+                .Where(IsProviderLoadCandidate)
+                .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
+                .Where(IsIsolatedProvider)
+                .ToArray();
+        IsBeforeAllSkinProviders = selfIndex >= 0 && SkinProvidersBeforeSelf.Count == 0;
+        if (SkinProvidersBeforeSelf.Count > 0)
+        {
+            var alreadyLoaded = SkinProvidersBeforeSelf
+                .Select(mod => mod.manifest?.name ?? mod.manifest?.id ?? mod.path)
+                .ToArray();
+            ModLog.Warn(
+                "托管加载模式仅能拦截排在本 Mod 后面的皮肤提供者。" +
+                "请把皮肤切换器-Skin Changer 移到所有皮肤 Mod 之前并重启，无需移到全部 Mod 最前。" +
+                $" 本次已提前加载：{string.Join("、", alreadyLoaded)}");
+        }
+
+        ModLog.Info(
+            $"托管加载模式已识别 {ProvidersByIdentity.Count} 个皮肤提供者；" +
+            "PCK 资源由本 Mod 按选择接管；运行时私有依赖会在首次选中时低优先级挂载，" +
+            "DLL 行为补丁仅在选中期间启用。");
+    }
+
+    /// <summary>
+    /// Whether this provider has to be isolated by this mod, which is what makes the skin
+    /// switcher's own load position matter. A part takeover keeps loading through the game's own
+    /// loader, so it is never a load-order problem.
+    /// </summary>
+    private static bool IsIsolatedProvider(Mod mod) =>
+        IsManagedProvider(mod, out var provider) && !provider.IsBaselinePartTakeover;
+
+    public static bool TryManage(Mod mod)
+    {
+        if (!_reflectionTargetsReady ||
+            mod.state is not (ModLoadState.None or ModLoadState.DisabledDuplicate) ||
+            !IsProviderLoadCandidate(mod) ||
+            !IsManagedProvider(mod, out var provider))
+        {
+            return false;
+        }
+
+        if (provider.IsBaselinePartTakeover)
+        {
+            // The package is not a skin: it ships a whole style/UI experience and only overrides
+            // parts of presentations the game already draws. Isolating it would drop everything
+            // the author shipped, so it keeps loading through the game's own loader (its DLL and
+            // PCK behave exactly as the author intended) and only those parts are selectable here.
+            RememberPartTakeover(provider, mod.manifest?.name ?? provider.ResourceNamespaceId);
+            return false;
+        }
+
+        if (ManagedModInstances.Contains(mod)) return true;
+
+        var originalState = mod.state;
+        try
+        {
+            if (!CanBypassOriginalLoader(mod))
+            {
+                return false;
+            }
+
+            if (mod.manifest?.version != null &&
+                SemanticVersion.TryFromString(mod.manifest.version, out var version))
+            {
+                mod.version = version;
+            }
+
+            RememberProviderAssembly(mod, provider);
+            // The native registry promises one loaded Mod per manifest ID. BaseLib and
+            // other consumers build ID-keyed dictionaries from it during startup. Extra
+            // cosmetic sources belong to our catalog, not duplicate native registrations.
+            mod.state = ModManager.Mods.Any(other => !ReferenceEquals(other, mod) &&
+                            other.state == ModLoadState.Loaded &&
+                            string.Equals(other.manifest?.id, mod.manifest?.id, StringComparison.OrdinalIgnoreCase))
+                ? ModLoadState.DisabledDuplicate
+                : ModLoadState.Loaded;
+            ManagedModInstances.Add(mod);
+            NotifyModDetected(mod);
+            ProviderManifestCompatibility.AcknowledgeManagedBranch(mod, provider.HasResourceBackedCosmetics);
+            if (originalState == ModLoadState.DisabledDuplicate ||
+                !provider.Id.Equals(mod.manifest?.id, StringComparison.OrdinalIgnoreCase))
+            {
+                ModLog.Info($"已接管同 ID 皮肤来源：{provider.Id}；目录={mod.path}；原状态={originalState}；" +
+                            $"注册方式={(mod.state == ModLoadState.Loaded ? "原生代表" : "仅内部差分")}。");
+            }
+            ModLog.Info(
+                $"已隔离皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
+                $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
+                $"卡牌呈现={provider.CardPresentationCount}, 独立图片={provider.RuntimeImageCount}, " +
+                $"场景脚本={provider.ManagedScriptCount}, " +
+                $"交互场景={(provider.HasInteractiveScenes ? "是" : "否")}；" +
+                "原 PCK 未全局挂载；" +
+                "只有选中该皮肤时，才会按需调用与模型 CreateVisuals 明确绑定的视觉后处理；" +
+                (provider.ManagedScriptCount > 0
+                    ? "只有选中该皮肤时才注册场景实例化所需的 Godot 脚本类型；"
+                    : string.Empty) +
+                "完整视觉整包或含交互场景的提供者会在选中期间临时启用原作者行为，" +
+                "其资源替换与卡牌呈现仍由皮肤切换器自身接管。");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            ManagedModInstances.Remove(mod);
+            mod.state = originalState;
+            ModLog.Warn(
+                $"托管 {mod.manifest?.name ?? mod.manifest?.id} 失败，将交回游戏原加载器：" +
+                exception.GetBaseException().Message);
+            return false;
+        }
+    }
+
+    private static SkinModDescriptor[] GetProviderProbeDescriptors(IEnumerable<Mod> mods) =>
+        mods.Where(IsProviderLoadCandidate)
+            .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
+            .Select(ToDescriptor)
+            .ToArray();
+
+    public static Mod[] GetCatalogMods() =>
+        ModManager.Mods.Where(mod => mod.state == ModLoadState.Loaded ||
+            (mod.state == ModLoadState.DisabledDuplicate && ManagedModInstances.Contains(mod))).ToArray();
+
+    private static bool IsProviderLoadCandidate(Mod mod)
+    {
+        if (mod.manifest?.id == null ||
+            mod.state is not (ModLoadState.None or ModLoadState.Loaded or ModLoadState.DisabledDuplicate) ||
+            (ModSettingsField?.GetValue(null) as ModSettings)?.IsModDisabled(mod) == true)
+        {
+            return false;
+        }
+
+        // A formal/beta mirror of the same Workshop item is not a user-installed variation.
+        // Preserve the game's chosen snapshot instead of bringing the other branch back.
+        var workshopId = GetWorkshopSourceId(mod.path);
+        return mod.state != ModLoadState.DisabledDuplicate || workshopId == null ||
+               !ModManager.Mods.Any(other => !ReferenceEquals(other, mod) &&
+                   other.state is ModLoadState.None or ModLoadState.Loaded &&
+                   string.Equals(other.manifest?.id, mod.manifest.id, StringComparison.OrdinalIgnoreCase) &&
+                   GetWorkshopSourceId(other.path) == workshopId);
+    }
+
+    private static string? GetWorkshopSourceId(string root)
+    {
+        var parts = root.Replace('\\', '/').TrimEnd('/').Split('/');
+        if (parts.Length < 2 || !ulong.TryParse(parts[^1], out var id) || id == 0) return null;
+        return parts[^2].Equals("_workshop_formal_cache", StringComparison.OrdinalIgnoreCase) ||
+               (parts.Length >= 4 &&
+                parts[^3].Equals("content", StringComparison.OrdinalIgnoreCase) &&
+                parts[^4].Equals("workshop", StringComparison.OrdinalIgnoreCase))
+            ? parts[^1]
+            : null;
+    }
+
+    private static void RememberProviderAssembly(Mod mod, SkinProviderProbe provider)
+    {
+        if (mod.manifest is not { hasDll: true, id: not null })
+        {
+            return;
+        }
+
+        if (FrameworkCompatibilityLayer.IsBundledFrameworkHost(mod.manifest.id))
+        {
+            // The host's API identity is already supplied by the behaviour-free adapter. Loading
+            // its original DLL here would reintroduce the UI, save file and global skin patches.
+            return;
+        }
+
+        var assemblyPath = Path.GetFullPath(SkinPackagePaths.Resolve(mod.path, mod.manifest.id, ".dll"));
+        if (!File.Exists(assemblyPath))
+        {
+            ModLog.Warn($"找不到皮肤提供者程序集 {assemblyPath}。");
+            return;
+        }
+        if (!Path.GetFileNameWithoutExtension(assemblyPath).Equals(mod.manifest.id, StringComparison.OrdinalIgnoreCase))
+            ModLog.Info($"已按清单文件配对定位 {mod.manifest.id} 的皮肤包：{Path.GetFileName(assemblyPath)}；逻辑 ID 和原文件保持不变。");
+
+        var hasDeclarativeCharacterAssetReplacement =
+            ManagedCharacterAssetReplacementScanner.Scan(mod.path, mod.manifest.id).Count > 0 ||
+            FrameworkSkinContractScanner.Scan(mod.path, mod.manifest.id).Count > 0;
+        var fingerprint = ComputeProviderAssemblyFingerprint(assemblyPath);
+        var assemblyIdentity = TryReadProviderAssemblyIdentity(assemblyPath);
+        var canActivateBehavior = true;
+        if (assemblyIdentity != null)
+        {
+            if (ProviderAssemblySourcesByIdentity.TryGetValue(
+                    assemblyIdentity,
+                    out var existingSource))
+            {
+                canActivateBehavior = existingSource.Fingerprint.Equals(
+                    fingerprint,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                ProviderAssemblySourcesByIdentity[assemblyIdentity] =
+                    new ProviderAssemblySourceIdentity(fingerprint, assemblyPath);
+            }
+        }
+
+        var providerAssembly = new ProviderAssembly(
+            assemblyPath,
+            mod.manifest.name ?? mod.manifest.id,
+            provider.ManagedScriptCount > 0 || hasDeclarativeCharacterAssetReplacement,
+            hasDeclarativeCharacterAssetReplacement,
+            canActivateBehavior);
+        ProviderAssemblies[provider.Id] = providerAssembly;
+        if (!canActivateBehavior)
+        {
+            ReportProviderAssemblyIdentityConflict(
+                providerAssembly,
+                assemblyIdentity!,
+                fingerprint,
+                ProviderAssemblySourcesByIdentity[assemblyIdentity!].Fingerprint);
+        }
+    }
+
+    public static bool EnsureProviderGodotScripts(string providerId)
+    {
+        if (!ProviderAssemblies.TryGetValue(providerId, out var provider) ||
+            !provider.HasGodotScripts)
+        {
+            return false;
+        }
+
+        Assembly? assembly = null;
+        try
+        {
+            assembly = GetOrLoadProviderAssembly(provider);
+            if (assembly == null)
+            {
+                return false;
+            }
+
+            if (!RegisteredProviderAssemblies.Add(assembly))
+            {
+                return true;
+            }
+
+            var bridgeType = typeof(GodotObject).Assembly.GetType("Godot.Bridge.ScriptManagerBridge");
+            var lookupMethod = bridgeType?.GetMethods(
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(method =>
+                    method.Name.Equals("LookupScriptsInAssembly", StringComparison.Ordinal) &&
+                    method.GetParameters() is [{ ParameterType: var parameterType }] &&
+                    parameterType == typeof(Assembly));
+            if (lookupMethod == null)
+            {
+                RegisteredProviderAssemblies.Remove(assembly);
+                ModLog.Warn(
+                    $"无法找到 Godot 场景脚本注册入口，{provider.Name} " +
+                    "的自定义场景脚本可能无法实例化。");
+                return false;
+            }
+
+            lookupMethod.Invoke(null, [assembly]);
+            if (StatefulCardArtContract.Read(provider.AssemblyPath) is {} statefulContract)
+                StatefulCardArtRuntime.Ensure(providerId, statefulContract);
+            ModLog.Info(
+                $"已按当前选择注册 {provider.Name} 的 Godot 场景脚本类型，" +
+                "此注册步骤本身未执行其初始化器或 Harmony 补丁。");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            if (IsAlreadyRegisteredGodotScriptException(exception))
+            {
+                // The game or another legitimate loader may have discovered the same assembly
+                // first. ScriptManagerBridge uses a unique resource-path dictionary and reports
+                // that harmless race as a duplicate-key ArgumentException. Keep our local marker
+                // so every hot reload does not retry the same registration and emit another error.
+                ModLog.Info(
+                    $"{provider.Name} 的 Godot 场景脚本已经注册，复用现有注册结果。");
+                return true;
+            }
+
+            if (assembly != null)
+            {
+                RegisteredProviderAssemblies.Remove(assembly);
+            }
+            ModLog.Warn(
+                $"注册 {provider.Name} 的 Godot 场景脚本失败；" +
+                "仍会隔离其全局视觉补丁：" +
+                exception.GetBaseException().Message);
+            return false;
+        }
+    }
+
+    private static bool IsAlreadyRegisteredGodotScriptException(Exception exception) =>
+        GodotScriptPathRegistrationPolicy.IsHarmlessDuplicate(exception);
+
+    /// <summary>
+    /// Removes every Harmony callback installed by a managed provider that is no longer selected.
+    /// Unpatching by callback method instead of Harmony owner is important because third-party mods
+    /// sometimes reuse the same owner string; only the selected provider's assembly is touched.
+    /// </summary>
+    public static void DeactivateProvidersExcept(IEnumerable<string> selectedProviderIds)
+    {
+        var selected = selectedProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var providerId in ActiveProviderRuntimes.Keys
+                     .Where(providerId => !selected.Contains(providerId))
+                     .ToArray())
+        {
+            DeactivateProvider(providerId);
+        }
+    }
+
+    /// <summary>
+    /// Activates the original initializer of each selected runtime provider after its required PCK
+    /// resources have been mounted. Resource replacement callbacks are then removed because Skin
+    /// Changer owns those entry points; input, animation and scene behaviour remains active until
+    /// deselection. This also supports providers that expose independently selectable cards.
+    /// </summary>
+    public static void ActivateSelectedProviders(IEnumerable<string> selectedProviderIds)
+    {
+        foreach (var providerId in selectedProviderIds.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (ActiveProviderRuntimes.ContainsKey(providerId) ||
+                !ProviderAssemblies.TryGetValue(providerId, out var provider))
+            {
+                continue;
+            }
+
+            ActivateProvider(providerId, provider);
+        }
+    }
+
+    private static void ActivateProvider(string providerId, ProviderAssembly provider)
+    {
+        // Stateful card providers have object-scoped adapters, never an active global PatchAll.
+        if (StatefulCardArtContract.Read(provider.AssemblyPath) is {} statefulContract)
+        {
+            StatefulCardArtRuntime.Ensure(providerId, statefulContract);
+            return;
+        }
+        Assembly? assembly = null;
+        IReadOnlyList<object> runEnvironmentControllers = [];
+        var runEnvironmentEnabled = RunEnvironmentProviderIds.Contains(providerId);
+        var activationStarted = Stopwatch.GetTimestamp();
+        var assemblyLoadedAt = activationStarted;
+        var initializedAt = activationStarted;
+        try
+        {
+            assembly = GetOrLoadProviderAssembly(provider);
+            assemblyLoadedAt = Stopwatch.GetTimestamp();
+            if (assembly == null)
+            {
+                return;
+            }
+
+            RegisterProviderAssembly(providerId, assembly);
+            if (SkinService.Catalog?.ProviderUsesDirectCharacterRuntime(providerId) == true)
+            {
+                EnsureDirectCharacterSkinPathRouter(providerId, assembly);
+            }
+            ActivatingProviderAssemblies.Add(assembly);
+            EnsureProviderNodeMonitor();
+            RestoreProviderNodes(assembly);
+
+            var runsAuthorInitializer = FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
+                provider.HasDeclarativeCharacterAssetReplacement,
+                FrameworkRegistryCooperation.IsNativeProvider(providerId));
+            var initializerTypes = runsAuthorInitializer
+                ? GetLoadableTypes(assembly)
+                    .Select(type => (Type: type, Attribute: type.GetCustomAttribute<ModInitializerAttribute>()))
+                    .Where(pair => pair.Attribute != null)
+                    .ToArray()
+                : [];
+            var skippedInitializer = false;
+            var initializerFailed = false;
+            var patchesBeforeInitializer = -1;
+            if (initializerTypes.Length == 0)
+            {
+                // There is no original initializer left to register managed Godot scripts (this
+                // is also the intentional path for native-managed providers), so do it immediately
+                // before PatchAll/scene use.
+                EnsureProviderGodotScripts(providerId);
+                new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
+                    .PatchAll(assembly);
+                if (provider.HasDeclarativeCharacterAssetReplacement && !runsAuthorInitializer)
+                {
+                    ModLog.Info(
+                        $"{provider.Name} 使用框架式角色资源注册；资源已由皮肤切换器直接路由，" +
+                        "其原初始化器由原皮肤管理器执行，本 Mod 不重复执行。");
+                }
+            }
+            else
+            {
+                foreach (var initializer in initializerTypes)
+                {
+                    var method = initializer.Type.GetMethod(
+                        initializer.Attribute!.initializerMethod,
+                        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (method == null || method.GetParameters().Length != 0)
+                    {
+                        throw new MissingMethodException(
+                            initializer.Type.FullName,
+                            initializer.Attribute.initializerMethod);
+                    }
+
+                    var initializerKey = BuildInitializerKey(
+                        assembly,
+                        initializer.Type,
+                        method);
+                    if (InvokedProviderInitializers.Contains(initializerKey))
+                    {
+                        skippedInitializer = true;
+                        ModLog.Info(
+                            $"已跳过 {provider.Name} 的重复初始化器 " +
+                            $"{initializer.Type.FullName}.{method.Name}。");
+                        continue;
+                    }
+
+                    patchesBeforeInitializer = CaptureProviderPatches(assembly).Count;
+                    try
+                    {
+                        method.Invoke(null, null);
+                        InvokedProviderInitializers.Add(initializerKey);
+                    }
+                    catch (Exception exception) when (
+                        FrameworkProviderInitializerPolicy.KeepsSessionWhenAuthorInitializerFails(
+                            provider.HasDeclarativeCharacterAssetReplacement))
+                    {
+                        initializerFailed = true;
+                        InvokedProviderInitializers.Add(initializerKey);
+                        ModLog.Warn(
+                            $"执行 {provider.Name} 的原初始化器失败；其资源与场景创建已由本 Mod 接管，" +
+                            "因此保留本次视觉会话并改用等价步骤：" +
+                            exception.GetBaseException().Message);
+                        break;
+                    }
+
+                    if (provider.HasDeclarativeCharacterAssetReplacement)
+                    {
+                        ModLog.Info(
+                            $"{provider.Name} 的原初始化器已执行：作者的补丁、场景脚本类型、" +
+                            "自带设置页与资源预载按原样生效；框架注册写入已由本 Mod 拦截。");
+                    }
+                }
+
+                // The first run may install Harmony patches from inside a custom initializer.
+                // After deselection those callbacks have been removed, so restore attribute-based
+                // patches without invoking the initializer (and its non-Harmony subscriptions)
+                // for a second time. Restore the exact callbacks that the provider actually chose
+                // on its first activation: some providers deliberately exclude optional profiling
+                // or compatibility patch classes, which a blanket PatchAll would incorrectly enable.
+                if (initializerFailed)
+                {
+                    // The pack's own initializer is the author's setup; its resources and scene
+                    // creation are already ours, so a failure there costs only what the initializer
+                    // would have added and must never take the skin down with it. Install what the
+                    // skip path installs, unless the initializer had already patched the assembly
+                    // before it failed - a second PatchAll would run those callbacks twice.
+                    EnsureProviderGodotScripts(providerId);
+                    if (CaptureProviderPatches(assembly).Count == patchesBeforeInitializer)
+                    {
+                        new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
+                            .PatchAll(assembly);
+                    }
+                    else
+                    {
+                        ModLog.Info(
+                            $"{provider.Name} 的原初始化器在失败前已装入作者补丁，不再重复应用。");
+                    }
+                }
+                else if (skippedInitializer)
+                {
+                    if (ProviderRuntimeBlueprints.TryGetValue(providerId, out var blueprint))
+                    {
+                        PatchProviderCallbacks(blueprint.BehaviorPatches.Where(patch =>
+                            runEnvironmentEnabled || !IsRunEnvironmentPatch(patch)));
+                    }
+                    else
+                    {
+                        new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
+                            .PatchAll(assembly);
+                    }
+                }
+            }
+            FrameworkCompatibilityLayer.NotifyProviderActivated(assembly);
+            initializedAt = Stopwatch.GetTimestamp();
+
+            var installedPatches = CaptureProviderPatches(assembly);
+            // Keep the complete set of node-ready presentation callbacks.  Existing nodes still
+            // replay only postfixes (see ReplaySelectedNodeReadyBehavior), while freshly created
+            // visual nodes may safely replay their visual prefixes as well.  Merchant skins such
+            // as ATA and Merchant2CuteII put their actual skeleton/scale replacement in a Prefix;
+            // dropping it here made every hot-created merchant silently fall back to vanilla.
+            var presentationPatches = installedPatches
+                .Where(IsReplayableCharacterPresentationPatch)
+                .ToArray();
+            var nodeReadyPresentationPatches = installedPatches
+                .Where(patch => IsNodeReadyPresentationTarget(patch.Target))
+                .ToArray();
+            var managedPatches = installedPatches
+                .Where(patch =>
+                    IsManagedResourceOwnershipPatch(patch) ||
+                    IsManagedCharacterPresentationPatch(patch) ||
+                    IsManagedNodeReadyPresentationPatch(patch) ||
+                    ManagedMerchantSettingsBridge.OwnsSettingsPatch(patch.Callback))
+                .ToArray();
+            IReadOnlyList<ProviderPatch> behaviorPatches = installedPatches
+                .Where(patch =>
+                    !IsManagedResourceOwnershipPatch(patch) &&
+                    !IsManagedCharacterPresentationPatch(patch) &&
+                    !IsManagedNodeReadyPresentationPatch(patch) &&
+                    !ManagedMerchantSettingsBridge.OwnsSettingsPatch(patch.Callback))
+                .ToArray();
+            if (skippedInitializer &&
+                ProviderRuntimeBlueprints.TryGetValue(providerId, out var behaviorBlueprint))
+            {
+                behaviorPatches = behaviorBlueprint.BehaviorPatches;
+            }
+
+            var isRunWideMonsterProvider =
+                ScopedMonsterProviderAssemblies.TryGetValue(assembly, out var scopedProviderId) &&
+                scopedProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase);
+            var runEnvironmentPatches = isRunWideMonsterProvider
+                ? behaviorPatches.Where(IsRunEnvironmentPatch).ToArray()
+                : [];
+            UnpatchProviderCallbacks(managedPatches);
+            if (!runEnvironmentEnabled)
+            {
+                UnpatchProviderCallbacks(runEnvironmentPatches);
+            }
+
+            var leakedManagedPatches = CaptureProviderPatches(assembly)
+                .Where(patch =>
+                    IsManagedResourceOwnershipPatch(patch) ||
+                    IsManagedCharacterPresentationPatch(patch) ||
+                    IsManagedNodeReadyPresentationPatch(patch) ||
+                    ManagedMerchantSettingsBridge.OwnsSettingsPatch(patch.Callback))
+                .ToArray();
+            if (leakedManagedPatches.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"仍有 {leakedManagedPatches.Length} 个资源/选角呈现补丁未能隔离");
+            }
+
+            if (isRunWideMonsterProvider)
+            {
+                EnsureRunEnvironmentCallbackGuards(providerId, assembly);
+                runEnvironmentControllers = DiscoverRunEnvironmentControllers(assembly);
+                if (!runEnvironmentEnabled)
+                {
+                    StopRunEnvironmentControllers(runEnvironmentControllers);
+                }
+            }
+
+            if (!ProviderRuntimeBlueprints.ContainsKey(providerId))
+            {
+                ProviderRuntimeBlueprints[providerId] = new ProviderRuntimeBlueprint(
+                    behaviorPatches,
+                    presentationPatches,
+                    nodeReadyPresentationPatches);
+            }
+            else if (skippedInitializer &&
+                     ProviderRuntimeBlueprints.TryGetValue(providerId, out var restoredBlueprint))
+            {
+                // Managed presentation callbacks remain intentionally unpatched and are replayed
+                // by Skin Changer against the selected scene when needed.
+                presentationPatches = restoredBlueprint.CharacterPresentationPatches.ToArray();
+                nodeReadyPresentationPatches = restoredBlueprint.NodeReadyPresentationPatches.ToArray();
+            }
+            ActiveProviderRuntimes[providerId] = new ActiveProviderRuntime(
+                assembly,
+                behaviorPatches,
+                presentationPatches,
+                nodeReadyPresentationPatches,
+                runEnvironmentPatches,
+                runEnvironmentControllers,
+                runEnvironmentEnabled);
+            ModLog.Info(
+                $"已按当前选择启用 {provider.Name} 的完整视觉会话：" +
+                $"所需资源已由本 Mod 挂载，{managedPatches.Length} 个资源/选角呈现入口已交由本 Mod 接管，" +
+                $"保留 {behaviorPatches.Count - (runEnvironmentEnabled ? 0 : runEnvironmentPatches.Length)} " +
+                $"个原作者动画/场景行为补丁，地区环境行为=" +
+                $"{(runEnvironmentEnabled ? "启用" : "停用")}；" +
+                "切换离开后会自动卸载行为补丁。");
+        }
+        catch (Exception exception)
+        {
+            if (assembly != null)
+            {
+                UnpatchProviderCallbacks(CaptureProviderPatches(assembly));
+            }
+
+            ModLog.Warn(
+                $"启用 {provider.Name} 的完整视觉会话失败，已回滚其行为补丁并继续使用资源皮肤：" +
+                exception.GetBaseException().Message);
+        }
+        finally
+        {
+            if (assembly != null)
+            {
+                ActivatingProviderAssemblies.Remove(assembly);
+                if (!IsProviderAssemblyActive(assembly))
+                {
+                    SuspendProviderNodes(assembly);
+                }
+            }
+
+            var totalElapsed = Stopwatch.GetElapsedTime(activationStarted);
+            if (totalElapsed >= TimeSpan.FromMilliseconds(50))
+            {
+                var assemblyElapsed = Stopwatch.GetElapsedTime(
+                    activationStarted,
+                    assemblyLoadedAt);
+                var initializerElapsed = Stopwatch.GetElapsedTime(
+                    assemblyLoadedAt,
+                    initializedAt);
+                var isolationElapsed = Stopwatch.GetElapsedTime(
+                    initializedAt,
+                    Stopwatch.GetTimestamp());
+                ModLog.Info(
+                    $"{provider.Name} 皮肤代码激活耗时：" +
+                    $"程序集={assemblyElapsed.TotalMilliseconds:F1} ms，" +
+                    $"初始化={initializerElapsed.TotalMilliseconds:F1} ms，" +
+                    $"隔离={isolationElapsed.TotalMilliseconds:F1} ms，" +
+                    $"总计={totalElapsed.TotalMilliseconds:F1} ms。");
+            }
+        }
+    }
+
+    private static string BuildInitializerKey(
+        Assembly assembly,
+        Type initializerType,
+        MethodInfo method) =>
+        assembly.ManifestModule.ModuleVersionId.ToString("N") + "|" +
+        initializerType.FullName + "|" +
+        method.MetadataToken;
+
+    private static void DeactivateProvider(string providerId)
+    {
+        if (!ActiveProviderRuntimes.Remove(providerId, out var runtime))
+        {
+            return;
+        }
+
+        var failures = FailureIsolatedActionRunner.Run(
+        [
+            ("恢复场景节点", () => RestoreNodeReadyBehaviors(runtime)),
+            ("恢复角色呈现", () => RestoreCharacterPresentations(runtime)),
+            ("卸载行为补丁", () => UnpatchProviderCallbacks(runtime.Patches)),
+            ("停止地区控制器", () =>
+                StopRunEnvironmentControllers(runtime.RunEnvironmentControllers)),
+            ("停用提供者节点", () =>
+            {
+                if (!IsProviderAssemblyActive(runtime.Assembly))
+                {
+                    SuspendProviderNodes(runtime.Assembly);
+                }
+            })
+        ]);
+        foreach (var failure in failures)
+        {
+            ModLog.Warn(
+                $"停用皮肤提供者 {providerId} 的“{failure.Stage}”阶段失败；" +
+                "其余清理阶段已继续执行：" + failure.Exception);
+        }
+
+        ModLog.Info(
+            $"已停用未选中皮肤提供者 {providerId} 的 {runtime.Patches.Count} 个行为补丁" +
+            (failures.Count == 0 ? "。" : $"；{failures.Count} 个清理阶段失败并已记录。"));
+    }
+
+    private static void RegisterProviderAssembly(string providerId, Assembly assembly)
+    {
+        if (!ProviderIdsByAssembly.TryGetValue(assembly, out var providerIds))
+        {
+            providerIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ProviderIdsByAssembly[assembly] = providerIds;
+        }
+
+        providerIds.Add(providerId);
+        ProviderModelDiscovery.Publish(assembly, providerId);
+        ManagedMerchantSettingsBridge.Install(assembly);
+        ManagedSkinBehaviorBridge.Install(assembly);
+    }
+
+    private static void EnsureProviderNodeMonitor()
+    {
+        if (Engine.GetMainLoop() is not SceneTree tree ||
+            ReferenceEquals(tree, _providerNodeMonitorTree))
+        {
+            return;
+        }
+
+        if (_providerNodeMonitorTree != null)
+        {
+            _providerNodeMonitorTree.NodeAdded -= OnProviderNodeAdded;
+        }
+
+        _providerNodeMonitorTree = tree;
+        tree.NodeAdded += OnProviderNodeAdded;
+    }
+
+    private static void OnProviderNodeAdded(Node node)
+    {
+        var assembly = node.GetType().Assembly;
+        if (!ProviderIdsByAssembly.ContainsKey(assembly) ||
+            ActivatingProviderAssemblies.Contains(assembly) ||
+            IsProviderAssemblyActive(assembly))
+        {
+            return;
+        }
+
+        SuspendProviderNode(assembly, node);
+    }
+
+    private static void SuspendProviderNodes(Assembly assembly)
+    {
+        if (Engine.GetMainLoop() is not SceneTree tree ||
+            !GodotObject.IsInstanceValid(tree.Root))
+        {
+            return;
+        }
+
+        foreach (var node in EnumerateNodeTree(tree.Root).Where(node =>
+                     ReferenceEquals(node.GetType().Assembly, assembly)))
+        {
+            SuspendProviderNode(assembly, node);
+        }
+    }
+
+    private static void SuspendProviderNode(Assembly assembly, Node node)
+    {
+        if (!GodotObject.IsInstanceValid(node))
+        {
+            return;
+        }
+
+        if (!SuspendedProviderNodes.TryGetValue(assembly, out var states))
+        {
+            states = [];
+            SuspendedProviderNodes[assembly] = states;
+        }
+
+        var instanceId = node.GetInstanceId();
+        if (!states.ContainsKey(instanceId))
+        {
+            states[instanceId] = new ProviderNodeProcessState(
+                new WeakReference<Node>(node),
+                node.ProcessMode);
+        }
+
+        node.ProcessMode = Node.ProcessModeEnum.Disabled;
+    }
+
+    private static void RestoreProviderNodes(Assembly assembly)
+    {
+        if (!SuspendedProviderNodes.Remove(assembly, out var states))
+        {
+            return;
+        }
+
+        foreach (var state in states.Values)
+        {
+            if (state.Node.TryGetTarget(out var node) && GodotObject.IsInstanceValid(node))
+            {
+                node.ProcessMode = state.ProcessMode;
+            }
+        }
+    }
+
+    private static IReadOnlyList<ProviderPatch> CaptureProviderPatches(Assembly assembly) =>
+        Harmony.GetAllPatchedMethods()
+            .SelectMany(target => EnumerateProviderPatches(target, Harmony.GetPatchInfo(target), assembly))
+            .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind))
+            .ToArray();
+
+    private static IEnumerable<ProviderPatch> EnumerateProviderPatches(
+        MethodBase target,
+        Patches? patches,
+        Assembly assembly)
+    {
+        if (patches == null)
+        {
+            yield break;
+        }
+
+        foreach (var entry in patches.Prefixes.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Prefix))
+                     .Concat(patches.Postfixes.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Postfix)))
+                     .Concat(patches.Transpilers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Transpiler)))
+                     .Concat(patches.Finalizers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Finalizer))))
+        {
+            if (ReferenceEquals(entry.Patch.PatchMethod.Module.Assembly, assembly))
+            {
+                yield return new ProviderPatch(
+                    target,
+                    entry.Patch.PatchMethod,
+                    entry.Kind,
+                    entry.Patch.priority,
+                    entry.Patch.before,
+                    entry.Patch.after,
+                    entry.Patch.debug);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Skin Changer has already selected and isolated the concrete resource for these targets.
+    /// Leaving a provider's own resolver active would run a second selection pipeline before our
+    /// final postfix. Besides being redundant, sprite kits may instantiate and harden a very large
+    /// scene that is immediately discarded, or return an object from a previously selected skin.
+    /// </summary>
+    private static bool IsManagedResourceOwnershipPatch(ProviderPatch patch)
+    {
+        var declaringType = patch.Target.DeclaringType;
+        if (declaringType == null)
+        {
+            return false;
+        }
+
+        // Creature-level finishing can remove native attachments as well as replace a skin.
+        // Replay supported postfixes once on the final selected result, not globally before
+        // our isolated factory replaces it. Keep unsupported prefix/transpiler behavior intact.
+        if (declaringType == typeof(Creature) &&
+            patch.Target.Name == nameof(Creature.CreateVisuals))
+        {
+            return patch.Kind == ProviderPatchKind.Postfix &&
+                   patch.Callback.DeclaringType is { } patchType &&
+                   GetVisualPatchTarget(patchType) == typeof(Creature) &&
+                   CanReplayVisualPostfix(patch.Callback, typeof(Creature));
+        }
+
+        // A cosmetic provider may patch a rendered relic node before the game has assigned its
+        // model. The selected PCK already owns the icon resource, so this eager second texture pass
+        // is both redundant and unsafe across game versions.
+        if (declaringType.Name.Equals("NRelic", StringComparison.Ordinal) &&
+            patch.Target.Name.Equals("_Ready", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (declaringType == typeof(AssetCache) ||
+            declaringType == typeof(ResourceLoader) ||
+            declaringType == typeof(AtlasManager) ||
+            declaringType == typeof(SceneHelper) ||
+            declaringType == typeof(ImageHelper))
+        {
+            return patch.Target.Name.StartsWith("Get", StringComparison.Ordinal) ||
+                   patch.Target.Name.StartsWith("Load", StringComparison.Ordinal) ||
+                   patch.Target.Name.StartsWith("Instantiate", StringComparison.Ordinal) ||
+                   patch.Target.Name.Contains("Path", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (!typeof(CharacterModel).IsAssignableFrom(declaringType) &&
+            !typeof(MonsterModel).IsAssignableFrom(declaringType))
+        {
+            return false;
+        }
+
+        if (patch.Target.Name.Equals(nameof(CharacterModel.CreateVisuals), StringComparison.Ordinal) &&
+            (typeof(CharacterModel).IsAssignableFrom(declaringType) ||
+             typeof(MonsterModel).IsAssignableFrom(declaringType)))
+        {
+            return true;
+        }
+
+        if (!patch.Target.Name.StartsWith("get_", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var propertyName = patch.Target.Name[4..];
+        return new[]
+        {
+            "Visual", "Scene", "Portrait", "Icon", "Texture", "Background", "MapMarker", "Path"
+        }.Any(token => propertyName.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Skin Changer owns the character-select baseline.  Every callback kind on these targets
+    // must therefore be removed while the provider is selected; otherwise a prefix can mutate
+    // the model before our rebuild and a finalizer/transpiler can leak the provider into the next
+    // character.  Replay is deliberately limited to postfixes (see the separate predicate).
+    private static bool IsManagedCharacterPresentationPatch(ProviderPatch patch) =>
+        IsCharacterPresentationTarget(patch.Target);
+
+    private static bool IsReplayableCharacterPresentationPatch(ProviderPatch patch) =>
+        patch.Kind == ProviderPatchKind.Postfix &&
+        IsCharacterPresentationTarget(patch.Target);
+
+    private static bool IsManagedNodeReadyPresentationPatch(ProviderPatch patch) =>
+        IsNodeReadyPresentationTarget(patch.Target);
+
+    private static bool IsNodeReadyPresentationTarget(MethodBase target) =>
+        target.Name.Equals("_Ready", StringComparison.Ordinal) &&
+        target.DeclaringType != null &&
+        (typeof(NCreature).IsAssignableFrom(target.DeclaringType) ||
+         typeof(NMerchantRoom).IsAssignableFrom(target.DeclaringType) ||
+         typeof(NRestSiteRoom).IsAssignableFrom(target.DeclaringType) ||
+         typeof(NBossMapPoint).IsAssignableFrom(target.DeclaringType) ||
+         // Merchant skin DLLs usually put their visual override on the button/hand/inventory
+         // node itself. Keep these checks name-based so both formal and beta game assemblies
+         // remain compatible even when one build moves a merchant node to another namespace.
+         target.DeclaringType.Name is
+             "NMerchantButton" or
+             "NMerchantHand" or
+             "NMerchantInventory" or
+             "NMerchantSlot" or
+             "NMerchantDialogue" or
+             "NFakeMerchant");
+
+    /// <summary>
+    /// Replays presentation-only postfixes after Skin Changer has rebuilt the current character
+    /// selection baseline. This makes behavior-driven skins reversible in both directions without
+    /// calling SelectCharacter again (which would replay SFX, screen shake and lobby mutations).
+    /// </summary>
+    public static void ReplaySelectedCharacterPresentation(
+        string providerId,
+        NCharacterSelectScreen screen,
+        NCharacterSelectButton button,
+        CharacterModel character,
+        Action? afterReplay = null)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime))
+        {
+            return;
+        }
+
+        // Some providers create a separate full-screen layer and hide AnimatedBg instead of
+        // replacing the game's character-select scene. Their own "not selected" cleanup cannot
+        // run after Skin Changer has isolated the Harmony postfix, so remember exactly what the
+        // selected presentation callback changes and undo it before the next replay.
+        RestoreCharacterPresentation(runtime, screen);
+        var baseline = CaptureCharacterPresentationState(screen);
+        var replayed = 0;
+        foreach (var patch in runtime.CharacterPresentationPatches)
+        {
+            var instance = typeof(NCharacterSelectScreen).IsAssignableFrom(patch.Target.DeclaringType)
+                ? (object)screen
+                : button;
+            if (!TryBuildCharacterPresentationArguments(
+                    patch.Callback,
+                    patch.Target,
+                    instance,
+                    button,
+                    character,
+                    out var arguments))
+            {
+                continue;
+            }
+
+            try
+            {
+                patch.Callback.Invoke(null, arguments);
+                replayed++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重放 {providerId} 的选角呈现 {patch.Callback.DeclaringType?.FullName}." +
+                    $"{patch.Callback.Name} 失败：{exception.GetBaseException().Message}");
+            }
+        }
+
+        // Let the caller normalize provider-created controls before recording the final mutation
+        // state. This keeps any temporary parent layout change reversible when the skin is left.
+        afterReplay?.Invoke();
+        TrackCharacterPresentationMutation(runtime, screen, baseline);
+
+        if (replayed > 0)
+        {
+            ModLog.Info($"已在恢复游戏基线后重放 {providerId} 的 {replayed} 个选角呈现步骤。");
+        }
+    }
+
+    public static void RestoreCharacterPresentation(NCharacterSelectScreen screen)
+    {
+        foreach (var runtime in ActiveProviderRuntimes.Values)
+        {
+            RestoreCharacterPresentation(runtime, screen);
+        }
+    }
+
+    private static Dictionary<ulong, CharacterPresentationNodeState> CaptureCharacterPresentationState(
+        NCharacterSelectScreen screen)
+    {
+        var result = new Dictionary<ulong, CharacterPresentationNodeState>();
+        foreach (var node in EnumerateNodeTree(screen))
+        {
+            result[node.GetInstanceId()] = new CharacterPresentationNodeState(
+                node,
+                node is CanvasItem canvasItem ? canvasItem.Visible : null,
+                GetCharacterPresentationText(node),
+                node is Control control ? control.ClipContents : null,
+                CaptureCharacterPresentationMetadata(node),
+                CaptureCharacterPresentationResizeConnections(node));
+        }
+
+        return result;
+    }
+
+    private static void TrackCharacterPresentationMutation(
+        ActiveProviderRuntime runtime,
+        NCharacterSelectScreen screen,
+        IReadOnlyDictionary<ulong, CharacterPresentationNodeState> baseline)
+    {
+        var addedRoots = new List<WeakReference<Node>>();
+        foreach (var node in EnumerateNodeTree(screen))
+        {
+            var instanceId = node.GetInstanceId();
+            if (baseline.ContainsKey(instanceId))
+            {
+                continue;
+            }
+
+            var parent = node.GetParent();
+            if (parent == null || baseline.ContainsKey(parent.GetInstanceId()))
+            {
+                addedRoots.Add(new WeakReference<Node>(node));
+            }
+        }
+
+        var visibilityChanges = new List<CharacterPresentationVisibilityChange>();
+        var textChanges = new List<CharacterPresentationTextChange>();
+        var clipChanges = new List<CharacterPresentationClipChange>();
+        var metadataChanges = new List<CharacterPresentationMetadataChange>();
+        var resizeConnections = new List<(WeakReference<Node> Node, Callable Callback)>();
+        foreach (var state in baseline.Values)
+        {
+            if (!GodotObject.IsInstanceValid(state.Node))
+            {
+                continue;
+            }
+
+            if (state.Visible is { } originalVisibility &&
+                state.Node is CanvasItem canvasItem &&
+                canvasItem.Visible != originalVisibility)
+            {
+                visibilityChanges.Add(new CharacterPresentationVisibilityChange(
+                    new WeakReference<CanvasItem>(canvasItem),
+                    originalVisibility,
+                    canvasItem.Visible));
+            }
+
+            foreach (var change in PresentationMetadataChanges.Capture(state.Metadata, CaptureCharacterPresentationMetadata(state.Node)))
+                metadataChanges.Add(new(new(state.Node), change));
+            foreach (var callback in CaptureCharacterPresentationResizeConnections(state.Node).Except(state.ResizeConnections))
+                resizeConnections.Add((new(state.Node), callback));
+
+            if (state.Text is { } originalText &&
+                GetCharacterPresentationText(state.Node) is { } appliedText &&
+                appliedText != originalText)
+            {
+                textChanges.Add(new CharacterPresentationTextChange(
+                    new WeakReference<Node>(state.Node),
+                    originalText,
+                    appliedText));
+            }
+
+            if (state.ClipContents is { } originalClipContents &&
+                state.Node is Control control &&
+                control.ClipContents != originalClipContents)
+            {
+                clipChanges.Add(new CharacterPresentationClipChange(
+                    new WeakReference<Control>(control),
+                    originalClipContents,
+                    control.ClipContents));
+            }
+        }
+
+        if (addedRoots.Count == 0 &&
+            visibilityChanges.Count == 0 &&
+            textChanges.Count == 0 &&
+            clipChanges.Count == 0 && metadataChanges.Count == 0 && resizeConnections.Count == 0)
+        {
+            return;
+        }
+
+        runtime.CharacterPresentationMutations[screen.GetInstanceId()] =
+            new CharacterPresentationMutation(
+                new WeakReference<NCharacterSelectScreen>(screen),
+                addedRoots,
+                visibilityChanges,
+                textChanges,
+                clipChanges,
+                metadataChanges,
+                resizeConnections);
+    }
+
+    private static Dictionary<string, Variant> CaptureCharacterPresentationMetadata(Node node) =>
+        node.GetMetaList().Select(key => (Key: key.ToString(), Value: node.GetMeta(key)))
+            // Flags/IDs used by author UI initialization are reversible; don't retain resource
+            // or node objects through arbitrary metadata while their scenes are being released.
+            .Where(pair => pair.Value.VariantType is Variant.Type.Bool or Variant.Type.Int or Variant.Type.String)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+
+    private static Callable[] CaptureCharacterPresentationResizeConnections(Node node) => node is Control
+        ? node.GetSignalConnectionList(Control.SignalName.Resized).Where(connection => connection.ContainsKey("callable"))
+            .Select(connection => connection["callable"].As<Callable>()).ToArray()
+        : [];
+
+    private static IEnumerable<Node> EnumerateNodeTree(Node root) =>
+        PresentationNodeOwnership.Walk(root,
+            static node => node.GetClass().ToString(), static node => node.GetChildren());
+
+    private static void RestoreCharacterPresentations(ActiveProviderRuntime runtime)
+    {
+        foreach (var mutation in runtime.CharacterPresentationMutations.Values.ToArray())
+        {
+            RestoreCharacterPresentationMutation(mutation);
+        }
+
+        runtime.CharacterPresentationMutations.Clear();
+    }
+
+    private static void RestoreCharacterPresentation(
+        ActiveProviderRuntime runtime,
+        NCharacterSelectScreen screen)
+    {
+        var instanceId = screen.GetInstanceId();
+        if (!runtime.CharacterPresentationMutations.Remove(instanceId, out var mutation))
+        {
+            return;
+        }
+
+        if (!mutation.Screen.TryGetTarget(out var trackedScreen) ||
+            !ReferenceEquals(trackedScreen, screen))
+        {
+            return;
+        }
+
+        RestoreCharacterPresentationMutation(mutation);
+    }
+
+    private static void RestoreCharacterPresentationMutation(CharacterPresentationMutation mutation)
+    {
+        // Parent layout delegates often close over a provider-created button. Disconnect them
+        // before freeing that button, or re-entering/resizing later calls into a freed Control.
+        foreach (var (reference, callback) in mutation.ResizeConnections)
+            if (reference.TryGetTarget(out var node) && GodotObject.IsInstanceValid(node) &&
+                node.IsConnected(Control.SignalName.Resized, callback)) node.Disconnect(Control.SignalName.Resized, callback);
+        foreach (var entry in mutation.MetadataChanges)
+        {
+            if (!entry.Node.TryGetTarget(out var node) || !GodotObject.IsInstanceValid(node)) continue;
+            var change = entry.Change;
+            var hasCurrent = node.HasMeta(change.Key);
+            var current = hasCurrent ? node.GetMeta(change.Key) : default;
+            if (!PresentationMetadataChanges.CanRestore(change, hasCurrent, current)) continue;
+            if (change.HadOriginal) node.SetMeta(change.Key, change.Original);
+            else node.RemoveMeta(change.Key);
+        }
+        foreach (var addedNodeReference in mutation.AddedRoots)
+        {
+            if (!addedNodeReference.TryGetTarget(out var addedNode) ||
+                !GodotObject.IsInstanceValid(addedNode) ||
+                PresentationNodeOwnership.IsRendererOwned(addedNode.GetClass().ToString()))
+            {
+                continue;
+            }
+
+            var parent = addedNode.GetParent();
+            if (parent != null && GodotObject.IsInstanceValid(parent))
+            {
+                parent.RemoveChildSafely(addedNode);
+            }
+
+            addedNode.QueueFreeSafely();
+        }
+
+        foreach (var visibilityChange in mutation.VisibilityChanges)
+        {
+            if (visibilityChange.Node.TryGetTarget(out var canvasItem) &&
+                GodotObject.IsInstanceValid(canvasItem) &&
+                !PresentationNodeOwnership.IsRendererOwned(canvasItem.GetClass().ToString()))
+            {
+                // Preserve a later game/UI update if it replaced the provider's value while the
+                // presentation was active. Only undo the exact value captured from this replay.
+                if (canvasItem.Visible == visibilityChange.AppliedVisibility)
+                {
+                    canvasItem.Visible = visibilityChange.OriginalVisibility;
+                }
+            }
+        }
+
+        foreach (var textChange in mutation.TextChanges)
+        {
+            if (!textChange.Node.TryGetTarget(out var node) ||
+                !GodotObject.IsInstanceValid(node) ||
+                GetCharacterPresentationText(node) != textChange.AppliedText)
+            {
+                continue;
+            }
+
+            SetCharacterPresentationText(node, textChange.OriginalText);
+        }
+
+        foreach (var clipChange in mutation.ClipChanges)
+        {
+            if (clipChange.Node.TryGetTarget(out var control) &&
+                GodotObject.IsInstanceValid(control) &&
+                control.ClipContents == clipChange.AppliedClipContents)
+            {
+                control.ClipContents = clipChange.OriginalClipContents;
+            }
+        }
+    }
+
+    private static string? GetCharacterPresentationText(Node node) =>
+        node switch
+        {
+            Label label => label.Text,
+            RichTextLabel richTextLabel => richTextLabel.Text,
+            _ => null
+        };
+
+    private static void SetCharacterPresentationText(Node node, string text)
+    {
+        switch (node)
+        {
+            case Label label:
+                label.Text = text;
+                break;
+            case RichTextLabel richTextLabel:
+                richTextLabel.Text = text;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// A few complete character skins attach their rendered actor or companion from an NCreature._Ready postfix
+    /// instead of returning it from CharacterModel.CreateVisuals. Live replacement creates a fresh visuals tree but
+    /// deliberately does not call NCreature._Ready again, because the game's own method would duplicate combat state,
+    /// signals, health bars and orb managers. Replay only the selected provider's parameter-compatible postfixes so
+    /// those cosmetic children receive the same setup as a creature created after the skin was selected.
+    /// </summary>
+    public static void ReplaySelectedCreatureReady(string providerId, NCreature creature)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime))
+        {
+            return;
+        }
+
+        var room = NCombatRoom.Instance;
+        var replayed = 0;
+        foreach (var patch in runtime.Patches.Where(patch =>
+                     patch.Kind == ProviderPatchKind.Postfix && IsLiveCreatureInitializationPatch(
+                         patch.Target,
+                         creature,
+                         room)))
+        {
+            if (!TryBuildCreatureInitializationArguments(
+                    patch.Callback,
+                    patch.Target,
+                    creature,
+                    room,
+                    out var arguments))
+            {
+                continue;
+            }
+
+            try
+            {
+                patch.Callback.Invoke(null, arguments);
+                replayed++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重放 {providerId} 的实战生物初始化 {patch.Callback.DeclaringType?.FullName}." +
+                    $"{patch.Callback.Name} 失败：{exception.GetBaseException().Message}");
+            }
+        }
+
+        if (replayed > 0)
+        {
+            ModLog.Info($"已为 {creature.Entity.ModelId.Entry} 重放 {providerId} 的 {replayed} 个实战生物初始化步骤。");
+        }
+    }
+
+    /// <summary>
+    /// Replays parameter-free visual setup attached to a Godot node after a provider is hot-selected
+    /// or when a managed per-owner node reaches _Ready. The node is snapshotted before the replay,
+    /// so added children and common CanvasItem/Node2D/Control mutations can be restored when the
+    /// provider is deselected, replaced for this owner, or replayed again.
+    /// </summary>
+    public static IReadOnlyList<Node> ReplaySelectedNodeReadyBehavior(
+        string providerId,
+        Node node,
+        bool includePrefixes = false)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node))
+        {
+            return [];
+        }
+
+        BeginSelectedNodeReadyTracking(providerId, node);
+        var replayed = 0;
+        try
+        {
+            replayed = InvokeSelectedNodeReadyCallbacks(
+                providerId,
+                runtime,
+                node,
+                includePrefixes,
+                includePostfixes: true);
+        }
+        finally
+        {
+            EndSelectedNodeReadyTracking(providerId, node);
+        }
+
+        var addedRoots = GetTrackedNodeReadyAdditions(runtime, node);
+        if (replayed > 0)
+        {
+            ModLog.Info($"已为现有场景节点重放 {providerId} 的 {replayed} 个外观初始化步骤。");
+        }
+
+        return addedRoots;
+    }
+
+    /// <summary>
+    /// Runs an isolated provider's visual _Ready prefixes before the game's original _Ready.
+    /// Merchant providers use this phase to replace the skeleton resource that the original
+    /// button/hand then binds to. Replaying the same prefix after _Ready leaves the game holding
+    /// a stale MegaSkeleton and breaks hover outlines and hand variants.
+    /// </summary>
+    public static IReadOnlyList<Node> ReplaySelectedNodeReadyPrefixes(
+        string providerId,
+        Node node)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node))
+        {
+            return [];
+        }
+
+        var nodeId = node.GetInstanceId();
+        RestoreNodeReadyMutation(runtime, nodeId);
+        var baseline = new NodeReadyBaseline(
+            new WeakReference<Node>(node),
+            CaptureNodeReadyState(node));
+        var replayed = InvokeSelectedNodeReadyCallbacks(
+            providerId,
+            runtime,
+            node,
+            includePrefixes: true,
+            includePostfixes: false);
+        var mutation = BuildNodeReadyMutation(node, baseline);
+        if (mutation != null)
+        {
+            runtime.NodeReadyMutations[nodeId] = mutation;
+        }
+
+        if (replayed > 0)
+        {
+            ModLog.Info($"已在原生 _Ready 前重放 {providerId} 的 {replayed} 个外观初始化步骤。");
+        }
+
+        return GetTrackedNodeReadyAdditions(runtime, node);
+    }
+
+    /// <summary>
+    /// Completes a split native _Ready replay after the game's original method has initialized
+    /// its fields and signals. Prefix and postfix mutations are merged in reverse application
+    /// order so deselection can restore both without undoing vanilla _Ready state.
+    /// </summary>
+    public static IReadOnlyList<Node> ReplaySelectedNodeReadyPostfixes(
+        string providerId,
+        Node node)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node))
+        {
+            return [];
+        }
+
+        var nodeId = node.GetInstanceId();
+        var baseline = new NodeReadyBaseline(
+            new WeakReference<Node>(node),
+            CaptureNodeReadyState(node));
+        var replayed = InvokeSelectedNodeReadyCallbacks(
+            providerId,
+            runtime,
+            node,
+            includePrefixes: false,
+            includePostfixes: true);
+        var postfixMutation = BuildNodeReadyMutation(node, baseline);
+        if (postfixMutation != null)
+        {
+            runtime.NodeReadyMutations[nodeId] = runtime.NodeReadyMutations.TryGetValue(
+                    nodeId,
+                    out var prefixMutation)
+                ? MergeNodeReadyMutations(prefixMutation, postfixMutation)
+                : postfixMutation;
+        }
+
+        if (replayed > 0)
+        {
+            ModLog.Info($"已在原生 _Ready 后重放 {providerId} 的 {replayed} 个外观初始化步骤。");
+        }
+
+        return GetTrackedNodeReadyAdditions(runtime, node);
+    }
+
+    public static void RestoreSelectedNodeReadyBehavior(string providerId, Node node)
+    {
+        if (ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) &&
+            GodotObject.IsInstanceValid(node))
+        {
+            RestoreNodeReadyMutation(runtime, node.GetInstanceId());
+        }
+    }
+
+    public static void ReplaySelectedCompanionReveal(string providerId, NCreature creature)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime)) return;
+        var entity = creature.Entity;
+        if (entity.PetOwner == null || entity.IsDead || !creature.Visuals.HasSpineAnimation) return;
+        var hiddenBody = creature.Visuals.SpineBody?.BoundObject is CanvasItem { Visible: false };
+        foreach (var patch in runtime.Patches.Where(patch => IsCompanionRevealPresentationPatch(
+                     patch, entity.PetOwner != null, entity.IsDead, hiddenBody)))
+        {
+            if (!TryBuildCreatureInitializationArguments(patch.Callback, patch.Target, creature,
+                    NCombatRoom.Instance, out var arguments)) continue;
+            try
+            {
+                // Some skins hide a newly initialized pet until their summon/revive presentation
+                // reveals it. Hot replacement is neither a new summon nor a gameplay revival.
+                // Run only the selected skin's compatible visual prefix: never call the game's
+                // revive method (which also re-enables hitboxes/UI), nor change HP or summon state.
+                patch.Callback.Invoke(null, arguments);
+                ModLog.Info($"已为 {entity.ModelId.Entry} 重放 {providerId} 的随从显示初始化：{patch.Callback.DeclaringType?.Name}。");
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn($"重放 {providerId} 的随从显示初始化失败：{exception.GetBaseException().Message}");
+            }
+        }
+    }
+
+    private static bool IsCompanionRevealPresentationPatch(
+        ProviderPatch patch, bool isCompanion, bool isDead, bool bodyHidden) =>
+        isCompanion && !isDead && bodyHidden && patch.Kind == ProviderPatchKind.Prefix &&
+        patch.Target.DeclaringType == typeof(NCreature) &&
+        patch.Target.Name == nameof(NCreature.StartReviveAnim);
+
+    private static int InvokeSelectedNodeReadyCallbacks(
+        string providerId,
+        ActiveProviderRuntime runtime,
+        Node node,
+        bool includePrefixes,
+        bool includePostfixes)
+    {
+        var replayed = 0;
+        foreach (var patch in runtime.Patches
+                     .Concat(runtime.NodeReadyPresentationPatches)
+                     .Where(patch =>
+                         ((includePrefixes && patch.Kind == ProviderPatchKind.Prefix) ||
+                          (includePostfixes && patch.Kind == ProviderPatchKind.Postfix)) &&
+                         patch.Target.Name.Equals("_Ready", StringComparison.Ordinal) &&
+                         patch.Target.DeclaringType?.IsInstanceOfType(node) == true)
+                     .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind)))
+        {
+            if (!TryBuildNodeReadyArguments(
+                    patch.Callback,
+                    patch.Target,
+                    node,
+                    out var arguments))
+            {
+                continue;
+            }
+
+            try
+            {
+                patch.Callback.Invoke(null, arguments);
+                replayed++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重放 {providerId} 的场景外观初始化 " +
+                    $"{patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        return replayed;
+    }
+
+    private static IReadOnlyList<Node> GetTrackedNodeReadyAdditions(
+        ActiveProviderRuntime runtime,
+        Node node) =>
+        runtime.NodeReadyMutations.TryGetValue(node.GetInstanceId(), out var mutation)
+            ? mutation.AddedRoots
+                .Select(reference => reference.TryGetTarget(out var addedNode) ? addedNode : null)
+                .Where(addedNode => addedNode != null && GodotObject.IsInstanceValid(addedNode))
+                .Cast<Node>()
+                .ToArray()
+            : [];
+
+    private static NodeReadyMutation MergeNodeReadyMutations(
+        NodeReadyMutation prefix,
+        NodeReadyMutation postfix)
+    {
+        var added = postfix.AddedRoots
+            .Concat(prefix.AddedRoots)
+            .Where(reference => reference.TryGetTarget(out var node) &&
+                                GodotObject.IsInstanceValid(node))
+            .DistinctBy(reference =>
+                reference.TryGetTarget(out var node) ? node.GetInstanceId() : 0UL)
+            .ToArray();
+        // Restore the latest changes first. If both phases touched the same property, the
+        // postfix returns it to the prefix-applied value and the prefix then returns the true
+        // pre-provider value.
+        var changes = postfix.Changes.Concat(prefix.Changes).ToArray();
+        return new NodeReadyMutation(added, changes);
+    }
+
+    /// <summary>
+    /// Replays the isolated room-level visual postfixes for every currently selected full runtime
+    /// provider. Room _Ready has already run by the time a hot appearance switch is requested, so
+    /// invoking these callbacks on the live room is the safe equivalent of rebuilding the room.
+    /// Each provider is tracked independently; leaving it restores only nodes and properties that
+    /// its callback actually introduced.
+    /// </summary>
+    public static IReadOnlyList<(string ProviderId, IReadOnlyList<Node> AddedRoots)>
+        ReplaySelectedRoomReadyBehaviors(Node room, string? onlyProviderId = null)
+    {
+        if (!GodotObject.IsInstanceValid(room))
+        {
+            return [];
+        }
+
+        var results = new List<(string ProviderId, IReadOnlyList<Node> AddedRoots)>();
+        foreach (var providerId in ActiveProviderRuntimes
+                     .Where(pair => pair.Value.NodeReadyPresentationPatches.Any(patch =>
+                         patch.Target.DeclaringType?.IsInstanceOfType(room) == true) &&
+                         (onlyProviderId == null ||
+                          pair.Key.Equals(onlyProviderId, StringComparison.OrdinalIgnoreCase)))
+                     .Select(pair => pair.Key)
+                     .ToArray())
+        {
+            var roots = ReplaySelectedNodeReadyBehavior(providerId, room);
+            results.Add((providerId, roots));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Re-runs the room presentation a style/UI package installed for the merchant it draws.
+    ///
+    /// A hot merchant swap rebuilds the merchant's button and hand from the newly selected skin,
+    /// which drops the nodes the package had attached to the previous ones; the author's merchant
+    /// figure therefore disappeared while its hand (served from its own resource path) stayed. The
+    /// package's own room callback already knows how to attach that presentation, so it is invoked
+    /// again on the nodes that are actually on screen. Only the selected part is re-run, so a package
+    /// never draws its merchant over another skin.
+    /// </summary>
+    public static int ReplayPartTakeoverRoomPresentation(Node room)
+    {
+        if (!GodotObject.IsInstanceValid(room) || PartTakeoverRoots.Count == 0)
+        {
+            return 0;
+        }
+
+        var replayed = 0;
+        foreach (var target in Harmony.GetAllPatchedMethods()
+                     .Where(IsNodeReadyPresentationTarget)
+                     .ToArray())
+        {
+            if (target.DeclaringType?.IsInstanceOfType(room) != true)
+            {
+                continue;
+            }
+
+            var patchInfo = Harmony.GetPatchInfo(target);
+            if (patchInfo == null)
+            {
+                continue;
+            }
+
+            foreach (var patch in patchInfo.Postfixes)
+            {
+                if (!IsFromPartTakeoverRoot(patch.PatchMethod.Module.Assembly) ||
+                    !TryBuildNodeReadyArguments(patch.PatchMethod, target, room, out var arguments))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    patch.PatchMethod.Invoke(null, arguments);
+                    replayed++;
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn(
+                        "重放部件接管包的商店呈现 " +
+                        $"{patch.PatchMethod.DeclaringType?.FullName}.{patch.PatchMethod.Name} 失败：" +
+                        exception.GetBaseException().Message);
+                }
+            }
+        }
+
+        return replayed;
+    }
+
+    /// <summary>
+    /// Stops the merchant reactions a style/UI package installed — its own voice cues and its gate
+    /// on the game's native merchant lines. They belong to the merchant this group selects, so while
+    /// another option is selected the game's own merchant speaks instead. Nothing the package draws
+    /// is touched.
+    /// </summary>
+    public static int SuspendPartTakeoverMerchantFeedback()
+    {
+        if (_partTakeoverFeedbackSuspended)
+        {
+            return 0;
+        }
+
+        var patches = ResolvePartTakeoverMerchantFeedback();
+        if (patches.Count == 0)
+        {
+            return 0;
+        }
+
+        UnpatchProviderCallbacks(patches);
+        SuspendedPartTakeoverFeedback.Clear();
+        SuspendedPartTakeoverFeedback.AddRange(patches);
+        _partTakeoverFeedbackSuspended = true;
+        ModLog.Info(
+            $"已停用部件接管包的 {patches.Count} 个商人语音反馈：当前选的不是它的商人部件，" +
+            "由游戏原版商人发声。");
+        return patches.Count;
+    }
+
+    /// <summary>
+    /// Hands the package's merchant reactions back to its own code once its part is selected again.
+    /// </summary>
+    public static int RestorePartTakeoverMerchantFeedback()
+    {
+        if (!_partTakeoverFeedbackSuspended)
+        {
+            return 0;
+        }
+
+        var patches = SuspendedPartTakeoverFeedback.ToArray();
+        SuspendedPartTakeoverFeedback.Clear();
+        _partTakeoverFeedbackSuspended = false;
+        if (patches.Length == 0)
+        {
+            return 0;
+        }
+
+        PatchProviderCallbacks(patches);
+        ModLog.Info(
+            $"已恢复部件接管包的 {patches.Length} 个商人语音反馈：选中的是它的商人部件，" +
+            "按作者原样发声。");
+        return patches.Length;
+    }
+
+    /// <summary>
+    /// The reaction callbacks the takeover packages installed around the shop, matched by what they
+    /// react to rather than by which package shipped them.
+    /// </summary>
+    private static IReadOnlyList<ProviderPatch> ResolvePartTakeoverMerchantFeedback()
+    {
+        if (PartTakeoverRoots.Count == 0)
+        {
+            return [];
+        }
+
+        var patches = new List<ProviderPatch>();
+        foreach (var target in Harmony.GetAllPatchedMethods().ToArray())
+        {
+            var patchInfo = Harmony.GetPatchInfo(target);
+            if (patchInfo == null)
+            {
+                continue;
+            }
+
+            var entries = patchInfo.Prefixes
+                .Select(patch => (Patch: patch, Kind: ProviderPatchKind.Prefix))
+                .Concat(patchInfo.Postfixes.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Postfix)))
+                .Concat(patchInfo.Transpilers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Transpiler)))
+                .Concat(patchInfo.Finalizers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Finalizer)));
+            foreach (var entry in entries)
+            {
+                if (!IsFromPartTakeoverRoot(entry.Patch.PatchMethod.Module.Assembly) ||
+                    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(
+                        target.DeclaringType?.Name,
+                        target.Name,
+                        entry.Patch.PatchMethod.DeclaringType?.FullName))
+                {
+                    continue;
+                }
+
+                patches.Add(new ProviderPatch(
+                    target,
+                    entry.Patch.PatchMethod,
+                    entry.Kind,
+                    entry.Patch.priority,
+                    entry.Patch.before,
+                    entry.Patch.after,
+                    entry.Patch.debug));
+            }
+        }
+
+        return patches
+            .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind))
+            .ToArray();
+    }
+
+    private static bool IsFromPartTakeoverRoot(Assembly assembly)
+    {
+        var location = assembly.Location;
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            return false;
+        }
+
+        var assemblyPath = NormalizePath(location);
+        return PartTakeoverRoots.Any(root => assemblyPath.StartsWith(
+            root + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Starts tracking a provider's visual changes to an already existing node. This is also
+    /// used by the room lifecycle patches: a provider may have run its _Ready postfix normally
+    /// before the appearance panel is opened, so cleanup must cover that first invocation too.
+    /// </summary>
+    public static void BeginSelectedNodeReadyTracking(string providerId, Node node)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node))
+        {
+            return;
+        }
+
+        var nodeId = node.GetInstanceId();
+        RestoreNodeReadyMutation(runtime, nodeId);
+        runtime.PendingNodeReadyBaselines[nodeId] = new NodeReadyBaseline(
+            new WeakReference<Node>(node),
+            CaptureNodeReadyState(node));
+    }
+
+    /// <summary>
+    /// Finishes a node tracking scope and stores only the mutations introduced by the selected
+    /// provider. Returning no value keeps the API safe for Harmony Prefix/Postfix callers; the
+    /// replay method reads the stored weak references when it needs the newly added roots.
+    /// </summary>
+    public static void EndSelectedNodeReadyTracking(string providerId, Node node)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node) ||
+            !runtime.PendingNodeReadyBaselines.Remove(node.GetInstanceId(), out var baseline))
+        {
+            return;
+        }
+
+        var mutation = BuildNodeReadyMutation(node, baseline);
+        if (mutation != null)
+        {
+            runtime.NodeReadyMutations[node.GetInstanceId()] = mutation;
+        }
+    }
+
+    /// <summary>
+    /// Removes node-ready presentation left on one live scene instance by providers that are not
+    /// selected for that instance. Providers can remain active because another multiplayer owner
+    /// still uses them, so global provider deactivation is not sufficient for per-player cleanup.
+    /// </summary>
+    public static void RestoreUnselectedNodeReadyBehaviors(
+        Node node,
+        IEnumerable<string> selectedProviderIds)
+    {
+        if (!GodotObject.IsInstanceValid(node))
+        {
+            return;
+        }
+
+        var selected = selectedProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var nodeId = node.GetInstanceId();
+        foreach (var pair in ActiveProviderRuntimes.ToArray())
+        {
+            if (!selected.Contains(pair.Key))
+            {
+                RestoreNodeReadyMutation(pair.Value, nodeId);
+            }
+        }
+    }
+
+    public static void RestoreAllNodeReadyBehaviors(Node node)
+    {
+        if (!GodotObject.IsInstanceValid(node))
+        {
+            return;
+        }
+
+        var nodeId = node.GetInstanceId();
+        foreach (var runtime in ActiveProviderRuntimes.Values.ToArray())
+        {
+            RestoreNodeReadyMutation(runtime, nodeId);
+        }
+    }
+
+    private static NodeReadyMutation? BuildNodeReadyMutation(
+        Node node,
+        NodeReadyBaseline baseline)
+    {
+        var baselineIds = baseline.States.Keys.ToHashSet();
+        var addedRoots = EnumerateNodeTree(node)
+            .Where(candidate => !baselineIds.Contains(candidate.GetInstanceId()))
+            .Where(candidate => candidate.GetParent() is not { } parent ||
+                                baselineIds.Contains(parent.GetInstanceId()))
+            .Select(candidate => new WeakReference<Node>(candidate))
+            .ToArray();
+        // Capture the live tree once. The previous implementation captured the entire tree once
+        // per baseline node, which made a large shop scene quadratic and caused visible pauses on
+        // every hot switch.
+        var currentStates = CaptureNodeReadyState(node);
+        var changes = new List<NodeReadyVisualChange>();
+        foreach (var state in baseline.States.Values)
+        {
+            if (!state.Node.TryGetTarget(out var candidate) ||
+                !GodotObject.IsInstanceValid(candidate))
+            {
+                continue;
+            }
+
+            if (!currentStates.TryGetValue(candidate.GetInstanceId(), out var current))
+            {
+                continue;
+            }
+
+            if (!HasNodeReadyVisualChanged(state, current))
+            {
+                continue;
+            }
+
+            changes.Add(new NodeReadyVisualChange(state.Node, state, current));
+        }
+
+        return addedRoots.Length == 0 && changes.Count == 0
+            ? null
+            : new NodeReadyMutation(addedRoots, changes);
+    }
+
+    private static bool HasNodeReadyVisualChanged(
+        NodeReadyVisualState baseline,
+        NodeReadyVisualState current) =>
+        baseline.Visible != current.Visible ||
+        baseline.Modulate != current.Modulate ||
+        baseline.SelfModulate != current.SelfModulate ||
+        baseline.ZIndex != current.ZIndex ||
+        baseline.ZAsRelative != current.ZAsRelative ||
+        baseline.Node2DPosition != current.Node2DPosition ||
+        baseline.Node2DScale != current.Node2DScale ||
+        baseline.Node2DRotation != current.Node2DRotation ||
+        baseline.ControlPosition != current.ControlPosition ||
+        baseline.ControlSize != current.ControlSize ||
+        baseline.ControlScale != current.ControlScale ||
+        baseline.ControlRotation != current.ControlRotation ||
+        baseline.ControlPivotOffset != current.ControlPivotOffset ||
+        baseline.ControlMouseFilter != current.ControlMouseFilter;
+
+    private static Dictionary<ulong, NodeReadyVisualState> CaptureNodeReadyState(Node root)
+    {
+        var result = new Dictionary<ulong, NodeReadyVisualState>();
+        foreach (var node in EnumerateNodeTree(root))
+        {
+            if (!GodotObject.IsInstanceValid(node))
+            {
+                continue;
+            }
+
+            var canvas = node as CanvasItem;
+            var node2d = node as Node2D;
+            var control = node as Control;
+            result[node.GetInstanceId()] = new NodeReadyVisualState(
+                new WeakReference<Node>(node),
+                canvas?.Visible,
+                canvas?.Modulate,
+                canvas?.SelfModulate,
+                canvas?.ZIndex,
+                canvas?.ZAsRelative,
+                node2d?.Position,
+                node2d?.Scale,
+                node2d?.Rotation,
+                control?.Position,
+                control?.Size,
+                control?.Scale,
+                control?.Rotation,
+                control?.PivotOffset,
+                control?.MouseFilter);
+        }
+
+        return result;
+    }
+
+    private static void RestoreNodeReadyBehaviors(ActiveProviderRuntime runtime)
+    {
+        foreach (var mutation in runtime.NodeReadyMutations.Values.ToArray())
+        {
+            RestoreNodeReadyMutation(mutation);
+        }
+
+        runtime.NodeReadyMutations.Clear();
+        runtime.PendingNodeReadyBaselines.Clear();
+    }
+
+    private static void RestoreNodeReadyMutation(
+        ActiveProviderRuntime runtime,
+        ulong nodeId)
+    {
+        if (runtime.NodeReadyMutations.Remove(nodeId, out var mutation))
+        {
+            RestoreNodeReadyMutation(mutation);
+        }
+
+        runtime.PendingNodeReadyBaselines.Remove(nodeId);
+    }
+
+    private static void RestoreNodeReadyMutation(NodeReadyMutation mutation)
+    {
+        foreach (var addedReference in mutation.AddedRoots)
+        {
+            if (!addedReference.TryGetTarget(out var node) ||
+                !GodotObject.IsInstanceValid(node) ||
+                PresentationNodeOwnership.IsRendererOwned(node.GetClass().ToString()))
+            {
+                continue;
+            }
+
+            node.GetParent()?.RemoveChildSafely(node);
+            node.QueueFreeSafely();
+        }
+
+        foreach (var change in mutation.Changes)
+        {
+            if (!change.Node.TryGetTarget(out var node) ||
+                !GodotObject.IsInstanceValid(node) ||
+                PresentationNodeOwnership.IsRendererOwned(node.GetClass().ToString()))
+            {
+                continue;
+            }
+
+            var original = change.Original;
+            var applied = change.Applied;
+            if (node is CanvasItem canvas)
+            {
+                if (original.Visible is { } visible &&
+                    applied.Visible is { } appliedVisible &&
+                    canvas.Visible == appliedVisible)
+                {
+                    canvas.Visible = visible;
+                }
+
+                if (original.Modulate is { } modulate &&
+                    applied.Modulate is { } appliedModulate &&
+                    canvas.Modulate == appliedModulate)
+                {
+                    canvas.Modulate = modulate;
+                }
+
+                if (original.SelfModulate is { } selfModulate &&
+                    applied.SelfModulate is { } appliedSelfModulate &&
+                    canvas.SelfModulate == appliedSelfModulate)
+                {
+                    canvas.SelfModulate = selfModulate;
+                }
+
+                if (original.ZIndex is { } zIndex &&
+                    applied.ZIndex is { } appliedZIndex &&
+                    canvas.ZIndex == appliedZIndex)
+                {
+                    canvas.ZIndex = zIndex;
+                }
+
+                if (original.ZAsRelative is { } zAsRelative &&
+                    applied.ZAsRelative is { } appliedZAsRelative &&
+                    canvas.ZAsRelative == appliedZAsRelative)
+                {
+                    canvas.ZAsRelative = zAsRelative;
+                }
+            }
+
+            if (node is Node2D node2d)
+            {
+                if (original.Node2DPosition is { } position &&
+                    applied.Node2DPosition is { } appliedPosition &&
+                    node2d.Position == appliedPosition)
+                {
+                    node2d.Position = position;
+                }
+
+                if (original.Node2DScale is { } scale &&
+                    applied.Node2DScale is { } appliedScale &&
+                    node2d.Scale == appliedScale)
+                {
+                    node2d.Scale = scale;
+                }
+
+                if (original.Node2DRotation is { } rotation &&
+                    applied.Node2DRotation is { } appliedRotation &&
+                    Mathf.IsEqualApprox(node2d.Rotation, appliedRotation))
+                {
+                    node2d.Rotation = rotation;
+                }
+            }
+
+            if (node is Control control)
+            {
+                if (original.ControlPosition is { } position &&
+                    applied.ControlPosition is { } appliedPosition &&
+                    control.Position == appliedPosition)
+                {
+                    control.Position = position;
+                }
+
+                if (original.ControlSize is { } size &&
+                    applied.ControlSize is { } appliedSize &&
+                    control.Size == appliedSize)
+                {
+                    control.Size = size;
+                }
+
+                if (original.ControlScale is { } scale &&
+                    applied.ControlScale is { } appliedScale &&
+                    control.Scale == appliedScale)
+                {
+                    control.Scale = scale;
+                }
+
+                if (original.ControlRotation is { } rotation &&
+                    applied.ControlRotation is { } appliedRotation &&
+                    Mathf.IsEqualApprox(control.Rotation, appliedRotation))
+                {
+                    control.Rotation = rotation;
+                }
+
+                if (original.ControlPivotOffset is { } pivotOffset &&
+                    applied.ControlPivotOffset is { } appliedPivotOffset &&
+                    control.PivotOffset == appliedPivotOffset)
+                {
+                    control.PivotOffset = pivotOffset;
+                }
+
+                if (original.ControlMouseFilter is { } mouseFilter &&
+                    applied.ControlMouseFilter is { } appliedMouseFilter &&
+                    control.MouseFilter == appliedMouseFilter)
+                {
+                    control.MouseFilter = mouseFilter;
+                }
+            }
+        }
+    }
+
+    private static bool IsLiveCreatureInitializationPatch(
+        MethodBase target,
+        NCreature creature,
+        NCombatRoom? room)
+    {
+        if (target.Name.Equals(nameof(NCreature._Ready), StringComparison.Ordinal) &&
+            target.DeclaringType?.IsInstanceOfType(creature) == true)
+        {
+            return true;
+        }
+
+        // Full presentation packs sometimes add attachment markers, prewarm their VFX, or bind
+        // auxiliary visuals from NCombatRoom.AddCreature instead of NCreature._Ready. A hot swap
+        // does not add the Creature model again, so replay only compatible postfixes after the new
+        // NCreatureVisuals has been installed. Unsupported callbacks are skipped by the argument
+        // builder below rather than being invoked with fabricated state.
+        return room != null &&
+               target.Name.Equals("AddCreature", StringComparison.Ordinal) &&
+               target.DeclaringType?.IsInstanceOfType(room) == true;
+    }
+
+    private static bool IsCharacterPresentationTarget(MethodBase target) =>
+        target.DeclaringType != null &&
+        ((typeof(NCharacterSelectScreen).IsAssignableFrom(target.DeclaringType) &&
+          target.Name.Equals(nameof(NCharacterSelectScreen.SelectCharacter), StringComparison.Ordinal)) ||
+         (typeof(NCharacterSelectButton).IsAssignableFrom(target.DeclaringType) &&
+          target.Name.Equals("Init", StringComparison.Ordinal)));
+
+    private static bool TryBuildCharacterPresentationArguments(
+        MethodInfo callback,
+        MethodBase target,
+        object instance,
+        NCharacterSelectButton button,
+        CharacterModel character,
+        out object?[] arguments)
+    {
+        var parameters = callback.GetParameters();
+        arguments = new object?[parameters.Length];
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameter = parameters[index];
+            var parameterType = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            switch (parameter.Name)
+            {
+                case "__instance" when parameterType.IsInstanceOfType(instance):
+                    arguments[index] = instance;
+                    break;
+                case "__originalMethod" when parameterType == typeof(MethodBase):
+                    arguments[index] = target;
+                    break;
+                case "__runOriginal" when parameterType == typeof(bool):
+                    arguments[index] = true;
+                    break;
+                // Harmony injects a fresh state value for a postfix paired with a prefix.  The
+                // prefix is intentionally isolated, so replay with the neutral value instead of
+                // refusing the callback altogether.  This still lets the visual part of a
+                // postfix (custom scene/title/avatar) run without restoring audio or other
+                // transient state owned by the original prefix.
+                case "__state":
+                    arguments[index] = parameterType.IsValueType
+                        ? Activator.CreateInstance(parameterType)
+                        : null;
+                    break;
+                case "charSelectButton" or "button" when parameterType.IsInstanceOfType(button):
+                    arguments[index] = button;
+                    break;
+                case "characterModel" or "character" or "model" when parameterType.IsInstanceOfType(character):
+                    arguments[index] = character;
+                    break;
+                default:
+                    if (parameter.HasDefaultValue)
+                    {
+                        arguments[index] = parameter.DefaultValue;
+                        break;
+                    }
+
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryBuildCreatureInitializationArguments(
+        MethodInfo callback,
+        MethodBase target,
+        NCreature creature,
+        NCombatRoom? room,
+        out object?[] arguments)
+    {
+        var parameters = callback.GetParameters();
+        arguments = new object?[parameters.Length];
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameter = parameters[index];
+            var parameterType = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            switch (parameter.Name)
+            {
+                case "__instance" when parameterType.IsInstanceOfType(creature):
+                    arguments[index] = creature;
+                    break;
+                case "__instance" when room != null && parameterType.IsInstanceOfType(room):
+                    arguments[index] = room;
+                    break;
+                case "creature" when parameterType.IsInstanceOfType(creature.Entity):
+                    arguments[index] = creature.Entity;
+                    break;
+                case "__originalMethod" when parameterType == typeof(MethodBase):
+                    arguments[index] = target;
+                    break;
+                case "__runOriginal" when parameterType == typeof(bool):
+                    arguments[index] = true;
+                    break;
+                case "__state":
+                    arguments[index] = parameterType.IsValueType
+                        ? Activator.CreateInstance(parameterType)
+                        : null;
+                    break;
+                default:
+                    if (parameter.HasDefaultValue)
+                    {
+                        arguments[index] = parameter.DefaultValue;
+                        break;
+                    }
+
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryBuildNodeReadyArguments(
+        MethodInfo callback,
+        MethodBase target,
+        Node node,
+        out object?[] arguments)
+    {
+        var parameters = callback.GetParameters();
+        arguments = new object?[parameters.Length];
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameter = parameters[index];
+            var parameterType = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            switch (parameter.Name)
+            {
+                case "__instance" when parameterType.IsInstanceOfType(node):
+                    arguments[index] = node;
+                    break;
+                case "__originalMethod" when parameterType == typeof(MethodBase):
+                    arguments[index] = target;
+                    break;
+                case "__runOriginal" when parameterType == typeof(bool):
+                    arguments[index] = true;
+                    break;
+                case "__state":
+                    arguments[index] = parameterType.IsValueType
+                        ? Activator.CreateInstance(parameterType)
+                        : null;
+                    break;
+                default:
+                    if (parameter.HasDefaultValue)
+                    {
+                        arguments[index] = parameter.DefaultValue;
+                        break;
+                    }
+
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsRunEnvironmentPatch(ProviderPatch patch) =>
+        RuntimeProviderScopePolicy.IsRunEnvironmentPatchTarget(
+            patch.Target.DeclaringType?.Name ?? string.Empty,
+            patch.Target.Name);
+
+    private static void EnsureRunEnvironmentCallbackGuards(
+        string providerId,
+        Assembly assembly)
+    {
+        var prefix = new HarmonyMethod(AccessTools.Method(
+            typeof(ManagedSkinModLoader),
+            nameof(RunEnvironmentCallbackPrefix)));
+        var patched = 0;
+        foreach (var method in GetLoadableTypes(assembly)
+                     .Where(type => RuntimeProviderScopePolicy.IsRunEnvironmentControllerType(
+                         type.Name))
+                     .SelectMany(type => type.GetMethods(
+                         BindingFlags.Instance | BindingFlags.Static |
+                         BindingFlags.Public | BindingFlags.NonPublic |
+                         BindingFlags.DeclaredOnly))
+                     .Where(method => method.ReturnType == typeof(void) &&
+                                      !method.IsAbstract &&
+                                      !method.ContainsGenericParameters &&
+                                      method.GetMethodBody() != null &&
+                                      RuntimeProviderScopePolicy.IsRunEnvironmentCallback(
+                                          method.DeclaringType?.Name ?? string.Empty,
+                                          method.Name)))
+        {
+            if (!RunEnvironmentCallbackMethods.Add(method))
+            {
+                continue;
+            }
+
+            RunEnvironmentCallbackHarmony.Patch(method, prefix: prefix);
+            patched++;
+        }
+
+        if (patched > 0)
+        {
+            ModLog.Info(
+                $"已为 {providerId} 的 {patched} 个背景/音乐直接回调安装地区授权保护。 ");
+        }
+    }
+
+    private static bool RunEnvironmentCallbackPrefix(MethodBase __originalMethod)
+    {
+        var assembly = __originalMethod.DeclaringType?.Assembly;
+        return assembly != null &&
+               ProviderIdsByAssembly.TryGetValue(assembly, out var providerIds) &&
+               providerIds.Any(providerId =>
+                   RunEnvironmentProviderIds.Contains(providerId) &&
+                   ActiveProviderRuntimes.ContainsKey(providerId));
+    }
+
+    private static IReadOnlyList<object> DiscoverRunEnvironmentControllers(Assembly assembly)
+    {
+        var controllers = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        foreach (var field in GetLoadableTypes(assembly)
+                     .SelectMany(type => type.GetFields(
+                         BindingFlags.Static | BindingFlags.Public |
+                         BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                     .Where(field => RuntimeProviderScopePolicy.IsRunEnvironmentControllerType(
+                         field.FieldType.Name)))
+        {
+            try
+            {
+                if (field.GetValue(null) is { } controller)
+                {
+                    controllers.Add(controller);
+                }
+            }
+            catch
+            {
+                // Optional provider state may not be initialized on every supported game version.
+            }
+        }
+
+        return controllers.ToArray();
+    }
+
+    private static void StopRunEnvironmentControllers(IEnumerable<object> controllers)
+    {
+        foreach (var controller in controllers)
+        {
+            for (var type = controller.GetType(); type != null; type = type.BaseType)
+            {
+                foreach (var field in type.GetFields(
+                             BindingFlags.Instance | BindingFlags.Public |
+                             BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    try
+                    {
+                        if (field.GetValue(controller) is not AudioStreamPlayer player)
+                        {
+                            continue;
+                        }
+
+                        if (GodotObject.IsInstanceValid(player))
+                        {
+                            player.Stop();
+                            player.QueueFree();
+                        }
+
+                        if (!field.IsInitOnly)
+                        {
+                            field.SetValue(controller, null);
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        ModLog.Warn(
+                            $"停止第三方地区音乐节点失败：{type.FullName}.{field.Name}：" +
+                            exception.GetBaseException().Message);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void ResetRunEnvironmentControllers(IEnumerable<object> controllers)
+    {
+        foreach (var controller in controllers)
+        {
+            try
+            {
+                var reset = controller.GetType().GetMethod(
+                    "OnNativeStopRequested",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    binder: null,
+                    types: Type.EmptyTypes,
+                    modifiers: null);
+                if (reset?.ReturnType == typeof(void))
+                {
+                    reset.Invoke(controller, null);
+                }
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重置第三方地区音乐状态失败：{controller.GetType().FullName}：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static void RestartRunEnvironmentControllersForCombat(
+        IEnumerable<object> controllers,
+        CombatState combatState)
+    {
+        string[] callbackNames = ["OnCombatBegan", "OnCombatStarted", "OnCombatSetUp"];
+        foreach (var controller in controllers)
+        {
+            try
+            {
+                var callback = callbackNames
+                    .SelectMany(name => controller.GetType().GetMethods(
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                        .Where(method => method.Name.Equals(name, StringComparison.Ordinal)))
+                    .FirstOrDefault(method =>
+                    {
+                        var parameters = method.GetParameters();
+                        return method.ReturnType == typeof(void) &&
+                               parameters.Length == 1 &&
+                               parameters[0].ParameterType.IsInstanceOfType(combatState);
+                    });
+                callback?.Invoke(controller, [combatState]);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重新进入第三方战斗音乐状态失败：{controller.GetType().FullName}：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static void UnpatchProviderCallbacks(IEnumerable<ProviderPatch> patches)
+    {
+        var harmony = new Harmony(Entry.ModId + ".provider_runtime");
+        foreach (var patch in patches)
+        {
+            try
+            {
+                harmony.Unpatch(patch.Target, patch.Callback);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"卸载提供者行为补丁 {patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static void PatchProviderCallbacks(IEnumerable<ProviderPatch> patches)
+    {
+        var harmony = new Harmony(Entry.ModId + ".provider_runtime");
+        foreach (var patch in patches)
+        {
+            try
+            {
+                var method = new HarmonyMethod(
+                    patch.Callback,
+                    patch.Priority,
+                    patch.Before,
+                    patch.After,
+                    patch.Debug);
+                _ = patch.Kind switch
+                {
+                    ProviderPatchKind.Prefix => harmony.Patch(patch.Target, prefix: method),
+                    ProviderPatchKind.Postfix => harmony.Patch(patch.Target, postfix: method),
+                    ProviderPatchKind.Transpiler => harmony.Patch(patch.Target, transpiler: method),
+                    ProviderPatchKind.Finalizer => harmony.Patch(patch.Target, finalizer: method),
+                    _ => throw new ArgumentOutOfRangeException(nameof(patch.Kind), patch.Kind, null)
+                };
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"恢复提供者行为补丁 {patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static string NormalizeHarmonyId(string providerId) =>
+        new(providerId.Select(character =>
+            char.IsLetterOrDigit(character) || character is '.' or '-' or '_'
+                ? character
+                : '_').ToArray());
+
+    /// <summary>
+    /// Runs only the selected provider's Harmony postfixes for model visual creation when the
+    /// provider is not eligible for a full selected runtime. This preserves isolation for
+    /// multi-group providers while retaining transforms and scene finishing work that cannot be
+    /// represented by replacement textures alone.
+    /// </summary>
+    public static void ApplySelectedVisualPostfix(
+        string providerId,
+        object model,
+        ref NCreatureVisuals visuals)
+    {
+        if (!ProviderAssemblies.TryGetValue(providerId, out var provider) ||
+            !GodotObject.IsInstanceValid(visuals))
+        {
+            return;
+        }
+
+        try
+        {
+            var assembly = GetOrLoadProviderAssembly(provider);
+            if (assembly == null)
+            {
+                return;
+            }
+
+            if (!VisualPostfixesByProvider.TryGetValue(providerId, out var postfixes))
+            {
+                postfixes = DiscoverVisualPostfixes(assembly);
+                VisualPostfixesByProvider[providerId] = postfixes;
+            }
+
+            foreach (var postfix in postfixes.Where(candidate =>
+                         candidate.TargetType.IsInstanceOfType(model)))
+            {
+                InvokeVisualPostfix(provider, postfix, model, ref visuals);
+            }
+        }
+        catch (Exception exception)
+        {
+            var key = providerId + ":discovery";
+            if (FailedVisualPostfixes.Add(key))
+            {
+                ModLog.Warn(
+                    $"读取 {provider.Name} 的按需视觉后处理失败，已继续使用资源皮肤：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static Assembly? GetOrLoadProviderAssembly(ProviderAssembly provider)
+    {
+        if (!provider.CanActivateBehavior)
+        {
+            return null;
+        }
+
+        if (LoadedProviderAssemblies.TryGetValue(provider.AssemblyPath, out var loadedProviderAssembly))
+        {
+            return loadedProviderAssembly;
+        }
+
+        var fingerprint = ComputeProviderAssemblyFingerprint(provider.AssemblyPath);
+        var assemblyIdentity = TryReadProviderAssemblyIdentity(provider.AssemblyPath);
+        if (LoadedProviderAssembliesByFingerprint.TryGetValue(
+                fingerprint,
+                out loadedProviderAssembly))
+        {
+            CacheLoadedProviderAssembly(
+                provider.AssemblyPath,
+                fingerprint,
+                assemblyIdentity,
+                loadedProviderAssembly);
+            return loadedProviderAssembly;
+        }
+
+        if (assemblyIdentity != null &&
+            LoadedProviderAssembliesByIdentity.TryGetValue(
+                assemblyIdentity,
+                out var loadedIdentity))
+        {
+            if (!loadedIdentity.Fingerprint.Equals(
+                    fingerprint,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                ReportProviderAssemblyIdentityConflict(
+                    provider,
+                    assemblyIdentity,
+                    fingerprint,
+                    loadedIdentity.Fingerprint);
+                return null;
+            }
+
+            CacheLoadedProviderAssembly(
+                provider.AssemblyPath,
+                fingerprint,
+                assemblyIdentity,
+                loadedIdentity.Assembly);
+            return loadedIdentity.Assembly;
+        }
+
+        var assembly = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(candidate =>
+            {
+                try
+                {
+                    return !candidate.IsDynamic &&
+                           !string.IsNullOrEmpty(candidate.Location) &&
+                           Path.GetFullPath(candidate.Location)
+                               .Equals(provider.AssemblyPath, StringComparison.OrdinalIgnoreCase);
+                }
+                catch
+                {
+                    return false;
+                }
+            });
+        if (assembly != null)
+        {
+            CacheLoadedProviderAssembly(
+                provider.AssemblyPath,
+                fingerprint,
+                assemblyIdentity,
+                assembly);
+            return assembly;
+        }
+
+        if (assemblyIdentity != null)
+        {
+            assembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(candidate =>
+                    !candidate.IsDynamic &&
+                    // An assembly loaded from a stream (the cross-version audit's throwaway copy)
+                    // has no location and is never the copy the game loaded from the mod folder.
+                    !string.IsNullOrEmpty(candidate.Location) &&
+                    string.Equals(
+                        candidate.FullName,
+                        assemblyIdentity,
+                        StringComparison.OrdinalIgnoreCase));
+            if (assembly != null)
+            {
+                var loadedFingerprint = TryComputeLoadedAssemblyFingerprint(assembly);
+                if (loadedFingerprint == null ||
+                    !loadedFingerprint.Equals(fingerprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    ReportProviderAssemblyIdentityConflict(
+                        provider,
+                        assemblyIdentity,
+                        fingerprint,
+                        loadedFingerprint);
+                    return null;
+                }
+
+                CacheLoadedProviderAssembly(
+                    provider.AssemblyPath,
+                    fingerprint,
+                    assemblyIdentity,
+                    assembly);
+                return assembly;
+            }
+        }
+
+        var loadContext = AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly());
+        var compatibility = ProviderAssemblyCompatibility.PrepareForCurrentGame(provider.AssemblyPath);
+        var report = compatibility.Report;
+        if (report.UnresolvedReferences.Count > 0)
+        {
+            ModLog.Warn($"{provider.Name} 在游戏 {report.Target} 仍有 {report.UnresolvedReferences.Count} 处静态接口引用未解析：" +
+                string.Join("；", report.UnresolvedReferences.Take(8)) +
+                "。仅报告差异，不猜测替代调用；未执行路径也可能包含这些引用，不能据此判定整款皮肤失效。");
+        }
+        if (compatibility.Assembly is { } rewrittenAssembly)
+        {
+            using (rewrittenAssembly)
+            {
+                using var settingsAssembly = RewriteProviderSettings(rewrittenAssembly!, provider.Name, provider.AssemblyPath);
+                var input = settingsAssembly ?? rewrittenAssembly!;
+                assembly = loadContext?.LoadFromStream(input) ?? Assembly.Load(input.ToArray());
+            }
+
+            CacheLoadedProviderAssembly(
+                provider.AssemblyPath,
+                fingerprint,
+                assemblyIdentity,
+                assembly);
+            ModLog.Info(
+                $"已为 {provider.Name} 转换 {report.Changes.Count} 处已知跨版本接口差异，目标 {report.Target}：" +
+                string.Join("；", report.Changes.Distinct().Take(8)) +
+                "。仅改内存副本；按接口签名匹配，不代表未知接口或运行逻辑已兼容。");
+            return assembly;
+        }
+
+        if (!string.IsNullOrWhiteSpace(report.Failure))
+        {
+            ModLog.Warn($"检查 {provider.Name} 的跨版本运行时接口失败：{report.Failure}");
+        }
+
+        using (var source = File.OpenRead(provider.AssemblyPath))
+        using (var settingsAssembly = RewriteProviderSettings(source, provider.Name, provider.AssemblyPath))
+        {
+            assembly = settingsAssembly != null
+                ? loadContext?.LoadFromStream(settingsAssembly) ?? Assembly.Load(settingsAssembly.ToArray())
+                : loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ?? Assembly.LoadFrom(provider.AssemblyPath);
+        }
+        CacheLoadedProviderAssembly(
+            provider.AssemblyPath,
+            fingerprint,
+            assemblyIdentity,
+            assembly);
+        return assembly;
+    }
+
+    private static MemoryStream? RewriteProviderSettings(Stream source, string name, string assemblyPath)
+    {
+        // Fail closed here: falling through to the original DLL would restore its automatic
+        // all-card factories even when its initialization method is never called.
+        if (StatefulCardArtContract.Read(assemblyPath) is { } cardContract)
+        {
+            var isolated = StatefulCardArtAssemblyCompatibility.Rewrite(source, cardContract, out var factories);
+            ModLog.Info($"已隔离 {name} 的 {factories} 个全局卡牌工厂，动态显示将按单卡选择启用；原文件未修改。");
+            return isolated;
+        }
+        try
+        {
+            var result = MerchantSettingsAssemblyCompatibility.Rewrite(source, out var changed);
+            if (changed > 0) ModLog.Info($"已为 {name} 隔离 {changed} 个原设置全场景入口；原订阅文件未修改。");
+            return result;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"检查 {name} 的原设置接口失败，未放开设置入口：{exception.GetBaseException().Message}");
+            return null;
+        }
+    }
+
+    private static string ComputeProviderAssemblyFingerprint(string assemblyPath)
+    {
+        using var stream = new FileStream(
+            assemblyPath,
+            FileMode.Open,
+            System.IO.FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
+    private static string? TryComputeLoadedAssemblyFingerprint(Assembly assembly)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(assembly.Location)
+                ? null
+                : ComputeProviderAssemblyFingerprint(assembly.Location);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TryReadProviderAssemblyIdentity(string assemblyPath)
+    {
+        try
+        {
+            return AssemblyName.GetAssemblyName(assemblyPath).FullName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void CacheLoadedProviderAssembly(
+        string assemblyPath,
+        string fingerprint,
+        string? assemblyIdentity,
+        Assembly assembly)
+    {
+        LoadedProviderAssemblies[assemblyPath] = assembly;
+        LoadedProviderAssembliesByFingerprint[fingerprint] = assembly;
+        if (assemblyIdentity != null &&
+            !LoadedProviderAssembliesByIdentity.ContainsKey(assemblyIdentity))
+        {
+            LoadedProviderAssembliesByIdentity[assemblyIdentity] =
+                new LoadedProviderAssemblyIdentity(fingerprint, assembly);
+        }
+    }
+
+    private static void ReportProviderAssemblyIdentityConflict(
+        ProviderAssembly provider,
+        string assemblyIdentity,
+        string requestedFingerprint,
+        string? loadedFingerprint)
+    {
+        if (loadedFingerprint != null &&
+            loadedFingerprint.Equals(requestedFingerprint, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!ReportedProviderAssemblyIdentityConflicts.Add(
+                assemblyIdentity + "|" + requestedFingerprint))
+        {
+            return;
+        }
+
+        ModLog.Warn(
+            $"{provider.Name} 的差分包 DLL 与已加载程序集同名但内容不同；" +
+            ".NET 无法在游戏默认加载域中安全并存这两个行为程序集。为避免串用错误代码，" +
+            "当前差分包只接管可独立隔离的 PCK、图片、场景与卡面资源，不执行冲突 DLL。");
+    }
+
+    private static IReadOnlyList<ManagedVisualPostfix> DiscoverVisualPostfixes(Assembly assembly)
+    {
+        return GetLoadableTypes(assembly)
+            .Select(type => (Type: type, Target: GetVisualPatchTarget(type)))
+            .Where(pair => pair.Target != null)
+            .SelectMany(pair => pair.Type
+                .GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(IsPostfixMethod)
+                .Select(method => new ManagedVisualPostfix(pair.Target!, method)))
+            .OrderBy(postfix => postfix.Method.MetadataToken)
+            .ToArray();
+    }
+
+    private static Type? GetVisualPatchTarget(Type patchType)
+    {
+        Type? targetType = null;
+        string? methodName = null;
+        foreach (var attribute in patchType.CustomAttributes.Where(attribute =>
+                     attribute.AttributeType.FullName == "HarmonyLib.HarmonyPatch"))
+        {
+            foreach (var argument in attribute.ConstructorArguments)
+            {
+                if (argument.ArgumentType == typeof(Type))
+                {
+                    targetType = argument.Value as Type;
+                }
+                else if (argument.ArgumentType == typeof(string))
+                {
+                    methodName = argument.Value as string;
+                }
+            }
+
+            foreach (var argument in attribute.NamedArguments)
+            {
+                if (argument.TypedValue.ArgumentType == typeof(Type))
+                {
+                    targetType = argument.TypedValue.Value as Type;
+                }
+                else if (argument.TypedValue.ArgumentType == typeof(string))
+                {
+                    methodName = argument.TypedValue.Value as string;
+                }
+            }
+        }
+
+        if (!string.Equals(methodName, nameof(CharacterModel.CreateVisuals), StringComparison.Ordinal) ||
+            targetType == null ||
+            (targetType != typeof(Creature) &&
+             !typeof(CharacterModel).IsAssignableFrom(targetType) &&
+             !typeof(MonsterModel).IsAssignableFrom(targetType)))
+        {
+            return null;
+        }
+
+        return targetType;
+    }
+
+    private static bool CanReplayVisualPostfix(MethodInfo method, Type targetType) =>
+        method.IsStatic && method.GetParameters().All(parameter =>
+        {
+            var type = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            return parameter.HasDefaultValue || (parameter.Name switch
+            {
+                "__instance" => type.IsAssignableFrom(targetType),
+                "__result" => type.IsAssignableFrom(typeof(NCreatureVisuals)) ||
+                              typeof(NCreatureVisuals).IsAssignableFrom(type),
+                "__originalMethod" => type == typeof(MethodBase),
+                "__runOriginal" => type == typeof(bool),
+                _ => false
+            });
+        });
+
+    private static bool IsPostfixMethod(MethodInfo method) =>
+        method.Name.Equals("Postfix", StringComparison.Ordinal) ||
+        method.CustomAttributes.Any(attribute =>
+            attribute.AttributeType.FullName == "HarmonyLib.HarmonyPostfix");
+
+    private static void InvokeVisualPostfix(
+        ProviderAssembly provider,
+        ManagedVisualPostfix postfix,
+        object model,
+        ref NCreatureVisuals visuals)
+    {
+        var parameters = postfix.Method.GetParameters();
+        var arguments = new object?[parameters.Length];
+        var resultIndex = -1;
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameter = parameters[index];
+            var parameterType = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            switch (parameter.Name)
+            {
+                case "__instance" when parameterType.IsInstanceOfType(model):
+                    arguments[index] = model;
+                    break;
+                case "__result" when parameterType.IsAssignableFrom(typeof(NCreatureVisuals)) ||
+                                      typeof(NCreatureVisuals).IsAssignableFrom(parameterType):
+                    arguments[index] = visuals;
+                    resultIndex = index;
+                    break;
+                case "__originalMethod" when parameterType == typeof(MethodBase):
+                    arguments[index] = AccessTools.Method(postfix.TargetType, nameof(CharacterModel.CreateVisuals));
+                    break;
+                case "__runOriginal" when parameterType == typeof(bool):
+                    arguments[index] = true;
+                    break;
+                default:
+                    if (parameter.HasDefaultValue)
+                    {
+                        arguments[index] = parameter.DefaultValue;
+                        break;
+                    }
+
+                    return;
+            }
+        }
+
+        var key = provider.AssemblyPath + ":" + postfix.Method.MetadataToken;
+        try
+        {
+            var spineSnapshot = CaptureAliasedSpineResource(visuals);
+            var returned = postfix.Method.Invoke(null, arguments);
+            if (resultIndex >= 0 && arguments[resultIndex] is NCreatureVisuals replaced)
+            {
+                visuals = replaced;
+            }
+            else if (returned is NCreatureVisuals returnedVisuals)
+            {
+                visuals = returnedVisuals;
+            }
+
+            RestoreAliasedSpineResource(spineSnapshot);
+
+            if (ReportedVisualPostfixes.Add(key))
+            {
+                ModLog.Info(
+                    $"已按当前选择应用 {provider.Name} 的视觉后处理：" +
+                    $"{postfix.Method.DeclaringType?.FullName}.{postfix.Method.Name}。");
+            }
+        }
+        catch (Exception exception)
+        {
+            if (FailedVisualPostfixes.Add(key))
+            {
+                ModLog.Warn(
+                    $"{provider.Name} 的视觉后处理与当前游戏版本不兼容，已跳过且不会中断游戏：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static AliasedSpineResourceSnapshot? CaptureAliasedSpineResource(
+        NCreatureVisuals visuals)
+    {
+        var spineNode = visuals.GetNodeOrNull<Node>("%Visuals");
+        if (spineNode == null)
+        {
+            return null;
+        }
+
+        var resource = spineNode.Get("skeleton_data_res").As<Resource>();
+        if (resource == null || !TryGetCanonicalAliasPath(resource.ResourcePath, out var canonicalPath))
+        {
+            return null;
+        }
+
+        return new AliasedSpineResourceSnapshot(spineNode, resource, canonicalPath);
+    }
+
+    private static void RestoreAliasedSpineResource(AliasedSpineResourceSnapshot? snapshot)
+    {
+        if (snapshot == null || !GodotObject.IsInstanceValid(snapshot.SpineNode))
+        {
+            return;
+        }
+
+        var current = snapshot.SpineNode.Get("skeleton_data_res").As<Resource>();
+        // A provider commonly reloads the same logical resource through its canonical path. That
+        // may return a stale pre-switch cache entry, so put the already isolated selected resource
+        // back. A genuinely different private path is left untouched.
+        if (current == null ||
+            !current.ResourcePath.Equals(snapshot.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        snapshot.SpineNode.Set("skeleton_data_res", snapshot.Resource);
+        TryRefreshSpineAttachments(snapshot.SpineNode);
+    }
+
+    private static bool TryGetCanonicalAliasPath(string resourcePath, out string canonicalPath)
+    {
+        const string prefix = "res://sts2_skin_runtime/";
+        canonicalPath = string.Empty;
+        if (!resourcePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var relative = resourcePath[prefix.Length..];
+        var sessionSeparator = relative.IndexOf('/');
+        var generationSeparator = sessionSeparator < 0
+            ? -1
+            : relative.IndexOf('/', sessionSeparator + 1);
+        if (generationSeparator < 0 || generationSeparator + 1 >= relative.Length)
+        {
+            return false;
+        }
+
+        canonicalPath = "res://" + relative[(generationSeparator + 1)..];
+        return true;
+    }
+
+    private static void TryRefreshSpineAttachments(Node spineNode)
+    {
+        try
+        {
+            var skeleton = spineNode.Call("get_skeleton").As<GodotObject>();
+            var skin = skeleton?.Call("get_skin").As<GodotObject>();
+            var slots = skeleton?.Call("get_slots").As<Godot.Collections.Array>();
+            var attachments = skin?.Call("get_attachments").As<Godot.Collections.Array>();
+            if (slots == null || attachments == null)
+            {
+                return;
+            }
+
+            foreach (var entryValue in attachments)
+            {
+                var entry = entryValue.As<GodotObject>();
+                if (entry == null)
+                {
+                    continue;
+                }
+
+                var slotIndex = entry.Call("get_slot_index").AsInt32();
+                var attachment = entry.Call("get_attachment");
+                if (attachment.VariantType == Variant.Type.Nil ||
+                    slotIndex < 0 ||
+                    slotIndex >= slots.Count)
+                {
+                    continue;
+                }
+
+                slots[slotIndex].As<GodotObject>()?.Call("set_attachment", attachment);
+            }
+        }
+        catch
+        {
+            // Attachment refresh is a best-effort cache repair after a provider reloaded the same
+            // skeleton path. The selected resource itself has already been restored.
+        }
+    }
+
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException exception)
+        {
+            return exception.Types.OfType<Type>();
+        }
+    }
+
+    private static void NotifyModDetected(Mod mod)
+    {
+        if (InvokeOnModDetectedMethod != null)
+        {
+            InvokeOnModDetectedMethod.Invoke(null, [mod]);
+            return;
+        }
+
+        var handlers = (OnModDetectedField?.GetValue(null) as Delegate)?.GetInvocationList() ?? [];
+        foreach (var handler in handlers)
+        {
+            try
+            {
+                handler.DynamicInvoke(mod);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"通知 Mod 加载监听器 {handler.Method.DeclaringType?.FullName}.{handler.Method.Name} 失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static bool CanBypassOriginalLoader(Mod mod)
+    {
+        var manifest = mod.manifest;
+        if (manifest?.id == null)
+        {
+            return false;
+        }
+
+        var mods = ModManager.Mods;
+        // 即使一个公共库碰巧带有可识别的图片或场景，只要别的 Mod 声明依赖它，
+        // 就必须交回游戏正常加载。否则隔离其 DLL 会让所有依赖者在反射阶段失败。
+        if (IsRequiredByAnotherMod(mod, mods))
+        {
+            return false;
+        }
+
+        if (mods.Any(other =>
+                !ReferenceEquals(other, mod) &&
+                string.Equals(other.manifest?.id, manifest.id, StringComparison.OrdinalIgnoreCase) &&
+                other.state == ModLoadState.Loaded &&
+                !ManagedModInstances.Contains(other)))
+        {
+            return false;
+        }
+
+        if (FrameworkCompatibilityLayer.IsKnownFrameworkHost(manifest.id) &&
+            !FrameworkCompatibilityLayer.IsBundledFrameworkHost(manifest.id))
+        {
+            return false;
+        }
+
+        if (FrameworkCompatibilityLayer.IsBundledFrameworkHost(manifest.id))
+        {
+            // This Mod is only a manifest placeholder once the equivalent API assembly has been
+            // installed. Its own BaseLib/PCK/min-version requirements belong to executable UI and
+            // global patches that are intentionally not loaded.
+            return true;
+        }
+
+        if (manifest.dependencies?.Any(dependency =>
+                !DependencyIsSatisfied(mods, dependency) &&
+                !IsOptionalFrameworkDependencySatisfied(mod, dependency)) == true)
+        {
+            return false;
+        }
+
+        var circularDependencies = CircularDependenciesField!.GetValue(null) as
+            IReadOnlyDictionary<string, string>;
+        if (circularDependencies?.ContainsKey(manifest.id) == true)
+        {
+            return false;
+        }
+
+        // The game refuses a Mod whose declared minimum game version is newer than the running game
+        // (ModManager.TryLoadMod). A cosmetic provider's declaration describes the snapshot its
+        // author built against, so it is verified instead of trusted: the DLL is compiled against
+        // the running game, and only then is the package taken over with the cross-version bridge.
+        var declaredMinimum = manifest.minGameVersion;
+        if (declaredMinimum == null)
+        {
+            return true;
+        }
+
+        ProviderRuntimeAudit? runtimeAudit = null;
+        bool RunsOnCurrentGame()
+        {
+            runtimeAudit = AuditProviderAssembly(mod, declaredMinimum);
+            return runtimeAudit.CanRun;
+        }
+
+        var gameVersion = (GameVersionField!.GetValue(null) as SemanticVersion)?.ToString();
+        var name = manifest.name ?? manifest.id;
+        switch (ProviderMinimumVersionPolicy.Decide(declaredMinimum, gameVersion, manifest.hasDll, RunsOnCurrentGame))
+        {
+            case ProviderMinimumVersionOutcome.VerifiedTakeOver:
+                ModLog.Info(
+                    $"{name} 声明的游戏版本 {declaredMinimum} 高于当前 {gameVersion}；" +
+                    $"已按当前版本核验其皮肤资源与代码（{runtimeAudit?.Describe()}），" +
+                    "本次由本 Mod 接管并桥接跨版本接口，原清单未修改。");
+                return true;
+            case ProviderMinimumVersionOutcome.UnreadableRule:
+                ModLog.Warn(
+                    $"{name} 声明了无法解析的最低游戏版本“{declaredMinimum}”；" +
+                    "不猜测该约束，保持游戏原加载器的处理。");
+                return false;
+            case ProviderMinimumVersionOutcome.Unsupported:
+                ModLog.Warn(
+                    $"{name} 声明的最低游戏版本 {declaredMinimum} 高于当前 {gameVersion}，" +
+                    $"且其代码无法在当前版本运行（{runtimeAudit?.Describe()}）；" +
+                    "保持游戏原加载器的处理，该皮肤本次不可用。");
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    /// <summary>
+    /// Compiles the shipped provider DLL against the running game without executing it. This is the
+    /// evidence that a package may be used although its manifest declares a newer game version.
+    /// </summary>
+    private static ProviderRuntimeAudit AuditProviderAssembly(Mod mod, string declaredMinimum)
+    {
+        var manifest = mod.manifest!;
+        var path = SkinPackagePaths.Resolve(mod.path, manifest.id!, ".dll");
+        var audit = ProviderAssemblyCompatibility.AuditForCurrentGame(path);
+        ModLog.Info(
+            $"{manifest.name ?? manifest.id} 的跨版本运行时核验（清单声明最低游戏版本 {declaredMinimum}）：" +
+            audit.Describe() + "。");
+        return audit;
+    }
+
+    private static bool DependencyIsSatisfied(
+        IEnumerable<Mod> mods,
+        ModDependency dependency)
+    {
+        var loaded = mods.FirstOrDefault(candidate =>
+            candidate.manifest?.id == dependency.id &&
+            candidate.state == ModLoadState.Loaded);
+        if (loaded == null)
+        {
+            return false;
+        }
+
+        if (dependency.minVersion == null)
+        {
+            return true;
+        }
+
+        return SemanticVersion.TryFromString(dependency.minVersion, out var minimum) &&
+               loaded.version != null &&
+               loaded.version.CompareTo(minimum) >= 0;
+    }
+
+    private static bool IsManagedProvider(Mod mod, out SkinProviderProbe provider)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mod.manifest?.id))
+            {
+                provider = null!;
+                return false;
+            }
+
+            var identity = ProviderLookupKey(mod.path, mod.manifest.id);
+            if (ProvidersByIdentity.TryGetValue(identity, out provider!))
+            {
+                return true;
+            }
+
+            if (FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id))
+            {
+                provider = new SkinProviderProbe(
+                    mod.manifest!.id!,
+                    mod.path,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    false);
+                RememberProviderProbe(provider);
+                if (FrameworkCompatibilityLayer.IsBundledFrameworkHost(mod.manifest?.id) &&
+                    !IsRequiredByAnotherMod(mod, ModManager.Mods))
+                {
+                    ModLog.Info(
+                        $"已由内置兼容层接管皮肤框架 {mod.manifest?.name ?? mod.manifest?.id}；" +
+                        "原框架 DLL/PCK 不会执行或全局挂载。");
+                }
+                else
+                {
+                    ModLog.Info(
+                        $"已把皮肤框架 {mod.manifest?.name ?? mod.manifest?.id} 纳入加载顺序检查；" +
+                        "本次不满足安全替代条件，保留原框架执行。");
+                }
+                return true;
+            }
+
+            if (!NegativeProviderIdentities.Add(identity))
+            {
+                provider = null!;
+                return false;
+            }
+
+            var detected = SkinCatalog.ProbeSkinProviders([ToDescriptor(mod)])
+                .FirstOrDefault(probe => probe.RootPath != null);
+            if (detected == null)
+            {
+                provider = null!;
+                return false;
+            }
+
+            RememberProviderProbe(detected);
+            provider = detected;
+            ModLog.Info($"加载时补充识别皮肤提供者：{mod.manifest?.name ?? mod.manifest?.id}。");
+            return true;
+        }
+        catch
+        {
+            provider = null!;
+            return false;
+        }
+    }
+
+    private static string ProviderLookupKey(string root, string manifestId) =>
+        NormalizePath(root) + "\n" + manifestId;
+
+    private static void RememberProviderProbe(SkinProviderProbe provider)
+    {
+        if (provider.RootPath == null) return;
+        var identity = ProviderLookupKey(provider.RootPath, provider.ResourceNamespaceId);
+        ProvidersByIdentity[identity] = provider;
+        ProviderRootPaths.Add(NormalizePath(provider.RootPath));
+        ProviderManifestIds.Add(provider.ResourceNamespaceId);
+        NegativeProviderIdentities.Remove(identity);
+    }
+
+    /// <summary>
+    /// Records that a package keeps loading through the game's own loader while the parts it
+    /// overrides become selectable here. Logged once per package.
+    /// </summary>
+    private static void RememberPartTakeover(SkinProviderProbe provider, string displayName)
+    {
+        if (!PartTakeoverLogged.Add(provider.ResourceNamespaceId))
+        {
+            return;
+        }
+
+        ModLog.Info(
+            $"按部件接管 {displayName}：覆盖 {provider.BaselinePartGroupCount} 个外观分组的部件" +
+            (provider.BaselinePartGroupIds is { Count: > 0 } groups
+                ? $"（{string.Join("、", groups)}）"
+                : string.Empty) +
+            "；原 PCK 与 DLL 由游戏按作者原意完整加载，仅这些部件可在此选择。");
+    }
+
+    private static SkinModDescriptor ToDescriptor(Mod mod)
+    {
+        var manifest = mod.manifest!;
+        var requiredByAnotherMod = IsRequiredByAnotherMod(mod, ModManager.Mods);
+        var exposesSelectableCosmetics = requiredByAnotherMod &&
+                                         ExposesSelectableCosmetics(mod);
+        return new SkinModDescriptor(
+            manifest.id!,
+            manifest.name ?? manifest.id!,
+            manifest.hasPck
+                ? SkinPackagePaths.Resolve(mod.path, manifest.id!, ".pck")
+                : null,
+            OptionalSkinFrameworkPolicy.ShouldTreatAsGameplayBaseline(
+                manifest.affectsGameplay,
+                requiredByAnotherMod,
+                exposesSelectableCosmetics),
+            mod.path,
+            manifest.hasDll);
+    }
+
+    public static bool ShouldTreatAsGameplayBaseline(Mod mod, IEnumerable<Mod> mods)
+    {
+        var manifest = mod.manifest;
+        if (manifest?.id == null)
+        {
+            return true;
+        }
+
+        var requiredByAnotherMod = IsRequiredByAnotherMod(mod, mods);
+        return OptionalSkinFrameworkPolicy.ShouldTreatAsGameplayBaseline(
+            manifest.affectsGameplay,
+            requiredByAnotherMod,
+            requiredByAnotherMod && ExposesSelectableCosmetics(mod));
+    }
+
+    private static bool ExposesSelectableCosmetics(Mod mod)
+    {
+        var manifest = mod.manifest;
+        if (manifest?.id == null || !manifest.hasPck)
+        {
+            return false;
+        }
+
+        var identity = ProviderLookupKey(mod.path, manifest.id);
+        if (ProvidersByIdentity.TryGetValue(identity, out var known))
+        {
+            return HasSelectableCosmetics(known);
+        }
+        if (SelectableCosmeticProbeResults.TryGetValue(identity, out var cached))
+        {
+            return cached;
+        }
+
+        var pckPath = SkinPackagePaths.Resolve(mod.path, manifest.id, ".pck");
+        if (!File.Exists(pckPath))
+        {
+            return false;
+        }
+
+        var probe = SkinCatalog.ProbeSkinProviders(
+                [new SkinModDescriptor(
+                    manifest.id,
+                    manifest.name ?? manifest.id,
+                    pckPath,
+                    AffectsGameplay: false,
+                    mod.path,
+                    manifest.hasDll)])
+            .FirstOrDefault(candidate => candidate.RootPath != null);
+        var result = probe != null && HasSelectableCosmetics(probe);
+        SelectableCosmeticProbeResults[identity] = result;
+        return result;
+    }
+
+    private static bool HasSelectableCosmetics(SkinProviderProbe probe) =>
+        // A framework implements visual getters for all custom characters, but those callbacks
+        // alone are not selectable skins. The DLL-only fallback is still valid for standalone
+        // cosmetic mods; it must not disqualify a required library from the gameplay baseline.
+        probe.HasResourceBackedCosmetics;
+
+    public static bool IsRequiredByAnotherMod(Mod mod, IEnumerable<Mod> mods)
+    {
+        var modId = mod.manifest?.id;
+        if (modId == null)
+        {
+            return false;
+        }
+
+        var dependents = mods
+            .Where(other => !ReferenceEquals(other, mod))
+            .SelectMany(other => other.manifest?.dependencies?
+                .Where(dependency => dependency.id.Equals(
+                    modId,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(dependency => BuildOptionalFrameworkEvidence(other, dependency.id)) ?? [])
+            .ToArray();
+        if (dependents.Length == 0)
+        {
+            return false;
+        }
+
+        return OptionalSkinFrameworkPolicy.IsFrameworkHostRequired(
+            modId,
+            dependents,
+            FrameworkCompatibilityLayer.CompatibilityAssemblyNames);
+    }
+
+    public static bool CanInstallFrameworkCompatibilityAssembly(string assemblyName)
+    {
+        var candidates = new List<OptionalSkinFrameworkEvidence>();
+        var originalFrameworkHostAvailable = false;
+        foreach (var mod in ModManager.Mods)
+        {
+            var manifest = mod.manifest;
+            var modId = manifest?.id;
+            if (string.IsNullOrWhiteSpace(modId) || Entry.IsSelfModId(modId))
+            {
+                continue;
+            }
+
+            if (modId.Equals(assemblyName, StringComparison.OrdinalIgnoreCase))
+            {
+                originalFrameworkHostAvailable |=
+                    (mod.state is ModLoadState.None or ModLoadState.Loaded) &&
+                    IsProviderLoadCandidate(mod);
+                continue;
+            }
+
+            var declaresDependency = manifest!.dependencies?.Any(dependency =>
+                dependency.id.Equals(assemblyName, StringComparison.OrdinalIgnoreCase)) == true;
+            var referencesFramework = FrameworkSkinContractScanner.Scan(mod.path, modId)
+                .Any(contract => contract.FrameworkAssemblyName.Equals(
+                    assemblyName,
+                    StringComparison.OrdinalIgnoreCase));
+            if (declaresDependency || referencesFramework)
+            {
+                candidates.Add(BuildOptionalFrameworkEvidence(mod, assemblyName));
+            }
+        }
+
+        return OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
+            assemblyName,
+            candidates,
+            originalFrameworkHostAvailable);
+    }
+
+    private static bool IsOptionalFrameworkDependencySatisfied(
+        Mod dependent,
+        ModDependency dependency) =>
+        OptionalSkinFrameworkPolicy.CanSatisfyMissingDependency(
+            BuildOptionalFrameworkEvidence(dependent, dependency.id),
+            FrameworkCompatibilityLayer.CompatibilityAssemblyNames);
+
+    private static OptionalSkinFrameworkEvidence BuildOptionalFrameworkEvidence(
+        Mod dependent,
+        string dependencyId)
+    {
+        var dependentId = dependent.manifest?.id ?? string.Empty;
+        var cacheKey = dependentId + "\n" + dependencyId;
+        if (OptionalFrameworkEvidence.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        var allContracts = FrameworkSkinContractScanner.Scan(dependent.path, dependentId);
+        var contracts = allContracts
+            .Where(contract => contract.FrameworkAssemblyName.Equals(
+                dependencyId,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var referencedAssemblyName = contracts.FirstOrDefault()?.FrameworkAssemblyName ??
+                                     allContracts.FirstOrDefault()?.FrameworkAssemblyName ??
+                                     string.Empty;
+        var closureComplete = false;
+        var pckPath = dependent.manifest?.hasPck == true
+            ? Path.Combine(dependent.path, dependentId + ".pck")
+            : null;
+        if (contracts.Length > 0 && pckPath != null && File.Exists(pckPath))
+        {
+            try
+            {
+                using var archive = PckArchive.Open(pckPath);
+                var paths = archive.Paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                closureComplete = contracts
+                    .SelectMany(contract => contract.ResourcePaths)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .All(path =>
+                        paths.Contains(path) ||
+                        paths.Contains(path + ".remap") ||
+                        paths.Contains(path + ".import") ||
+                        ResourceLoader.Exists(path));
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"验证 {dependent.manifest?.name ?? dependentId} 的框架皮肤资源闭包失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        var evidence = new OptionalSkinFrameworkEvidence(
+            dependentId,
+            dependencyId,
+            referencedAssemblyName,
+            contracts.Length > 0,
+            closureComplete);
+        OptionalFrameworkEvidence[cacheKey] = evidence;
+        return evidence;
+    }
+
+    private static string NormalizePath(string path) =>
+        Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    private sealed record ProviderAssembly(
+        string AssemblyPath,
+        string Name,
+        bool HasGodotScripts,
+        bool HasDeclarativeCharacterAssetReplacement,
+        bool CanActivateBehavior);
+
+    private sealed record ProviderAssemblySourceIdentity(
+        string Fingerprint,
+        string AssemblyPath);
+
+    private sealed record LoadedProviderAssemblyIdentity(
+        string Fingerprint,
+        Assembly Assembly);
+
+    private sealed record ActiveProviderRuntime(
+        Assembly Assembly,
+        IReadOnlyList<ProviderPatch> Patches,
+        IReadOnlyList<ProviderPatch> CharacterPresentationPatches,
+        IReadOnlyList<ProviderPatch> NodeReadyPresentationPatches,
+        IReadOnlyList<ProviderPatch> RunEnvironmentPatches,
+        IReadOnlyList<object> RunEnvironmentControllers,
+        bool InitialRunEnvironmentEnabled)
+    {
+        public bool RunEnvironmentEnabled { get; set; } = InitialRunEnvironmentEnabled;
+        public Dictionary<ulong, CharacterPresentationMutation> CharacterPresentationMutations { get; } = [];
+        public Dictionary<ulong, NodeReadyMutation> NodeReadyMutations { get; } = [];
+        public Dictionary<ulong, NodeReadyBaseline> PendingNodeReadyBaselines { get; } = [];
+    }
+
+    private sealed record ProviderRuntimeBlueprint(
+        IReadOnlyList<ProviderPatch> BehaviorPatches,
+        IReadOnlyList<ProviderPatch> CharacterPresentationPatches,
+        IReadOnlyList<ProviderPatch> NodeReadyPresentationPatches);
+
+    private sealed record ProviderNodeProcessState(
+        WeakReference<Node> Node,
+        Node.ProcessModeEnum ProcessMode);
+
+    private sealed record CharacterPresentationNodeState(
+        Node Node,
+        bool? Visible,
+        string? Text,
+        bool? ClipContents,
+        IReadOnlyDictionary<string, Variant> Metadata,
+        IReadOnlyList<Callable> ResizeConnections);
+
+    private sealed record CharacterPresentationMutation(
+        WeakReference<NCharacterSelectScreen> Screen,
+        IReadOnlyList<WeakReference<Node>> AddedRoots,
+        IReadOnlyList<CharacterPresentationVisibilityChange> VisibilityChanges,
+        IReadOnlyList<CharacterPresentationTextChange> TextChanges,
+        IReadOnlyList<CharacterPresentationClipChange> ClipChanges,
+        IReadOnlyList<CharacterPresentationMetadataChange> MetadataChanges,
+        IReadOnlyList<(WeakReference<Node> Node, Callable Callback)> ResizeConnections);
+
+    private sealed record CharacterPresentationMetadataChange(
+        WeakReference<Node> Node, PresentationMetadataChange<Variant> Change);
+
+    private sealed record CharacterPresentationVisibilityChange(
+        WeakReference<CanvasItem> Node,
+        bool OriginalVisibility,
+        bool AppliedVisibility);
+
+    private sealed record CharacterPresentationTextChange(
+        WeakReference<Node> Node,
+        string OriginalText,
+        string AppliedText);
+
+    private sealed record CharacterPresentationClipChange(
+        WeakReference<Control> Node,
+        bool OriginalClipContents,
+        bool AppliedClipContents);
+
+    private sealed record NodeReadyBaseline(
+        WeakReference<Node> Node,
+        IReadOnlyDictionary<ulong, NodeReadyVisualState> States);
+
+    private sealed record NodeReadyVisualState(
+        WeakReference<Node> Node,
+        bool? Visible,
+        Color? Modulate,
+        Color? SelfModulate,
+        int? ZIndex,
+        bool? ZAsRelative,
+        Vector2? Node2DPosition,
+        Vector2? Node2DScale,
+        float? Node2DRotation,
+        Vector2? ControlPosition,
+        Vector2? ControlSize,
+        Vector2? ControlScale,
+        float? ControlRotation,
+        Vector2? ControlPivotOffset,
+        Control.MouseFilterEnum? ControlMouseFilter);
+
+    private sealed record NodeReadyVisualChange(
+        WeakReference<Node> Node,
+        NodeReadyVisualState Original,
+        NodeReadyVisualState Applied);
+
+    private sealed record NodeReadyMutation(
+        IReadOnlyList<WeakReference<Node>> AddedRoots,
+        IReadOnlyList<NodeReadyVisualChange> Changes);
+
+    private sealed record ProviderPatch(
+        MethodBase Target,
+        MethodInfo Callback,
+        ProviderPatchKind Kind,
+        int Priority,
+        string[] Before,
+        string[] After,
+        bool Debug);
+
+    private enum ProviderPatchKind
+    {
+        Prefix,
+        Postfix,
+        Transpiler,
+        Finalizer
+    }
+
+    private sealed record ManagedVisualPostfix(Type TargetType, MethodInfo Method);
+
+    private sealed record AliasedSpineResourceSnapshot(
+        Node SpineNode,
+        Resource Resource,
+        string CanonicalPath);
+
+}
+
+[HarmonyPatch]
+internal static class GodotScriptPathRegistrationCompatibilityPatch
+{
+    // Godot's ScriptManagerBridge stores script paths in a private Dictionary and uses Add rather
+    // than an idempotent assignment. Complete skin providers commonly register their C# scenes
+    // once from Skin Changer and once again from their own initializer; the second call otherwise
+    // aborts the provider's whole visual session with a duplicate-key exception. A repeat of one
+    // declaration is skipped - the identical type, or the same module reached through another copy
+    // of the pack. A genuine path collision between different scripts is deliberately left to
+    // Godot so it cannot silently select the wrong script; that one is caught by
+    // GodotScriptRegistrationSessionGuard so it still cannot end the session.
+    private static bool Prepare() => FindTarget() != null;
+
+    private static MethodBase TargetMethod() =>
+        FindTarget() ?? throw new MissingMethodException(
+            "Godot.Bridge.ScriptManagerBridge.PathScriptTypeBiMap.Add");
+
+    private static bool Prefix(object __instance, string scriptPath, Type scriptType)
+    {
+        var mapField = __instance.GetType().GetField(
+            "_pathTypeMap",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (mapField?.GetValue(__instance) is not IDictionary<string, Type> map ||
+            !map.TryGetValue(scriptPath, out var existingType))
+        {
+            return true;
+        }
+
+        return !GodotScriptPathRegistrationPolicy.IsIdempotentRepeat(existingType, scriptType);
+    }
+
+    private static MethodBase? FindTarget()
+    {
+        var bridgeType = typeof(GodotObject).Assembly.GetType(
+            "Godot.Bridge.ScriptManagerBridge");
+        var mapType = bridgeType?.GetNestedType(
+            "PathScriptTypeBiMap",
+            BindingFlags.NonPublic);
+        return mapType?.GetMethod(
+            "Add",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(string), typeof(Type)],
+            modifiers: null);
+    }
+}
+
+[HarmonyPatch]
+internal static class GodotScriptRegistrationSessionGuard
+{
+    // Godot aborts the entire assembly scan on the first path it already holds, and a managed skin
+    // pack calls that scan from inside its own initializer. On the reported machines that
+    // duplicate-key exception escaped the pack's initializer and Skin Changer rolled the provider's
+    // behaviour patches back, so the skin still had its resources but never its model. A repeated
+    // path therefore has to stay inside the registration call: the mapping Godot already made stays
+    // authoritative, the visual session keeps running, and the exact path is logged so the player
+    // can hand it to the pack author. Every other registration failure still propagates.
+    private static bool Prepare() => FindTarget() != null;
+
+    private static MethodBase TargetMethod() =>
+        FindTarget() ?? throw new MissingMethodException(
+            "Godot.Bridge.ScriptManagerBridge.LookupScriptsInAssembly");
+
+    private static Exception? Finalizer(Assembly __0, Exception __exception)
+    {
+        if (!GodotScriptPathRegistrationPolicy.IsHarmlessDuplicate(__exception))
+        {
+            return __exception;
+        }
+
+        var path = GodotScriptPathRegistrationPolicy.DuplicatePath(__exception);
+        ModLog.Warn(
+            $"注册 {__0.GetName().Name} 的 Godot 场景脚本时遇到重复路径" +
+            (path is null ? string.Empty : $" {path}") +
+            "：已保留先注册的映射并继续本次视觉会话；" +
+            "若该皮肤缺模型或缺交互，请把这条日志连同路径反馈给皮肤作者。");
+        return null;
+    }
+
+    private static MethodBase? FindTarget()
+    {
+        var bridgeType = typeof(GodotObject).Assembly.GetType(
+            "Godot.Bridge.ScriptManagerBridge");
+        return bridgeType?
+            .GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .FirstOrDefault(method =>
+                method.Name.Equals("LookupScriptsInAssembly", StringComparison.Ordinal) &&
+                method.GetParameters() is [{ ParameterType: var parameterType }] &&
+                parameterType == typeof(Assembly));
+    }
+}
+
+[HarmonyPatch]
+internal static class ManagedSkinModLoadPatch
+{
+    private static MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(ModManager), "TryLoadMod");
+
+    private static bool Prefix(Mod mod) => !ManagedSkinModLoader.TryManage(mod);
+
+    private static void Postfix(Mod mod)
+    {
+        if (FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id))
+            FrameworkCompatibilityLayer.TryBindOriginalFramework();
+    }
+}

@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="LegacyMerchantCommandFixture.cs" />
+    <ProjectReference Include="../STS2SkinChanger.SettingsFixture/STS2SkinChanger.SettingsFixture.csproj" />
+    <ProjectReference Include="../STS2SkinChanger.WorkshopBootstrapFixture/STS2SkinChanger.WorkshopBootstrapFixture.csproj" />
+    <ProjectReference Include="../STS2SkinChanger.ScriptPathFixture/STS2SkinChanger.ScriptPathFixture.csproj" />
+    <ProjectReference Include="../../STS2SkinChanger/STS2SkinChanger.csproj" />
+    <ProjectReference Include="../../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj" />
+    <Reference Include="sts2">
+      <HintPath>$(GameAssemblyDir)/sts2.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>$(GameAssemblyDir)/GodotSharp.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(GameAssemblyDir)/0Harmony.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Steamworks.NET">
+      <HintPath>$(GameAssemblyDir)/Steamworks.NET.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Sentry.Godot" Condition="Exists('$(GameAssemblyDir)/Sentry.Godot.dll')">
+      <HintPath>$(GameAssemblyDir)/Sentry.Godot.dll</HintPath>
+      <Private>true</Private>
+      <IncludeRuntimeDependency>true</IncludeRuntimeDependency>
+    </Reference>
+  </ItemGroup>
+</Project>

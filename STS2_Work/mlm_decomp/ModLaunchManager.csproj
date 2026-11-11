@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>ModLaunchManager</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <TargetFramework>netcoreapp9.0</TargetFramework>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <PropertyGroup>
+    <RootNamespace />
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="ModLaunchManager.THIRD-PARTY-NOTICES.txt" />
+    <None Remove="ModLaunchManager.Localization.table.json" />
+    <None Remove="ModLaunchManager.Localization.locales.zh-Hans.json" />
+    <EmbeddedResource Include="ModLaunchManager.THIRD-PARTY-NOTICES.txt" LogicalName="ModLaunchManager.THIRD-PARTY-NOTICES.txt" />
+    <EmbeddedResource Include="ModLaunchManager.Localization.table.json" LogicalName="ModLaunchManager.Localization.table.json" />
+    <EmbeddedResource Include="ModLaunchManager.Localization.locales.zh-Hans.json" LogicalName="ModLaunchManager.Localization.locales.zh-Hans.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="0Harmony" />
+    <Reference Include="sts2" />
+    <Reference Include="GodotSharp" />
+    <Reference Include="Steamworks.NET" />
+  </ItemGroup>
+</Project>

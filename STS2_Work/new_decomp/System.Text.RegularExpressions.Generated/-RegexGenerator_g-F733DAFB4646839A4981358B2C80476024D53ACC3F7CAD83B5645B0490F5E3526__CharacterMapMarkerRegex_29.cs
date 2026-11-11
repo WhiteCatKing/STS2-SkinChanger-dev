@@ -1,0 +1,137 @@
+using System.CodeDom.Compiler;
+using System.Runtime.CompilerServices;
+
+namespace System.Text.RegularExpressions.Generated;
+
+[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+internal sealed class _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterMapMarkerRegex_29 : Regex
+{
+	private sealed class RunnerFactory : RegexRunnerFactory
+	{
+		private sealed class Runner : RegexRunner
+		{
+			protected override void Scan(ReadOnlySpan<char> inputSpan)
+			{
+				if (TryFindNextPossibleStartingPosition(inputSpan) && !TryMatchAtCurrentPosition(inputSpan))
+				{
+					runtextpos = inputSpan.Length;
+				}
+			}
+
+			private bool TryFindNextPossibleStartingPosition(ReadOnlySpan<char> inputSpan)
+			{
+				int num = runtextpos;
+				if (num <= inputSpan.Length - 46 && num == 0)
+				{
+					return true;
+				}
+				runtextpos = inputSpan.Length;
+				return false;
+			}
+
+			private bool TryMatchAtCurrentPosition(ReadOnlySpan<char> inputSpan)
+			{
+				int num = runtextpos;
+				int start = num;
+				int num2 = 0;
+				ReadOnlySpan<char> span = inputSpan.Slice(num);
+				if (num != 0)
+				{
+					UncaptureUntil(0);
+					return false;
+				}
+				char c;
+				if ((uint)span.Length < 41u || !span.StartsWith("res://images/pac", StringComparison.OrdinalIgnoreCase) || (((c = span[16]) | 0x20) != 107 && c != 'K') || !span.Slice(17).StartsWith("ed/map/icons/map_mar", StringComparison.OrdinalIgnoreCase) || (((c = span[37]) | 0x20) != 107 && c != 'K') || !span.Slice(38).StartsWith("er_", StringComparison.OrdinalIgnoreCase))
+				{
+					UncaptureUntil(0);
+					return false;
+				}
+				num += 41;
+				span = inputSpan.Slice(num);
+				num2 = num;
+				int num3 = span.IndexOfAny('.', '/');
+				if (num3 < 0)
+				{
+					num3 = span.Length;
+				}
+				if (num3 == 0)
+				{
+					UncaptureUntil(0);
+					return false;
+				}
+				span = span.Slice(num3);
+				num += num3;
+				Capture(1, num2, num);
+				if (span.IsEmpty || span[0] != '.')
+				{
+					UncaptureUntil(0);
+					return false;
+				}
+				if ((uint)span.Length < 2u)
+				{
+					UncaptureUntil(0);
+					return false;
+				}
+				switch (span[1])
+				{
+				case 'P':
+				case 'p':
+					if ((uint)span.Length < 4u || !span.Slice(2).StartsWith("ng", StringComparison.OrdinalIgnoreCase))
+					{
+						UncaptureUntil(0);
+						return false;
+					}
+					num += 4;
+					span = inputSpan.Slice(num);
+					break;
+				case 'T':
+				case 't':
+					if ((uint)span.Length < 5u || !span.Slice(2).StartsWith("res", StringComparison.OrdinalIgnoreCase))
+					{
+						UncaptureUntil(0);
+						return false;
+					}
+					num += 5;
+					span = inputSpan.Slice(num);
+					break;
+				default:
+					UncaptureUntil(0);
+					return false;
+				}
+				if (num < inputSpan.Length - 1 || ((uint)num < (uint)inputSpan.Length && inputSpan[num] != '\n'))
+				{
+					UncaptureUntil(0);
+					return false;
+				}
+				runtextpos = num;
+				Capture(0, start, num);
+				return true;
+				[MethodImpl(MethodImplOptions.AggressiveInlining)]
+				void UncaptureUntil(int capturePosition)
+				{
+					while (Crawlpos() > capturePosition)
+					{
+						Uncapture();
+					}
+				}
+			}
+		}
+
+		protected override RegexRunner CreateInstance()
+		{
+			return new Runner();
+		}
+	}
+
+	internal static readonly _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterMapMarkerRegex_29 Instance = new _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterMapMarkerRegex_29();
+
+	private _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterMapMarkerRegex_29()
+	{
+		pattern = "^res://images/packed/map/icons/map_marker_([^/.]+)\\.(?:png|tres)$";
+		roptions = RegexOptions.IgnoreCase;
+		Regex.ValidateMatchTimeout(_003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__Utilities.s_defaultTimeout);
+		internalMatchTimeout = _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__Utilities.s_defaultTimeout;
+		factory = new RunnerFactory();
+		capsize = 2;
+	}
+}

@@ -1,0 +1,44 @@
+--- OLD/STS2SkinChanger.Core\FrameworkCardVisualGuard.cs
++++ NEW/STS2SkinChanger.Core\FrameworkCardVisualGuard.cs
+@@ -46,9 +46,9 @@
+ 
+ 	internal static void EnsureInstalled()
+ 	{
+-		//IL_00df: Unknown result type (might be due to invalid IL or missing references)
+-		//IL_00e4: Unknown result type (might be due to invalid IL or missing references)
+-		//IL_00f7: Expected O, but got Unknown
++		//IL_00de: Unknown result type (might be due to invalid IL or missing references)
++		//IL_00e3: Unknown result type (might be due to invalid IL or missing references)
++		//IL_00f6: Expected O, but got Unknown
+ 		if (!_discoveryDirty)
+ 		{
+ 			return;
+@@ -63,7 +63,7 @@
+ 			Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+ 			foreach (Assembly assembly in assemblies)
+ 			{
+-				Type type = assembly.GetType("STS2RitsuLib.Scaffolding.Content.Patches.ModCharacterOwnedVisualOverrideHelper", throwOnError: false);
++				Type type = TryGetType(assembly, "STS2RitsuLib.Scaffolding.Content.Patches.ModCharacterOwnedVisualOverrideHelper");
+ 				if (type == null)
+ 				{
+ 					continue;
+@@ -86,6 +86,19 @@
+ 					}
+ 				}
+ 			}
++		}
++	}
++
++	internal static Type? TryGetType(Assembly assembly, string name)
++	{
++		try
++		{
++			return assembly.GetType(name, throwOnError: false);
++		}
++		catch (TypeLoadException ex)
++		{
++			ModLog.Warn($"解析 {assembly.GetName().Name} 的 {name} 失败，本轮跳过该程序集：{ex.Message}");
++			return null;
+ 		}
+ 	}
+ 

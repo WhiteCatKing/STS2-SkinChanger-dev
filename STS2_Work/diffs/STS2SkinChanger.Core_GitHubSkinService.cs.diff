@@ -1,0 +1,20 @@
+--- OLD/STS2SkinChanger.Core\GitHubSkinService.cs
++++ NEW/STS2SkinChanger.Core\GitHubSkinService.cs
+@@ -138,7 +138,7 @@
+ 		return _client ?? (_client = new GitHubSkinClient(new HttpClientHandler
+ 		{
+ 			AllowAutoRedirect = false
+-		}, "STS2-SkinChanger/1.0.19.0"));
++		}, "STS2-SkinChanger/1.0.19.11"));
+ 	}
+ 
+ 	public static void StartRefresh()
+@@ -453,7 +453,7 @@
+ 				ModLog.Warn("GitHub 皮肤 " + entry.FullName + " 扫描未识别：" + text);
+ 				return new GitHubScanResult(null, Array.Empty<string>(), text);
+ 			}
+-			string[] array = WorkshopSubmissionCodec.Encode(workshopScanResult.Item, "1.0.19.0", GameVersion());
++			string[] array = WorkshopSubmissionCodec.Encode(workshopScanResult.Item, "1.0.19.11", GameVersion());
+ 			ModLog.Info($"GitHub 皮肤 {entry.FullName} 扫描完成：识别到 {workshopScanResult.Item.Targets.Length} 项，生成 {array.Length} 段信息码。");
+ 			return new GitHubScanResult(workshopScanResult.Item, array, "");
+ 		}

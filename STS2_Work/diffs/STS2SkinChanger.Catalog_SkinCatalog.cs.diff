@@ -1,0 +1,394 @@
+--- OLD/STS2SkinChanger.Catalog\SkinCatalog.cs
++++ NEW/STS2SkinChanger.Catalog\SkinCatalog.cs
+@@ -290,6 +290,14 @@
+ 	private const int SubstantialPackResourceCount = 24;
+ 
+ 	internal static readonly HashSet<string> KnownAncientIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "darv", "neow", "nonupeipe", "orobas", "pael", "tanx", "tezcatara", "vakuu" };
++
++	internal static readonly IReadOnlyDictionary<string, string[]> SharedAnimationModelIds = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
++	{
++		["cultists"] = new string[2] { "calcified_cultist", "damp_cultist" },
++		["decimillipede"] = new string[4] { "decimillipede_elite", "decimillipede_segment_back", "decimillipede_segment_front", "decimillipede_segment_middle" },
++		["kaiser_crab"] = new string[1] { "kaiser_crab_boss" },
++		["bowlbug"] = new string[4] { "bowlbug_egg", "bowlbug_nectar", "bowlbug_rock", "bowlbug_silk" }
++	};
+ 
+ 	private static readonly ConditionalWeakTable<PckArchive, EventTables> EventTableCache = new ConditionalWeakTable<PckArchive, EventTables>();
+ 
+@@ -1637,6 +1645,7 @@
+ 			{
+ 				if (selections.TryGetValue(fullRuntimeProviderGroup, out string value2) && SelectionUsesProvider(fullRuntimeProviderGroup, value2, item))
+ 				{
++					ModLog.Info($"分组 {fullRuntimeProviderGroup} 的皮肤 {item} 被 {requestedProviderId} 接管，退回原版。");
+ 					updates[fullRuntimeProviderGroup] = "__base__";
+ 				}
+ 			}
+@@ -1651,6 +1660,7 @@
+ 					SkinOption skinOption = _groups.First((SkinGroup group) => group.Id.Equals(ownedGroupId, StringComparison.OrdinalIgnoreCase)).Options.FirstOrDefault((SkinOption candidate) => !candidate.IsComposition && candidate.EffectiveProviderId.Equals(requestedProviderId, StringComparison.OrdinalIgnoreCase));
+ 					if (skinOption != null)
+ 					{
++						ModLog.Info($"全量运行时提供者 {requestedProviderId} 同步应用到分组 {ownedGroupId}（选择 {groupId} 时）。");
+ 						updates[ownedGroupId] = skinOption.Id;
+ 					}
+ 				}
+@@ -5722,281 +5732,282 @@
+ 			"merchant" => "商人", 
+ 			"fake_merchant_monster" => "商人？？？", 
+ 			"byrdpip" => "异鸟宝宝", 
++			"cultists" => "邪教徒", 
+ 			_ => id.Replace('_', ' ').Trim().CapitalizeWords(), 
+ 		};
+ 	}
+ 
+ 	[GeneratedRegex("^res://animations/(?:characters|character_select|merchant|rest_site)/([^/]+)/", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CharacterPathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CharacterPathRegex_6.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterPathRegex_6.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?:^|/)card_portraits/([^/]+)/", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CardPortraitGroupRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CardPortraitGroupRegex_7.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CardPortraitGroupRegex_7.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("/(?:card_portraits|[^/]*card[^/]*\\.sprites|cards?|card_art|cardart)/", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CardArtPathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CardArtPathRegex_8.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CardArtPathRegex_8.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://animations/monsters/([^/]+)/", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex MonsterPathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__MonsterPathRegex_9.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__MonsterPathRegex_9.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^(?:res://animations/backgrounds/merchant_room/|res://animations/customs/merchant/|res://scenes/rooms/merchant_button\\.tscn$|res://scenes/merchant/(?!characters/)[^/]+\\.tscn$)", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex MerchantAppearancePathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__MerchantAppearancePathRegex_10.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__MerchantAppearancePathRegex_10.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^(?:res://animations/backgrounds/fake_merchant_room/(?:top|hand)/.*|res://scenes/backgrounds/fake_merchant_event_encounter/.*|res://scenes/events/custom/fake_merchant(?:_button|_inventory)?\\.tscn)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex FakeMerchantAppearancePathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__FakeMerchantAppearancePathRegex_11.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__FakeMerchantAppearancePathRegex_11.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://animations/backgrounds/(?:fake_)?merchant_room/hand/", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex MerchantHandPartPathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__MerchantHandPartPathRegex_12.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__MerchantHandPartPathRegex_12.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/creature_visuals/([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CreatureVisualSceneRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CreatureVisualSceneRegex_13.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CreatureVisualSceneRegex_13.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/screens/char_select/char_select_bg_([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CharacterSelectSceneRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CharacterSelectSceneRegex_14.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterSelectSceneRegex_14.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?:^|/)char_select_bg_([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AnyCharacterSelectSceneRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AnyCharacterSelectSceneRegex_15.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AnyCharacterSelectSceneRegex_15.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/merchant/characters/([^/.]+)_merchant\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex MerchantCharacterSceneRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__MerchantCharacterSceneRegex_16.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__MerchantCharacterSceneRegex_16.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/rest_site/characters/([^/.]+)_rest_site\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex RestSiteCharacterSceneRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RestSiteCharacterSceneRegex_17.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RestSiteCharacterSceneRegex_17.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/events/background_scenes/([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AncientBackgroundSceneRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AncientBackgroundSceneRegex_18.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AncientBackgroundSceneRegex_18.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://animations/backgrounds/([^/]+)/", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AncientBackgroundAnimationRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AncientBackgroundAnimationRegex_19.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AncientBackgroundAnimationRegex_19.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/ancients/(?<id>.+?)_(?<kind>character|character_sleeping|character_mask|background_cover)\\.(?:png|webp|jpe?g|svg)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AncientLayerImageRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AncientLayerImageRegex_20.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AncientLayerImageRegex_20.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/(?:ancients/)?(?<id>[^/.]+?)(?:_placeholder)?\\.(?:png|webp|jpe?g|svg)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AncientStaticImageRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AncientStaticImageRegex_21.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AncientStaticImageRegex_21.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/packed/character_select/char_select_([^/.]+?)(?:_locked)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CharacterSelectIconRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CharacterSelectIconRegex_22.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterSelectIconRegex_22.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/ui/top_panel/character_icon_([^/.]+?)(?:_outline)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CharacterUiTextureRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CharacterUiTextureRegex_23.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterUiTextureRegex_23.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/atlases/relic(?:_outline)?_atlas\\.sprites/[^/]+\\.tres$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex RelicAtlasSpriteRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RelicAtlasSpriteRegex_24.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RelicAtlasSpriteRegex_24.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/atlases/relic(?:_outline)?_atlas\\.png$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex RelicAtlasTextureRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RelicAtlasTextureRegex_25.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RelicAtlasTextureRegex_25.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?m)^\\s*(?<property>region|margin)\\s*=\\s*Rect2\\(\\s*(?<x>-?[0-9.]+)\\s*,\\s*(?<y>-?[0-9.]+)\\s*,\\s*(?<width>-?[0-9.]+)\\s*,\\s*(?<height>-?[0-9.]+)\\s*\\)", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AtlasTextureRectRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AtlasTextureRectRegex_26.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AtlasTextureRectRegex_26.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("(?m)^\\s*filter_clip\\s*=\\s*true\\s*$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AtlasTextureFilterClipRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AtlasTextureFilterClipRegex_27.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AtlasTextureFilterClipRegex_27.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/ui/character_icons/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CharacterIconSceneRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CharacterIconSceneRegex_28.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterIconSceneRegex_28.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/packed/map/icons/map_marker_([^/.]+)\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CharacterMapMarkerRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CharacterMapMarkerRegex_29.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterMapMarkerRegex_29.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/packed/map/ancients/ancient_node_([^/.]+?)(?:_outline)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AncientMapIconRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AncientMapIconRegex_30.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AncientMapIconRegex_30.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/ui/run_history/([^/.]+?)(?:_outline)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex AncientRunHistoryIconRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__AncientRunHistoryIconRegex_31.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__AncientRunHistoryIconRegex_31.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://custom/scenes/screens/char_select/char_select_bg_([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex RuntimeCharacterSelectSceneRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RuntimeCharacterSelectSceneRegex_32.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RuntimeCharacterSelectSceneRegex_32.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://custom/images/packed/character_select/char_select_([^/.]+?)(?:_locked)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex RuntimeCharacterSelectIconRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RuntimeCharacterSelectIconRegex_33.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RuntimeCharacterSelectIconRegex_33.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/creature_visuals/templates/([^/.]+?)_template\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex RuntimeCreatureTemplateRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RuntimeCreatureTemplateRegex_34.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RuntimeCreatureTemplateRegex_34.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/merchant/characters/templates/([^/.]+?)_merchant_template\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex RuntimeMerchantTemplateRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RuntimeMerchantTemplateRegex_35.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RuntimeMerchantTemplateRegex_35.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/rest_site/characters/templates/([^/.]+?)_rest_site_template\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex RuntimeRestSiteTemplateRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RuntimeRestSiteTemplateRegex_36.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RuntimeRestSiteTemplateRegex_36.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://custom/scenes/ui/character_icons/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex RuntimeCharacterIconTemplateRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__RuntimeCharacterIconTemplateRegex_37.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__RuntimeCharacterIconTemplateRegex_37.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://scenes/ui/character_icons/templates/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex CharacterIconTemplateRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__CharacterIconTemplateRegex_38.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__CharacterIconTemplateRegex_38.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://images/ui/hands/multiplayer_hand_([^/.]+?)_(?:paper|point|rock|scissors)\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex MultiplayerHandRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__MultiplayerHandRegex_39.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__MultiplayerHandRegex_39.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^res://waifu_assets/[^/]+/(.+)$", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex WaifuAssetsPathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__WaifuAssetsPathRegex_40.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__WaifuAssetsPathRegex_40.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("\"(res://[^\"]+)\"", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex ResourcePathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__ResourcePathRegex_41.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__ResourcePathRegex_41.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+?\\.(?:spatlas|spskel|ctex|tscn|tres|cs|gdc|gd|gdshader|scn|res|png|webp|jpe?g|svg|skel|atlas|json|ogg|wav|mp3)(?=[\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]|$)", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex EmbeddedResourcePathRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__EmbeddedResourcePathRegex_42.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__EmbeddedResourcePathRegex_42.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("^uid=\"uid://[^\"]+\"\\r?\\n", RegexOptions.IgnoreCase | RegexOptions.Multiline)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex UidLineRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__UidLineRegex_43.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__UidLineRegex_43.Instance;
+ 	}
+ 
+ 	[GeneratedRegex("\\s+uid=\"uid://[^\"]+\"", RegexOptions.IgnoreCase)]
+-	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.36724")]
++	[GeneratedCode("System.Text.RegularExpressions.Generator", "9.0.14.41315")]
+ 	private static Regex UidAttributeRegex()
+ 	{
+-		return _003CRegexGenerator_g_003EF9DF85223856F272B24EE82753C4A5A20C0AE7D821D932DC7E4619D879C4C0F22__UidAttributeRegex_44.Instance;
++		return _003CRegexGenerator_g_003EF733DAFB4646839A4981358B2C80476024D53ACC3F7CAD83B5645B0490F5E3526__UidAttributeRegex_44.Instance;
+ 	}
+ 
+ 	private static EventTables ReadEventTables(PckArchive archive)

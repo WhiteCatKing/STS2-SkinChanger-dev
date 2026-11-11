@@ -1,0 +1,2723 @@
+using Godot;
+using HarmonyLib;
+using System.Runtime.CompilerServices;
+using System.Diagnostics;
+using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Entities.UI;
+using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes.Cards;
+using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
+using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Screens;
+using MegaCrit.Sts2.Core.Nodes.Screens.CardLibrary;
+using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
+using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Core;
+
+namespace STS2SkinChanger.Ui;
+
+internal static class CardSkinControls
+{
+    private const string SelectorName = "STS2CardSkinSelector";
+    private const string PriorityButtonName = "CardSkinPriorityButton";
+    private const string PresetButtonName = "CardSkinPresetButton";
+    private const string PriorityOverlayName = "STS2CardSkinPriorityOverlay";
+    private const string PriorityPanelName = "Panel";
+    private const string PriorityPanelMarginName = "Margin";
+    private const string PriorityContentName = "PriorityContent";
+    private const string PresetOverlayName = "STS2CardSkinPresetOverlay";
+    private const string PresetPanelName = "Panel";
+    private const string PresetPanelMarginName = "Margin";
+    private const string PresetContentName = "PresetContent";
+    private const string AvailabilityFilterName = "STS2SkinnedCardsOnly";
+    private const string AvailabilityFilterMeta = "sts2_skinned_cards_only";
+    private const string GroupMeta = "sts2_card_skin_group";
+    private const string SourceIndicatorName = "STS2CardSkinSources";
+    private const string SourceSignatureMeta = "sts2_card_skin_source_signature";
+    private const float CardVisualRightEdge = 150f;
+    private const float CardVisualBottomEdge = 211f;
+    private const string NormalTextBackgroundOverlayName = "STS2ManagedNormalTextBackgroundOverlay";
+    private const string FullFrameOverlayName = "STS2ManagedFullFrameOverlay";
+    private const string AncientBorderPath =
+        "res://images/atlases/compressed.sprites/card_template/ancient_card_border.tres";
+    private const string AncientBannerPath =
+        "res://images/atlases/ui_atlas.sprites/card/ancient_banner.tres";
+    private const string AncientBannerMaterialPath =
+        "res://materials/cards/banners/card_banner_ancient_mat.tres";
+    private static readonly System.Reflection.MethodInfo ReloadCardMethod =
+        AccessTools.Method(typeof(NCard), "Reload");
+    private static readonly System.Reflection.MethodInfo UpdateLibraryFilterMethod =
+        AccessTools.Method(typeof(NCardLibrary), "UpdateFilter", [typeof(bool)]);
+    private static readonly ConditionalWeakTable<NCard, CardLayoutState> BaselineLayouts = new();
+    private static readonly ConditionalWeakTable<NCard, CardPresentationState> PresentationLayouts = new();
+    private static readonly ConditionalWeakTable<NCard, CardPreviewState> PreviewModes = new();
+    private static readonly ConditionalWeakTable<NCard, CardBuiltInOverlayVisibility> BuiltInOverlays = new();
+    private static readonly System.Reflection.FieldInfo? BuiltInOverlayField =
+        AccessTools.Field(typeof(NCard), "_cardOverlay");
+    private static readonly System.Reflection.FieldInfo? HighlightShaderMaterialField =
+        AccessTools.Field(typeof(NCardHighlight), "_shaderMaterial");
+    private static Texture2D? _normalTextBackgroundCoverTexture;
+
+    public static void Attach(NCardLibrary screen)
+    {
+        SkinService.InitializeCardGroupsAfterModels();
+        var bottom = screen.GetNodeOrNull<VBoxContainer>("Sidebar/MarginContainer/BottomVBox");
+        if (bottom == null || bottom.GetNodeOrNull<HBoxContainer>(SelectorName) != null)
+        {
+            return;
+        }
+
+        var selector = new HBoxContainer
+        {
+            Name = SelectorName,
+            CustomMinimumSize = new Vector2(0, 40),
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            Visible = false
+        };
+        var priorityOverlay = CreatePriorityOverlay();
+        screen.AddChild(priorityOverlay);
+        priorityOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        var presetOverlay = CreatePresetOverlay();
+        screen.AddChild(presetOverlay);
+        presetOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        var priorityButton = new Button
+        {
+            Name = PriorityButtonName,
+            CustomMinimumSize = new Vector2(154, 40),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            Alignment = HorizontalAlignment.Center
+        };
+        ContextualSkinControls.ApplyGameTheme(priorityButton);
+        priorityButton.AddThemeFontSizeOverride("font_size", 19);
+        priorityButton.Pressed += () => OpenPriorityOverlay(screen, selector, priorityOverlay);
+        selector.AddChild(priorityButton);
+
+        var presetButton = new Button
+        {
+            Name = PresetButtonName,
+            CustomMinimumSize = new Vector2(94, 40),
+            Alignment = HorizontalAlignment.Center
+        };
+        ContextualSkinControls.ApplyGameTheme(presetButton);
+        presetButton.AddThemeFontSizeOverride("font_size", 18);
+        presetButton.Pressed += () => OpenPresetOverlay(screen, selector, presetOverlay);
+        selector.AddChild(presetButton);
+
+        bottom.AddChild(selector);
+        bottom.MoveChild(selector, 0);
+
+        NLibraryStatTickbox? availabilityFilter = null;
+        var filterScene = ResourceLoader.Load<PackedScene>(
+            "res://scenes/screens/card_library/card_library_tickbox.tscn");
+        if (filterScene != null)
+        {
+            availabilityFilter = filterScene.Instantiate<NLibraryStatTickbox>(
+                PackedScene.GenEditState.Disabled);
+            availabilityFilter.Name = AvailabilityFilterName;
+            bottom.AddChild(availabilityFilter);
+            bottom.MoveChild(availabilityFilter, 1);
+            availabilityFilter.SetLabel(ModLocalization.Get(ModText.SkinnedCardsOnly));
+            availabilityFilter.IsTicked = false;
+            availabilityFilter.Connect(
+                NTickbox.SignalName.Toggled,
+                Callable.From<NTickbox>(tickbox =>
+                    SetAvailabilityFilter(screen, AvailabilityFilterMeta, tickbox.IsTicked)));
+        }
+
+        ShowFirstAvailableGroup(selector);
+        ModLocalization.Bind(screen, () =>
+        {
+            availabilityFilter?.SetLabel(ModLocalization.Get(ModText.SkinnedCardsOnly));
+            var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+            if (string.IsNullOrWhiteSpace(groupId))
+            {
+                ShowFirstAvailableGroup(selector);
+            }
+            else
+            {
+                Populate(selector, groupId);
+            }
+
+            if (priorityOverlay.Visible)
+            {
+                BuildPriorityOverlay(screen, selector, priorityOverlay);
+            }
+
+            if (presetOverlay.Visible)
+            {
+                BuildPresetOverlay(screen, selector, presetOverlay);
+            }
+
+            RefreshSourceIndicators(screen);
+        });
+    }
+
+    public static void ShowForFilter(NCardLibrary screen, NCardPoolFilter filter)
+    {
+        if (!filter.IsSelected)
+        {
+            return;
+        }
+
+        var selector = screen.GetNodeOrNull<HBoxContainer>(
+            $"Sidebar/MarginContainer/BottomVBox/{SelectorName}");
+        if (selector == null)
+        {
+            return;
+        }
+
+        Populate(selector, GetGroupId(filter));
+        // The native filter can reuse already-bound cards before this postfix updates the
+        // category. Recolor their tabs after switching the priority-list context.
+        RefreshSourceIndicators(screen);
+    }
+
+    public static void SyncToSelectedFilter(NCardLibrary screen)
+    {
+        var selector = screen.GetNodeOrNull<HBoxContainer>(
+            $"Sidebar/MarginContainer/BottomVBox/{SelectorName}");
+        if (selector == null)
+        {
+            return;
+        }
+
+        var selected = Descendants(screen)
+            .OfType<NCardPoolFilter>()
+            .FirstOrDefault(filter => filter.IsSelected && FindGroup(GetGroupId(filter)) != null);
+        if (selected != null)
+        {
+            Populate(selector, GetGroupId(selected));
+        }
+        else
+        {
+            ShowFirstAvailableGroup(selector);
+        }
+        RefreshSourceIndicators(screen);
+    }
+
+    public static void ReplacePortrait(CardModel card, ref Texture2D result) =>
+        SkinService.ReplaceCardPortrait(card, ref result);
+
+    public static void UpdateLibrarySourceIndicators(NCard card)
+    {
+        if (card.Model == null ||
+            HasAncestor<NInspectCardScreen>(card) ||
+            !HasAncestor<NCardLibrary>(card))
+        {
+            RemoveSourceIndicators(card);
+            return;
+        }
+
+        NCardLibrary? library = null;
+        for (var parent = card.GetParent(); parent != null; parent = parent.GetParent())
+            if (parent is NCardLibrary screen) { library = screen; break; }
+        var selector = library?.GetNodeOrNull<HBoxContainer>(
+            $"Sidebar/MarginContainer/BottomVBox/{SelectorName}");
+        var displayGroupId = selector?.GetMeta(GroupMeta, string.Empty).AsString();
+        var sources = SkinService.GetCardSkinSources(card.Model, displayGroupId);
+        if (sources.Count == 0)
+        {
+            RemoveSourceIndicators(card);
+            return;
+        }
+
+        var inheritedText = card.Model.Rarity == CardRarity.Ancient && !card.Model.Pool.IsColorless &&
+                            SkinService.GetCardOverrideSelection(card.Model).Equals(
+                                SkinService.InheritCardSelectionId, StringComparison.OrdinalIgnoreCase)
+            ? InheritedSelectionText(card.Model) : null;
+        var signature = ModLocalization.CurrentLanguage + "\n" + displayGroupId + "\n" + inheritedText + "\n" +
+                        string.Join("\n", sources.Select(source =>
+                            $"{source.OptionId}:{source.Enabled}:{source.ColorIndex}:{source.IsCurrent}"));
+        var indicatorParent = card.GetNodeOrNull<Control>("%CardContainer") ?? card;
+        var existing = indicatorParent.GetNodeOrNull<Control>(SourceIndicatorName);
+        if (existing != null &&
+            existing.GetMeta(SourceSignatureMeta, string.Empty).AsString() == signature)
+        {
+            return;
+        }
+
+        RemoveSourceIndicators(card);
+        var tooltip = BuildSourceTooltip(sources, inheritedText);
+        const float tabHeight = 12f;
+        const float tabBottomInset = 36f;
+        var height = sources.Count * tabHeight;
+        var bottom = CardVisualBottomEdge - tabBottomInset;
+        var indicator = new VBoxContainer
+        {
+            Name = SourceIndicatorName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            TooltipText = tooltip,
+            AnchorLeft = 0f,
+            AnchorTop = 0f,
+            AnchorRight = 0f,
+            AnchorBottom = 0f,
+            OffsetLeft = CardVisualRightEdge - 4,
+            OffsetTop = bottom - height,
+            OffsetRight = CardVisualRightEdge + 36,
+            OffsetBottom = bottom
+        };
+        indicator.AddThemeConstantOverride("separation", 0);
+        indicator.SetMeta(SourceSignatureMeta, signature);
+
+        foreach (var source in sources.Reverse())
+        {
+            var color = SourceColor(source.ColorIndex);
+            color.A = source.Enabled || source.IsCurrent ? 1f : 0.45f;
+            var tab = new Panel
+            {
+                CustomMinimumSize = new Vector2(source.IsCurrent ? 22 : 15, tabHeight),
+                SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin,
+                MouseFilter = Control.MouseFilterEnum.Stop,
+                TooltipText = tooltip
+            };
+            tab.AddThemeStyleboxOverride("panel", CreateSourceTabStyle(color));
+            indicator.AddChild(tab);
+        }
+
+        indicatorParent.AddChild(indicator);
+        var shadow = indicatorParent.GetNodeOrNull<CanvasItem>("Shadow");
+        if (shadow != null)
+        {
+            indicatorParent.MoveChild(indicator, shadow.GetIndex() + 1);
+        }
+    }
+
+    private static string BuildSourceTooltip(IReadOnlyList<CardSkinSourceState> sources, string? inheritedText)
+    {
+        var lines = new List<string>();
+        var current = sources.FirstOrDefault(source => source.IsCurrent);
+        if (current != null)
+        {
+            lines.Add(string.Format(
+                ModLocalization.Get(ModText.CurrentCardSource),
+                ModLocalization.DisplayOptionName(current.Name)));
+            if (inheritedText != null) lines.Add(inheritedText);
+        }
+
+        lines.Add(string.Format(
+            ModLocalization.Get(ModText.AvailableCardSources),
+            string.Join(" · ", sources.Select(source =>
+                ModLocalization.DisplayOptionName(source.Name)))));
+        return string.Join("\n", lines);
+    }
+
+    internal static string InheritedSelectionText(CardModel card)
+    {
+        var text = ModLocalization.Get(ModText.FollowCategory);
+        // Only disambiguate overlapping Ancient categories; ordinary selectors stay short.
+        if (card.Rarity != CardRarity.Ancient || card.Pool.IsColorless) return text;
+        var groupId = SkinService.GetCardInheritedGroupId(card);
+        if (groupId == null) return text;
+        if (groupId.Equals("ancients", StringComparison.OrdinalIgnoreCase))
+            return text + " · " + ModLocalization.Get(ModText.OtherCategoryAncients);
+        try
+        {
+            var character = ModelDb.AllCharacters.FirstOrDefault(model => model.CardPool.Title.Equals(
+                groupId, StringComparison.OrdinalIgnoreCase));
+            if (character != null) return text + " · " + character.Title.GetFormattedText();
+        }
+        catch { /* A missing Mod title must not prevent the card from being displayed. */ }
+        return text + " · " + (FindGroup(groupId)?.DisplayName ?? groupId);
+    }
+
+    private static Color SourceColor(int index)
+    {
+        const float goldenRatioConjugate = 0.61803398875f;
+        var hue = (0.12f + index * goldenRatioConjugate) % 1f;
+        return Color.FromHsv(hue, 0.72f, 0.96f);
+    }
+
+    private static StyleBoxFlat CreateSourceTabStyle(Color color) => new()
+    {
+        BgColor = color,
+        CornerRadiusTopLeft = 6,
+        CornerRadiusTopRight = 6,
+        CornerRadiusBottomRight = 6,
+        CornerRadiusBottomLeft = 6
+    };
+
+    private static void RemoveSourceIndicators(NCard card)
+    {
+        var indicatorParent = card.GetNodeOrNull<Control>("%CardContainer") ?? card;
+        var indicator = indicatorParent.GetNodeOrNull<Control>(SourceIndicatorName);
+        if (indicator == null)
+        {
+            return;
+        }
+
+        indicator.GetParent()?.RemoveChild(indicator);
+        indicator.QueueFree();
+    }
+
+    private static bool HasAncestor<T>(Node node)
+        where T : Node
+    {
+        for (var current = node.GetParent(); current != null; current = current.GetParent())
+        {
+            if (current is T)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static void CaptureBaselineLayout(NCard card)
+    {
+        BaselineLayouts.Remove(card);
+        BaselineLayouts.Add(card, CardLayoutState.Capture(card));
+    }
+
+    public static void RestoreBaselineLayout(NCard card)
+    {
+        CardSurfaceView.Release(card);
+        StatefulCardArtView.BeforeRefresh(card, reload: true);
+        if (PresentationLayouts.TryGetValue(card, out var presentation))
+        {
+            foreach (var addedNode in presentation.AddedNodes)
+            {
+                if (!GodotObject.IsInstanceValid(addedNode) || addedNode.IsQueuedForDeletion())
+                {
+                    continue;
+                }
+
+                addedNode.GetParent()?.RemoveChild(addedNode);
+                addedNode.QueueFree();
+            }
+
+            PresentationLayouts.Remove(card);
+        }
+
+        if (BaselineLayouts.TryGetValue(card, out var state))
+        {
+            // NCard comes from a node pool, and the beta combat queue also rebinds an existing
+            // node to the network-resolved CardModel just before execution. Never restore a
+            // previous model's portrait/frame state into the newly assigned model.
+            if (state.BelongsTo(card.Model))
+            {
+                state.Restore();
+            }
+            else
+            {
+                BaselineLayouts.Remove(card);
+            }
+        }
+    }
+
+    internal static void ReleasePresentationForReuse(NCard card)
+    {
+        CardSurfaceView.Release(card);
+        // Pool return clears _model directly; set_Model also assigns the new model BEFORE
+        // Reload. Restore while the old model still owns this snapshot, or hidden text and
+        // type plaques become the next card's baseline (native Reload does not unhide them).
+        // Reparenting within hand/drag/queue is NOT reuse and must retain its selected skin.
+        StatefulCardArtView.Release(card);
+        if (PresentationLayouts.TryGetValue(card, out _)) RestoreBaselineLayout(card);
+        BaselineLayouts.Remove(card);
+        PreviewModes.Remove(card);
+    }
+
+    private static void TrackAddedPresentationNode(NCard card, Node node)
+    {
+        PresentationLayouts.GetValue(card, static _ => new CardPresentationState([])).AddedNodes.Add(node);
+        SendPresentationBehindCardVfx(card, node);
+    }
+
+    /// <summary>
+    /// Keeps our own card faces under the card's VFX layer. A full-frame skin card is added as the
+    /// last child of the card container, so it drew above %CardVfxContainer and swallowed the
+    /// transform shine ("卡面盖在特效上面"). Moving it before that branch restores the game's own
+    /// stacking: portrait and frame, then effects.
+    /// </summary>
+    private static void SendPresentationBehindCardVfx(NCard card, Node node)
+    {
+        if (node.GetParent() == null)
+        {
+            return;
+        }
+
+        var vfx = card.GetNodeOrNull<Node>("%CardVfxContainer");
+        if (vfx == null)
+        {
+            vfx = card.GetNodeOrNull<Node>("CardVfxContainer");
+        }
+
+        if (vfx == null || !GodotObject.IsInstanceValid(vfx) || ReferenceEquals(node, vfx))
+        {
+            return;
+        }
+
+        // Climb to the branch that is a direct child of our node's parent, then move our node in
+        // front of it. That works whether the VFX container is a sibling or sits deeper.
+        var target = vfx;
+        while (target.GetParent() != null && !ReferenceEquals(target.GetParent(), node.GetParent()))
+        {
+            target = target.GetParent();
+        }
+
+        if (target.GetParent() == null || !ReferenceEquals(target.GetParent(), node.GetParent()))
+        {
+            return;
+        }
+
+        if (node.GetIndex() > target.GetIndex())
+        {
+            node.GetParent().MoveChild(node, target.GetIndex());
+        }
+    }
+
+
+    private static void ReleaseSelectedPresentation(NCard card)
+    {
+        // Do not discard the lease without restoring it when a skin is disabled by its own
+        // settings, or when a card editor acquires the frame. Leave unrelated UI-only cards alone.
+        if (PresentationLayouts.TryGetValue(card, out _)) RestoreBaselineLayout(card);
+    }
+
+    public static void ReapplyQueuedCardPortraits(NCardPlayQueue queue)
+    {
+        foreach (var card in queue.GetChildren().OfType<NCard>())
+        {
+            if (!GodotObject.IsInstanceValid(card) || card.Model == null)
+            {
+                continue;
+            }
+
+            // v0.111 refreshes the portrait again while cards enter and execute from the play
+            // queue. Reassert the exact per-card selection after that queue-owned refresh so a
+            // pooled TextureRect cannot keep another card's art.
+            ApplySelectedPortraitToNode(card, ExternalCardVisualBridge.GetOwnership(card));
+            ExternalCardVisualBridge.SynchronizeProvider(card);
+        }
+    }
+
+    internal static bool HasCurrentCardLayout(NCard card) =>
+        card.Model != null && BaselineLayouts.TryGetValue(card, out var baseline) &&
+        baseline.BelongsTo(card.Model);
+
+    internal static void ReapplyCardAfterTreeEntry(NCard card)
+    {
+        // Moving a hand card into its drag/queue holder re-enters the tree without Reload or
+        // UpdateVisuals. Exported skin packs also patch this boundary. The first tree entry is
+        // before _Ready, so only restore nodes whose current model has a captured native layout.
+        if (!HasCurrentCardLayout(card)) return;
+        var ownership = ExternalCardVisualBridge.GetOwnership(card);
+        // Tree entry does not reset native visuals. Keep the current hover/fade state instead
+        // of restoring the old Reload snapshot; the guard removes unselected provider reentry
+        // callbacks, and final presentation still respects explicitly edited layers.
+        ApplySelectedPresentation(card, ownership);
+        ApplySelectedPortraitToNode(card, ownership);
+        StatefulCardArtView.Apply(card, ownership);
+        ExternalCardVisualBridge.SynchronizeProvider(card);
+    }
+
+    public static void ApplySelectedPresentation(
+        NCard card,
+        ExternalCardVisualOwnership externalOwnership)
+    {
+        if (card.Model == null)
+        {
+            return;
+        }
+
+        // A live card editor owns the frame/layout layer only after the player has
+        // explicitly configured that card there. Other cards remain managed here.
+        if (externalOwnership.Frame)
+        {
+            ReleaseSelectedPresentation(card);
+            ApplyBuiltInOverlay(card, null);
+            return;
+        }
+
+        var presentation = SkinService.GetCardPresentation(card.Model);
+        ApplyBuiltInOverlay(card, presentation);
+        if (presentation == null)
+        {
+            ReleaseSelectedPresentation(card);
+            return;
+        }
+
+        // Only adopt nodes created by this renderer, never all nodes added since Reload.
+        // UI mods can add their own overlays after baseline capture. Keep our node ownership
+        // across repeated UpdateVisuals/tree re-entry until a real refresh releases it.
+        PresentationLayouts.GetValue(card, static _ => new CardPresentationState([]));
+        ApplyManagedCardPresentation(card, presentation, externalOwnership.Text);
+    }
+
+    private static void ApplyManagedCardPresentation(
+        NCard card,
+        CardPresentationDefinition presentation,
+        bool preserveExternalText)
+    {
+        var portrait = card.GetNodeOrNull<TextureRect>("%Portrait");
+        var portraitBorder = card.GetNodeOrNull<TextureRect>("%PortraitBorder");
+        var frame = card.GetNodeOrNull<TextureRect>("%Frame");
+        var banner = card.GetNodeOrNull<TextureRect>("%TitleBanner");
+        var ancientPortrait = card.GetNodeOrNull<TextureRect>("%AncientPortrait");
+        var ancientGlass = card.GetNodeOrNull<TextureRect>("%AncientBorderGlassOverlay");
+        var ancientBorder = card.GetNodeOrNull<TextureRect>("%AncientBorder");
+        var ancientTextBg = card.GetNodeOrNull<TextureRect>("%AncientTextBg");
+        var ancientBanner = card.GetNodeOrNull<TextureRect>("%AncientBanner");
+        var ancientHighlight = card.GetNodeOrNull<TextureRect>("%AncientHighlight") ??
+                               FindNodeByName(card, "AncientHighlight") as TextureRect;
+        var portraitCanvas = card.GetNodeOrNull<CanvasGroup>("%PortraitCanvasGroup");
+        var energyIcon = card.GetNodeOrNull<TextureRect>("%EnergyIcon");
+        var highlight = card.GetNodeOrNull<TextureRect>("%Highlight");
+        var fire = FindNodeByName(card, "Fire") as AnimatedSprite2D;
+        if (presentation.UseFullFrameArt)
+        {
+            ApplyManagedFullFrameArt(
+                card,
+                presentation,
+                portrait,
+                portraitBorder,
+                frame,
+                banner,
+                ancientPortrait,
+                ancientGlass,
+                ancientBorder,
+                ancientTextBg,
+                ancientBanner);
+            return;
+        }
+
+        var layout = CardPresentationLayoutPolicy.Resolve(
+            card.Model!.Rarity == CardRarity.Ancient,
+            presentation.UseAncientLayout,
+            presentation.UseExpandedPortraitLayout);
+        var useAncientLayout = layout == CardPresentationLayout.Ancient;
+        var useExpandedPortrait = layout == CardPresentationLayout.ExpandedPortrait;
+
+        if (useAncientLayout)
+        {
+            SetVisible(portrait, false);
+            SetVisible(portraitBorder, false);
+            SetVisible(frame, false);
+            SetVisible(banner, false);
+            SetVisible(ancientPortrait, true);
+            SetVisible(ancientGlass, true);
+            SetVisible(ancientBorder, true);
+            SetVisible(ancientTextBg, true);
+            SetVisible(ancientBanner, true);
+            if (fire != null)
+            {
+                fire.Visible = true;
+                fire.Play();
+            }
+
+            if (ancientBorder is { Texture: null } border)
+            {
+                border.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    AncientBorderPath);
+            }
+            if (ancientBanner is { Texture: null } ancientBannerWithoutTexture)
+            {
+                ancientBannerWithoutTexture.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    AncientBannerPath);
+            }
+            if (ancientBanner is { Material: null } ancientBannerWithoutMaterial)
+            {
+                ancientBannerWithoutMaterial.Material = SkinService.LoadCardPresentationResource<Material>(
+                    card.Model!,
+                    AncientBannerMaterialPath);
+            }
+            if (ancientTextBg is { Texture: null } textBackground)
+            {
+                textBackground.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    DefaultAncientTextBackgroundPath(card.Model!));
+            }
+            if (portraitCanvas != null)
+            {
+                var maskMaterialPath = card.Visibility == ModelVisibility.Visible
+                    ? "res://scenes/cards/card_canvas_group_mask_material.tres"
+                    : "res://scenes/cards/card_canvas_group_mask_blur_material.tres";
+                portraitCanvas.Material = SkinService.LoadCardPresentationResource<Material>(
+                    card.Model!,
+                    maskMaterialPath);
+            }
+        }
+        else if (useExpandedPortrait)
+        {
+            // Some providers use the game's AncientPortrait node as a convenient tall canvas
+            // for ordinary alternate art. Keep that canvas and (when requested) its border, but
+            // leave the Ancient-only effects disabled: no candle, Ancient banner or glass
+            // overlay, and the Ancient description background only on request.
+            SetVisible(portrait, false);
+            SetVisible(portraitBorder, false);
+            SetVisible(frame, false);
+            SetVisible(ancientPortrait, true);
+            // The tall canvas already shares the card's aspect, so portrait-aspect provider art
+            // fills it either way. Artwork exported at the art window's wider aspect (a full-art
+            // card-art pack) must cover that canvas instead of being squeezed into it.
+            if (ancientPortrait != null)
+            {
+                ancientPortrait.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
+            }
+            SetVisible(ancientGlass, false);
+            SetVisible(ancientBanner, false);
+            SetVisible(ancientTextBg, false);
+            SetVisible(ancientHighlight, false);
+            if (fire != null)
+            {
+                fire.Visible = false;
+                fire.Stop();
+            }
+
+            if (ancientBorder is { Texture: null } border)
+            {
+                border.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    AncientBorderPath);
+            }
+            SetVisible(ancientBorder, presentation.FrameVisible ?? true);
+            if (portraitCanvas != null)
+            {
+                var maskMaterialPath = card.Visibility == ModelVisibility.Visible
+                    ? "res://scenes/cards/card_canvas_group_mask_material.tres"
+                    : "res://scenes/cards/card_canvas_group_mask_blur_material.tres";
+                portraitCanvas.Material = SkinService.LoadCardPresentationResource<Material>(
+                    card.Model!,
+                    maskMaterialPath);
+            }
+        }
+        else
+        {
+            // Reassert the normal layout as well as restoring the baseline. Cards are pooled by
+            // the library and combat queue, so a card that previously used Ancient/expanded art
+            // must not depend on a baseline callback having run in the same frame before it is
+            // rebound to a normal presentation.
+            SetVisible(ancientPortrait, false);
+            SetVisible(ancientGlass, false);
+            SetVisible(ancientBorder, false);
+            SetVisible(ancientTextBg, false);
+            SetVisible(ancientBanner, false);
+            SetVisible(ancientHighlight, false);
+            if (fire != null)
+            {
+                fire.Visible = false;
+                fire.Stop();
+            }
+        }
+
+        ApplyTexture(card, frame, presentation.Frame);
+        ApplyTexture(card, ancientBorder, presentation.Frame);
+        ApplyMaterial(card, frame, presentation.FrameMaterial);
+        ApplyMaterial(card, ancientBorder, presentation.FrameMaterial);
+        ApplyTexture(card, banner, presentation.BannerTexture);
+        ApplyTexture(card, ancientBanner, presentation.BannerTexture);
+        ApplyMaterial(card, banner, presentation.BannerMaterial);
+        ApplyMaterial(card, ancientBanner, presentation.BannerMaterial);
+        ApplyTexture(card, portraitBorder, presentation.PortraitBorder);
+        ApplyMaterial(card, portraitBorder, presentation.PortraitBorderMaterial);
+        ApplyTexture(card, ancientTextBg, presentation.AncientTextBackground);
+        ApplyMaterial(card, ancientTextBg, presentation.TextBackgroundMaterial);
+        ApplyTexture(card, energyIcon, presentation.EnergyIcon);
+        ApplyTexture(card, highlight, presentation.Highlight);
+        ApplyTexture(card, ancientHighlight, presentation.Highlight);
+        ApplyMaterial(card, highlight, presentation.HighlightMaterial);
+        ApplyMaterial(card, ancientHighlight, presentation.HighlightMaterial);
+
+        if (presentation.FrameVisible is { } frameVisible)
+        {
+            SetVisible(frame, frameVisible && layout == CardPresentationLayout.Normal);
+            SetVisible(
+                ancientBorder,
+                frameVisible && layout != CardPresentationLayout.Normal);
+        }
+        if (presentation.BannerVisible is { } bannerVisible)
+        {
+            SetVisible(banner, bannerVisible && !useAncientLayout);
+            SetVisible(ancientBanner, bannerVisible && useAncientLayout);
+        }
+        if (useAncientLayout)
+        {
+            SetVisible(ancientTextBg, presentation.TextBackgroundVisible);
+        }
+        else if (useExpandedPortrait)
+        {
+            // Artwork that covers the whole card sits behind the description, so the Ancient
+            // type-coloured background is what keeps the text readable. Providers that merely
+            // borrow the tall canvas keep it off unless they ask for it.
+            var expandedTextBackground = presentation.TextBackgroundVisible ?? false;
+            SetVisible(ancientTextBg, expandedTextBackground);
+            if (expandedTextBackground && ancientTextBg is { Texture: null } backgroundWithoutTexture)
+            {
+                backgroundWithoutTexture.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    presentation.AncientTextBackground ?? DefaultAncientTextBackgroundPath(card.Model!));
+            }
+            RemoveNormalTextBackground(card);
+        }
+        else
+        {
+            ApplyNormalTextBackground(card, presentation);
+        }
+        if (presentation.PortraitBorderVisible is { } portraitBorderVisible)
+        {
+            SetVisible(
+                portraitBorder,
+                portraitBorderVisible && layout == CardPresentationLayout.Normal);
+        }
+        if (presentation.PortraitVisible is { } portraitVisible)
+        {
+            SetVisible(portrait, portraitVisible && layout == CardPresentationLayout.Normal);
+            SetVisible(ancientPortrait, portraitVisible && layout != CardPresentationLayout.Normal);
+        }
+        SetVisible(energyIcon, presentation.EnergyIconVisible);
+        if (presentation.HighlightVisible is { } highlightVisible)
+        {
+            SetVisible(highlight, highlightVisible && layout == CardPresentationLayout.Normal);
+            SetVisible(ancientHighlight, highlightVisible && useAncientLayout);
+        }
+        if (!preserveExternalText)
+        {
+            ApplyTypePlaqueVisibility(card, presentation);
+            SetVisible(
+                card.GetNodeOrNull<CanvasItem>("%DescriptionLabel"),
+                presentation.DescriptionVisible);
+        }
+        SetVisible(
+            FindNodeByName(card, "Infection") as CanvasItem,
+            presentation.InfectionOverlayVisible);
+    }
+
+    public static void ApplyBuiltInOverlay(NCard card, CardPresentationDefinition? presentation)
+    {
+        // The game's container also holds affliction overlays. Only touch its own built-in
+        // card overlay, never enchantments/afflictions or CardModel properties. Reload creates
+        // a fresh original node; baseline restoration handles switching away on existing nodes.
+        if (card.Model is not { HasBuiltInOverlay: true } model || model.Affliction?.HasOverlay == true) return;
+        var overlay = BuiltInOverlayField?.GetValue(card) as CanvasItem;
+        if (overlay == null || !GodotObject.IsInstanceValid(overlay)) return;
+        if (presentation?.BuiltInOverlayVisible == null && !BuiltInOverlays.TryGetValue(card, out _)) return;
+        overlay.Visible = BuiltInOverlays.GetOrCreateValue(card).Resolve(
+            model, overlay, overlay.Visible, presentation?.BuiltInOverlayVisible);
+    }
+
+    private static void ApplyManagedFullFrameArt(
+        NCard card,
+        CardPresentationDefinition presentation,
+        TextureRect? portrait,
+        TextureRect? portraitBorder,
+        TextureRect? frame,
+        TextureRect? banner,
+        TextureRect? ancientPortrait,
+        TextureRect? ancientGlass,
+        TextureRect? ancientBorder,
+        TextureRect? ancientTextBg,
+        TextureRect? ancientBanner)
+    {
+        ApplyTexture(card, frame, presentation.Frame);
+        if (frame != null)
+        {
+            frame.Material = null;
+        }
+
+        SetVisible(frame, presentation.FrameVisible ?? true);
+        SetVisible(portrait, presentation.PortraitVisible ?? false);
+        SetVisible(portraitBorder, presentation.PortraitBorderVisible ?? false);
+        SetVisible(ancientPortrait, false);
+        SetVisible(ancientGlass, false);
+        SetVisible(ancientBanner, false);
+        SetVisible(banner, presentation.BannerVisible ?? true);
+
+        var isNativeAncient = card.Model!.Rarity == CardRarity.Ancient;
+        SetVisible(ancientBorder, isNativeAncient);
+        SetVisible(ancientTextBg, presentation.TextBackgroundVisible ?? true);
+        if (ancientTextBg != null)
+        {
+            ancientTextBg.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                card.Model,
+                presentation.AncientTextBackground ?? DefaultAncientTextBackgroundPath(card.Model));
+        }
+
+        var parent = ancientBorder?.GetParent();
+        TextureRect? overlay = null;
+        if (!isNativeAncient &&
+            parent != null &&
+            !string.IsNullOrWhiteSpace(presentation.FrameOverlay))
+        {
+            overlay = parent.GetNodeOrNull<TextureRect>(FullFrameOverlayName);
+            if (overlay == null)
+            {
+                overlay = new TextureRect
+                {
+                    Name = FullFrameOverlayName,
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                    AnchorLeft = 0.5f,
+                    AnchorTop = 0.5f,
+                    AnchorRight = 0.5f,
+                    AnchorBottom = 0.5f,
+                    GrowHorizontal = Control.GrowDirection.Both,
+                    GrowVertical = Control.GrowDirection.Both,
+                    PivotOffset = new Vector2(CardVisualRightEdge, CardVisualBottomEdge),
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                    StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered
+                };
+                parent.AddChild(overlay);
+                TrackAddedPresentationNode(card, overlay);
+            }
+            overlay.Texture = SkinService.LoadCardPresentationResource<Texture2D>(card.Model, presentation.FrameOverlay);
+            overlay.ZIndex = ancientBorder!.ZIndex;
+            overlay.OffsetTop = presentation.FrameOverlayOffsetTop ?? -CardVisualBottomEdge;
+            overlay.OffsetBottom = presentation.FrameOverlayOffsetBottom ?? CardVisualBottomEdge;
+            overlay.OffsetLeft = presentation.FrameOverlayOffsetLeft ?? -CardVisualRightEdge;
+            overlay.OffsetRight = presentation.FrameOverlayOffsetRight ?? CardVisualRightEdge;
+            overlay.Scale = new Vector2(presentation.FrameOverlayScaleX ?? 1f, presentation.FrameOverlayScaleY ?? 1f);
+        }
+
+        if (parent == null)
+        {
+            return;
+        }
+
+        foreach (var node in new Node?[]
+                 {
+                     ancientBorder,
+                     ancientTextBg,
+                     overlay,
+                     card.GetNodeOrNull<Node>("%TypePlaque"),
+                     card.GetNodeOrNull<Node>("%DescriptionLabel"),
+                     banner,
+                     FindNodeByName(card, "TitleLabel"),
+                     card.GetNodeOrNull<Node>("%EnergyIcon"),
+                     FindNodeByName(card, "StarIcon")
+                 })
+        {
+            if (node?.GetParent() == parent)
+            {
+                parent.MoveChild(node, parent.GetChildCount() - 1);
+            }
+        }
+    }
+
+    private static string DefaultAncientTextBackgroundPath(CardModel card)
+    {
+        var type = card.Type switch
+        {
+            CardType.Attack => "attack",
+            CardType.Power => "power",
+            _ => "skill"
+        };
+        return $"res://images/atlases/compressed.sprites/card_template/ancient_card_text_bg_{type}.tres";
+    }
+
+    private static void ApplyTexture(
+        NCard card,
+        TextureRect? target,
+        string? resourcePath)
+    {
+        if (target != null && !string.IsNullOrWhiteSpace(resourcePath))
+        {
+            var texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                card.Model!,
+                resourcePath);
+            if (texture != null)
+            {
+                target.Texture = texture;
+            }
+        }
+    }
+
+    private static void ApplyMaterial(
+        NCard card,
+        CanvasItem? target,
+        string? resourcePath)
+    {
+        if (target != null && !string.IsNullOrWhiteSpace(resourcePath))
+        {
+            var material = SkinService.LoadCardPresentationResource<Material>(
+                card.Model!,
+                resourcePath);
+            if (material != null)
+            {
+                target.Material = material;
+                SyncHighlightShaderMaterial(target, material);
+            }
+        }
+    }
+
+    private static void ApplyNormalTextBackground(
+        NCard card,
+        CardPresentationDefinition presentation)
+    {
+        if (presentation.AncientTextBackground == null &&
+            presentation.TextBackgroundMaterial == null &&
+            presentation.TextBackgroundVisible == null)
+        {
+            return;
+        }
+
+        var body = card.Body;
+        var description = card.GetNodeOrNull<Control>("%DescriptionLabel");
+        if (body == null || description == null)
+        {
+            return;
+        }
+
+        var overlay = body.GetNodeOrNull<TextureRect>(NormalTextBackgroundOverlayName);
+        if (overlay == null)
+        {
+            overlay = new TextureRect
+            {
+                Name = NormalTextBackgroundOverlayName,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Scale,
+                TextureFilter = CanvasItem.TextureFilterEnum.Linear,
+                Visible = false
+            };
+            body.AddChild(overlay);
+            TrackAddedPresentationNode(card, overlay);
+            body.MoveChild(overlay, Math.Max(0, description.GetIndex()));
+        }
+
+        var plaque = card.GetNodeOrNull<Control>("%TypePlaque");
+        var left = description.Position.X - 14f;
+        var top = description.Position.Y - 18f;
+        var right = description.Position.X + description.Size.X + 14f;
+        var bottom = description.Position.Y + description.Size.Y + 12f;
+        if (plaque != null)
+        {
+            left = MathF.Min(left, plaque.Position.X - 18f);
+            top = MathF.Min(top, plaque.Position.Y - 18f);
+            right = MathF.Max(right, plaque.Position.X + plaque.Size.X + 18f);
+        }
+        overlay.Position = new Vector2(left, top);
+        overlay.Size = new Vector2(MathF.Max(1f, right - left), MathF.Max(1f, bottom - top));
+
+        var visible = presentation.TextBackgroundVisible ?? true;
+        overlay.Texture = visible && presentation.AncientTextBackground != null
+            ? SkinService.LoadCardPresentationResource<Texture2D>(
+                card.Model!,
+                presentation.AncientTextBackground)
+            : visible
+                ? null
+                : GetNormalTextBackgroundCoverTexture();
+        overlay.Material = visible && presentation.TextBackgroundMaterial != null
+            ? SkinService.LoadCardPresentationResource<Material>(
+                card.Model!,
+                presentation.TextBackgroundMaterial)
+            : null;
+        overlay.Visible = overlay.Texture != null;
+    }
+
+    private static void RemoveNormalTextBackground(NCard card)
+    {
+        var overlay = card.Body?.GetNodeOrNull<TextureRect>(NormalTextBackgroundOverlayName);
+        if (overlay == null)
+        {
+            return;
+        }
+
+        overlay.GetParent()?.RemoveChild(overlay);
+        if (PresentationLayouts.TryGetValue(card, out var presentation)) presentation.AddedNodes.Remove(overlay);
+        overlay.QueueFree();
+    }
+
+    private static Texture2D GetNormalTextBackgroundCoverTexture()
+    {
+        if (_normalTextBackgroundCoverTexture != null &&
+            GodotObject.IsInstanceValid(_normalTextBackgroundCoverTexture))
+        {
+            return _normalTextBackgroundCoverTexture;
+        }
+
+        using var image = Image.CreateEmpty(8, 8, false, Image.Format.Rgba8);
+        image.Fill(new Color(0.11f, 0.10f, 0.08f, 0.92f));
+        _normalTextBackgroundCoverTexture = ImageTexture.CreateFromImage(image);
+        return _normalTextBackgroundCoverTexture;
+    }
+
+    private static void ApplyTypePlaqueVisibility(
+        NCard card,
+        CardPresentationDefinition presentation)
+    {
+        if (presentation.TypePlaqueVisible == null && presentation.TypeLabelVisible == null)
+        {
+            return;
+        }
+
+        var plaque = card.GetNodeOrNull<Control>("%TypePlaque");
+        var label = card.GetNodeOrNull<CanvasItem>("%TypeLabel");
+        var plaqueVisible = presentation.TypePlaqueVisible ?? true;
+        var labelVisible = presentation.TypeLabelVisible ?? true;
+        if (plaque != null)
+        {
+            plaque.Visible = plaqueVisible || labelVisible;
+            plaque.SelfModulate = plaqueVisible
+                ? Colors.White
+                : new Color(1f, 1f, 1f, 0f);
+        }
+        SetVisible(label, labelVisible);
+    }
+
+    private static Node? FindNodeByName(Node root, string name)
+    {
+        foreach (var child in root.GetChildren())
+        {
+            if (child.Name.ToString().Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                return child;
+            }
+            var nested = FindNodeByName(child, name);
+            if (nested != null)
+            {
+                return nested;
+            }
+        }
+        return null;
+    }
+
+    private static void SyncHighlightShaderMaterial(CanvasItem target, Material? material)
+    {
+        if (target is NCardHighlight highlight && material is ShaderMaterial shaderMaterial)
+        {
+            HighlightShaderMaterialField?.SetValue(highlight, shaderMaterial);
+        }
+    }
+
+    private static void SetVisible(CanvasItem? target, bool? visible)
+    {
+        if (target != null && visible is { } value)
+        {
+            target.Visible = value;
+        }
+    }
+
+    public static void ApplySelectedPortraitToNode(
+        NCard card,
+        ExternalCardVisualOwnership externalOwnership)
+    {
+        if (card.Model == null)
+        {
+            return;
+        }
+
+        // Do not overwrite a still-running editor's explicit static/GIF portrait.
+        if (externalOwnership.Portrait)
+        {
+            CardSurfaceView.Release(card);
+            return;
+        }
+
+        // CardModel.Portrait 的 getter 已被 Priority.Last 的 Postfix 接管，这里拿到的已是换肤后的贴图。
+        var portrait = card.Model.Portrait;
+        var presentation = SkinService.GetCardPresentation(card.Model);
+        var targetPath = card.Model.Rarity == CardRarity.Ancient ||
+                         presentation?.UseAncientLayout == true ||
+                         presentation?.UseExpandedPortraitLayout == true
+            ? "%AncientPortrait"
+            : "%Portrait";
+        var target = card.GetNodeOrNull<TextureRect>(targetPath);
+        if (target != null)
+        {
+            target.Texture = portrait;
+            CardSurfaceView.ApplyPortrait(card, target);
+        }
+    }
+
+    public static void ResetAvailabilityFilter(NCardLibrary screen)
+    {
+        screen.SetMeta(AvailabilityFilterMeta, false);
+        var availabilityFilter = screen.GetNodeOrNull<NLibraryStatTickbox>(
+            $"Sidebar/MarginContainer/BottomVBox/{AvailabilityFilterName}");
+        if (availabilityFilter != null)
+        {
+            availabilityFilter.IsTicked = false;
+        }
+
+    }
+
+    public static void ApplyAvailabilityFilter(
+        NCardLibraryGrid grid,
+        ref Func<CardModel, bool> filter)
+    {
+        Node? current = grid;
+        while (current != null && current is not NCardLibrary)
+        {
+            current = current.GetParent();
+        }
+
+        if (current is not NCardLibrary library)
+        {
+            return;
+        }
+
+        var skinsOnly = library.GetMeta(AvailabilityFilterMeta, false).AsBool();
+        if (!skinsOnly)
+        {
+            return;
+        }
+
+        var original = filter;
+        filter = card => original(card) && SkinService.HasCardSkin(card);
+    }
+
+    private static void SetAvailabilityFilter(NCardLibrary screen, string meta, bool enabled)
+    {
+        screen.SetMeta(meta, enabled);
+        try
+        {
+            UpdateLibraryFilterMethod.Invoke(screen, [false]);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("刷新有皮肤卡牌筛选失败：" + exception);
+        }
+    }
+
+    private static void ShowFirstAvailableGroup(HBoxContainer selector)
+    {
+        var preferred = FindGroup("ironclad") ?? SkinService.Catalog?.CardGroups.FirstOrDefault();
+        Populate(selector, preferred?.Id);
+    }
+
+    private static void Populate(HBoxContainer selector, string? groupId)
+    {
+        var button = selector.GetNode<Button>(PriorityButtonName);
+        var presetButton = selector.GetNode<Button>(PresetButtonName);
+        var group = groupId == null ? null : FindGroup(groupId);
+        if (group == null || group.Options.Count == 0)
+        {
+            selector.Visible = false;
+            button.Text = string.Empty;
+            return;
+        }
+
+        selector.SetMeta(GroupMeta, group.Id);
+        var options = SkinService.GetCardPriorityOptions(group.Id);
+        button.Text = string.Format(
+            ModLocalization.Get(ModText.CardSkinPriority),
+            options.Count(option => option.Enabled));
+        button.TooltipText = string.Empty;
+        presetButton.Text = ModLocalization.Get(ModText.CardPresets);
+        presetButton.TooltipText = string.Empty;
+        selector.Visible = true;
+    }
+
+    private static Control CreatePresetOverlay()
+    {
+        var overlay = new Control
+        {
+            Name = PresetOverlayName,
+            Visible = false,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZIndex = 2000
+        };
+        var mask = new ColorRect
+        {
+            Name = "Mask",
+            Color = new Color(0f, 0f, 0f, 0.68f),
+            MouseFilter = Control.MouseFilterEnum.Stop
+        };
+        mask.GuiInput += input =>
+        {
+            if (input is not InputEventMouseButton
+                {
+                    Pressed: true,
+                    ButtonIndex: MouseButton.Left
+                })
+            {
+                return;
+            }
+
+            overlay.Visible = false;
+            mask.AcceptEvent();
+        };
+        overlay.AddChild(mask);
+        mask.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        var panel = new PanelContainer
+        {
+            Name = PresetPanelName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            AnchorLeft = 0.5f,
+            AnchorTop = 0.5f,
+            AnchorRight = 0.5f,
+            AnchorBottom = 0.5f,
+            OffsetLeft = -470,
+            OffsetTop = -280,
+            OffsetRight = 470,
+            OffsetBottom = 280
+        };
+        panel.AddThemeStyleboxOverride(
+            "panel",
+            ContextualSkinControls.CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        ModThemeRuntime.Panel(panel);
+        overlay.AddChild(panel);
+        var margin = new MarginContainer { Name = PresetPanelMarginName };
+        margin.AddThemeConstantOverride("margin_left", 20);
+        margin.AddThemeConstantOverride("margin_top", 18);
+        margin.AddThemeConstantOverride("margin_right", 20);
+        margin.AddThemeConstantOverride("margin_bottom", 18);
+        panel.AddChild(margin);
+        var content = new VBoxContainer { Name = PresetContentName };
+        content.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(content);
+        return overlay;
+    }
+
+    private static void OpenPresetOverlay(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        Control overlay)
+    {
+        BuildPresetOverlay(screen, selector, overlay);
+        overlay.Visible = true;
+        overlay.MoveToFront();
+    }
+
+    private static void BuildPresetOverlay(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        Control overlay)
+    {
+        var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+        var content = overlay.GetNode<VBoxContainer>(
+            $"{PresetPanelName}/{PresetPanelMarginName}/{PresetContentName}");
+        var scroll = ScrollListRebuild.Begin(content, groupId);
+
+        var title = new Label
+        {
+            Text = ModLocalization.Get(ModText.CardPresets),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        title.AddThemeFontSizeOverride("font_size", 25);
+        ModThemeRuntime.AccentText(title);
+        content.AddChild(title);
+
+        var createRow = new HBoxContainer
+        {
+            CustomMinimumSize = new Vector2(890, 44),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        createRow.AddThemeConstantOverride("separation", 10);
+        content.AddChild(createRow);
+        var newName = new LineEdit
+        {
+            PlaceholderText = ModLocalization.Get(ModText.CardPresetName),
+            MaxLength = SkinService.CardSkinPresetNameMaxLength,
+            CustomMinimumSize = new Vector2(600, 40),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        ModThemeRuntime.Input(newName, 18);
+        createRow.AddChild(newName);
+        var save = new Button
+        {
+            Text = ModLocalization.Get(ModText.SaveCurrentPreset),
+            CustomMinimumSize = new Vector2(220, 40)
+        };
+        ContextualSkinControls.ApplyGameTheme(save);
+        save.AddThemeFontSizeOverride("font_size", 18);
+        save.Pressed += () => QueuePresetChange(
+            screen,
+            selector,
+            overlay,
+            () =>
+            {
+                var created = SkinService.CreateCardSkinPreset(groupId, newName.Text);
+                if (created)
+                {
+                    newName.Text = string.Empty;
+                }
+
+                return created;
+            },
+            refreshCards: false);
+        createRow.AddChild(save);
+
+        scroll.CustomMinimumSize = new Vector2(890, 360);
+        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        ScrollListRebuild.PlaceAfterHeader(scroll);
+        var rows = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        rows.AddThemeConstantOverride("separation", 7);
+        scroll.AddChild(rows);
+
+        var presets = SkinService.GetCardSkinPresets(groupId);
+        if (presets.Count == 0)
+        {
+            var empty = new Label
+            {
+                Text = ModLocalization.Get(ModText.NoCardPresets),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                CustomMinimumSize = new Vector2(860, 100),
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            };
+            empty.AddThemeFontSizeOverride("font_size", 19);
+            empty.AddThemeColorOverride("font_color", new Color("b9adbd"));
+            rows.AddChild(empty);
+        }
+
+        foreach (var preset in presets)
+        {
+            var row = new HBoxContainer
+            {
+                CustomMinimumSize = new Vector2(870, 46),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            };
+            row.AddThemeConstantOverride("separation", 8);
+            rows.AddChild(row);
+
+            var active = new Label
+            {
+                Text = preset.Active ? "●" : string.Empty,
+                TooltipText = preset.Active ? ModLocalization.Get(ModText.ActiveCardPreset) : string.Empty,
+                CustomMinimumSize = new Vector2(24, 38),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                MouseFilter = Control.MouseFilterEnum.Pass
+            };
+            active.AddThemeFontSizeOverride("font_size", 18);
+            ModThemeRuntime.AccentText(active);
+            row.AddChild(active);
+
+            var name = new LineEdit
+            {
+                Text = preset.DisplayName,
+                Editable = !preset.IsBundlePreset,
+                MaxLength = preset.IsBundlePreset ? 0 : SkinService.CardSkinPresetNameMaxLength,
+                CustomMinimumSize = new Vector2(310, 38),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            };
+            ModThemeRuntime.Input(name, 18, preset.IsBundlePreset);
+            row.AddChild(name);
+
+            var apply = CreatePresetActionButton(
+                preset.Active
+                    ? ModLocalization.Get(ModText.ActiveCardPreset)
+                    : ModLocalization.Get(ModText.ApplyCardPreset),
+                112);
+            apply.Disabled = preset.Active;
+            apply.Pressed += () => QueuePresetChange(
+                screen,
+                selector,
+                overlay,
+                () => SkinService.ApplyCardSkinPreset(groupId, preset.Name),
+                refreshCards: true);
+            row.AddChild(apply);
+
+            var overwrite = CreatePresetActionButton(
+                ModLocalization.Get(ModText.OverwriteCardPreset),
+                100);
+            overwrite.Pressed += () => QueuePresetChange(
+                screen,
+                selector,
+                overlay,
+                () => SkinService.OverwriteCardSkinPreset(groupId, preset.Name),
+                refreshCards: false);
+            row.AddChild(overwrite);
+
+            var rename = CreatePresetActionButton(
+                ModLocalization.Get(ModText.RenameCardPreset),
+                100);
+            rename.Pressed += () => QueuePresetChange(
+                screen,
+                selector,
+                overlay,
+                () => SkinService.RenameCardSkinPreset(groupId, preset.Name, name.Text),
+                refreshCards: false);
+            row.AddChild(rename);
+            rename.Disabled = preset.IsBundlePreset;
+
+            var delete = CreatePresetActionButton(
+                ModLocalization.Get(ModText.DeleteCardPreset),
+                112);
+            var deleteArmed = false;
+            delete.Pressed += () =>
+            {
+                if (!deleteArmed)
+                {
+                    deleteArmed = true;
+                    delete.Text = ModLocalization.Get(ModText.ConfirmDeleteCardPreset);
+                    return;
+                }
+
+                QueuePresetChange(
+                    screen,
+                    selector,
+                    overlay,
+                    () => SkinService.DeleteCardSkinPreset(groupId, preset.Name),
+                    refreshCards: false);
+            };
+            row.AddChild(delete);
+            delete.Disabled = preset.IsBundlePreset;
+        }
+
+        var close = CreatePresetActionButton(ModLocalization.Get(ModText.Close), 180);
+        close.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+        close.Pressed += () => overlay.Visible = false;
+        content.AddChild(close);
+    }
+
+    private static Button CreatePresetActionButton(string text, float width)
+    {
+        var button = new Button
+        {
+            Text = text,
+            CustomMinimumSize = new Vector2(width, 38)
+        };
+        ContextualSkinControls.ApplyGameTheme(button);
+        button.AddThemeFontSizeOverride("font_size", 17);
+        return button;
+    }
+
+    private static void QueuePresetChange(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        Control overlay,
+        Func<bool> change,
+        bool refreshCards)
+    {
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(screen) || !change())
+            {
+                ModLog.Error($"调整卡图预设失败：{SkinService.LastError}");
+                return;
+            }
+
+            var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+            Populate(selector, groupId);
+            BuildPresetOverlay(screen, selector, overlay);
+            if (refreshCards && !string.IsNullOrWhiteSpace(groupId))
+            {
+                RefreshVisibleCards(screen, groupId);
+                RefreshSourceIndicators(screen);
+            }
+        }).CallDeferred();
+    }
+
+    private static Control CreatePriorityOverlay()
+    {
+        var overlay = new Control
+        {
+            Name = PriorityOverlayName,
+            Visible = false,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZIndex = 2000
+        };
+        var mask = new ColorRect
+        {
+            Name = "Mask",
+            Color = new Color(0f, 0f, 0f, 0.68f),
+            MouseFilter = Control.MouseFilterEnum.Stop
+        };
+        mask.GuiInput += input =>
+        {
+            if (input is not InputEventMouseButton
+                {
+                    Pressed: true,
+                    ButtonIndex: MouseButton.Left
+                })
+            {
+                return;
+            }
+
+            overlay.Visible = false;
+            mask.AcceptEvent();
+        };
+        overlay.AddChild(mask);
+        mask.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        var panel = new PanelContainer
+        {
+            Name = PriorityPanelName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            AnchorLeft = 0.5f,
+            AnchorTop = 0.5f,
+            AnchorRight = 0.5f,
+            AnchorBottom = 0.5f,
+            OffsetLeft = -360,
+            OffsetTop = -240,
+            OffsetRight = 360,
+            OffsetBottom = 240
+        };
+        panel.AddThemeStyleboxOverride(
+            "panel",
+            ContextualSkinControls.CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        ModThemeRuntime.Panel(panel);
+        overlay.AddChild(panel);
+        var margin = new MarginContainer { Name = PriorityPanelMarginName };
+        margin.AddThemeConstantOverride("margin_left", 20);
+        margin.AddThemeConstantOverride("margin_top", 18);
+        margin.AddThemeConstantOverride("margin_right", 20);
+        margin.AddThemeConstantOverride("margin_bottom", 18);
+        panel.AddChild(margin);
+        var content = new VBoxContainer { Name = PriorityContentName };
+        content.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(content);
+        return overlay;
+    }
+
+    private static void OpenPriorityOverlay(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        Control overlay)
+    {
+        BuildPriorityOverlay(screen, selector, overlay);
+        overlay.Visible = true;
+        overlay.MoveToFront();
+    }
+
+    private static void BuildPriorityOverlay(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        Control overlay)
+    {
+        var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+        var group = FindGroup(groupId);
+        var content = overlay.GetNode<VBoxContainer>(
+            $"{PriorityPanelName}/{PriorityPanelMarginName}/{PriorityContentName}");
+        var scroll = ScrollListRebuild.Begin(content, groupId);
+
+        if (group == null)
+        {
+            return;
+        }
+
+        var title = new Label
+        {
+            Text = string.Format(
+                ModLocalization.Get(ModText.CardSkinPriority),
+                SkinService.GetCardPriorityOptions(groupId).Count(option => option.Enabled)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        title.AddThemeFontSizeOverride("font_size", 25);
+        ModThemeRuntime.AccentText(title);
+        content.AddChild(title);
+
+        scroll.CustomMinimumSize = new Vector2(670, 350);
+        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        ScrollListRebuild.PlaceAfterHeader(scroll);
+        var rows = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        rows.AddThemeConstantOverride("separation", 6);
+        scroll.AddChild(rows);
+
+        var options = SkinService.GetCardPriorityOptions(groupId);
+        foreach (var option in options)
+        {
+            var row = new HBoxContainer
+            {
+                CustomMinimumSize = new Vector2(650, 42),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            };
+            row.AddThemeConstantOverride("separation", 8);
+            rows.AddChild(row);
+
+            row.AddChild(new ColorRect
+            {
+                Color = SourceColor(option.ColorIndex),
+                CustomMinimumSize = new Vector2(13, 32),
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            });
+            var enabled = new CheckBox
+            {
+                ButtonPressed = option.Enabled,
+                Text = ModLocalization.Get(ModText.EnabledForCategory),
+                CustomMinimumSize = new Vector2(88, 32),
+                TooltipText = ModLocalization.DisplayOptionName(option.Name)
+            };
+            ContextualSkinControls.ApplyGameTheme(enabled);
+            enabled.AddThemeFontSizeOverride("font_size", 17);
+            enabled.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            enabled.AddThemeColorOverride("font_hover_color", Colors.White);
+            enabled.Toggled += value => QueuePriorityChange(
+                screen,
+                selector,
+                overlay,
+                groupId,
+                () => SkinService.SetCardPriorityEnabled(groupId, option.OptionId, value));
+            row.AddChild(enabled);
+
+            var name = new Label
+            {
+                Text = ModLocalization.DisplayOptionName(option.Name),
+                ClipText = true,
+                CustomMinimumSize = new Vector2(270, 36),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                VerticalAlignment = VerticalAlignment.Center,
+                TooltipText = ModLocalization.DisplayOptionName(option.Name)
+            };
+            name.AddThemeFontSizeOverride("font_size", 18);
+            name.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            row.AddChild(name);
+
+            var coverage = new Label
+            {
+                Text = $"{option.Coverage}/{option.TotalCards}",
+                CustomMinimumSize = new Vector2(70, 36),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            };
+            coverage.AddThemeFontSizeOverride("font_size", 16);
+            coverage.AddThemeColorOverride("font_color", new Color("afcdde"));
+            row.AddChild(coverage);
+
+            var up = new Button
+            {
+                Text = "↑",
+                Disabled = option == options[0],
+                CustomMinimumSize = new Vector2(42, 34)
+            };
+            ContextualSkinControls.ApplyGameTheme(up);
+            up.AddThemeFontSizeOverride("font_size", 18);
+            up.Pressed += () => QueuePriorityChange(
+                screen,
+                selector,
+                overlay,
+                groupId,
+                () => SkinService.MoveCardPriority(groupId, option.OptionId, -1));
+            row.AddChild(up);
+
+            var down = new Button
+            {
+                Text = "↓",
+                Disabled = option == options[^1],
+                CustomMinimumSize = new Vector2(42, 34)
+            };
+            ContextualSkinControls.ApplyGameTheme(down);
+            down.AddThemeFontSizeOverride("font_size", 18);
+            down.Pressed += () => QueuePriorityChange(
+                screen,
+                selector,
+                overlay,
+                groupId,
+                () => SkinService.MoveCardPriority(groupId, option.OptionId, 1));
+            row.AddChild(down);
+        }
+
+        var close = new Button
+        {
+            Text = ModLocalization.Get(ModText.Close),
+            CustomMinimumSize = new Vector2(180, 42),
+            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter
+        };
+        ContextualSkinControls.ApplyGameTheme(close);
+        close.AddThemeFontSizeOverride("font_size", 19);
+        close.Pressed += () => overlay.Visible = false;
+        var footer = new HBoxContainer();
+        footer.AddChild(close);
+        footer.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+        footer.AddChild(SkinWorkshopEntry.CreatePriorityButton(screen, "cards", groupId,
+            () => BuildPriorityOverlay(screen, selector, overlay)));
+        content.AddChild(footer);
+    }
+
+    private static void QueuePriorityChange(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        Control overlay,
+        string groupId,
+        Func<bool> change)
+    {
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(screen) || !GodotObject.IsInstanceValid(selector) ||
+                !GodotObject.IsInstanceValid(overlay)) return;
+            var started = Stopwatch.GetTimestamp();
+            var before = CaptureCardSelections(screen, groupId);
+            var captured = Stopwatch.GetTimestamp();
+            if (!change())
+            {
+                ModLog.Error($"调整卡牌皮肤优先级失败：{SkinService.LastError}");
+                return;
+            }
+            var changed = Stopwatch.GetTimestamp();
+            Populate(selector, groupId);
+            BuildPriorityOverlay(screen, selector, overlay);
+            var rebuilt = Stopwatch.GetTimestamp();
+            RefreshVisibleCards(screen, groupId, before);
+            ModLog.Info($"卡牌优先级耗时：{groupId}；选择快照={Stopwatch.GetElapsedTime(started, captured).TotalMilliseconds:F1} ms，" +
+                $"资源与保存={Stopwatch.GetElapsedTime(captured, changed).TotalMilliseconds:F1} ms，" +
+                $"列表={Stopwatch.GetElapsedTime(changed, rebuilt).TotalMilliseconds:F1} ms，" +
+                $"卡面={Stopwatch.GetElapsedTime(rebuilt).TotalMilliseconds:F1} ms。");
+        }).CallDeferred();
+    }
+
+    private static Dictionary<NCard, (CardModel Model, string Selection)>? CaptureCardSelections(NCardLibrary screen, string groupId)
+    {
+        try
+        {
+            return Descendants(screen).OfType<NCard>()
+                .Where(card => GodotObject.IsInstanceValid(card) && card.Model != null && SkinService.CardBelongsToGroup(card.Model, groupId))
+                .ToDictionary(card => card, card => (card.Model!, SkinService.GetEffectiveCardSelection(card.Model!)));
+        }
+        catch (Exception exception)
+        {
+            // An optional optimization must not prevent a change when an external card cannot
+            // report its old identity. Null uses the established full-refresh fallback.
+            ModLog.Warn("读取卡牌换肤前状态失败，本次使用完整刷新：" + exception.GetBaseException().Message);
+            return null;
+        }
+    }
+
+    public static void RememberPreviewMode(NCard card, CardPreviewMode previewMode)
+    {
+        var state = PreviewModes.GetValue(card, static _ => new CardPreviewState());
+        state.Model = card.Model;
+        state.Mode = previewMode;
+    }
+
+    private static CardPreviewMode GetRefreshPreviewMode(NCard card) =>
+        PreviewModes.TryGetValue(card, out var state)
+            ? state.GetMode(card.Model)
+            : CardPreviewMode.Normal;
+
+    public static void RefreshCardSkin(NCard card)
+    {
+        if (!GodotObject.IsInstanceValid(card) || card.IsQueuedForDeletion() ||
+            !card.IsNodeReady() || card.Model == null)
+        {
+            return;
+        }
+
+        var pile = card.DisplayingPile;
+        var previewMode = GetRefreshPreviewMode(card);
+        // Reload restores/rebuilds the layout, not its dynamic display. In particular, the
+        // baseline predates UpdateVisuals and may show an unplayable card's energy icon with
+        // its internal -1 cost. Follow the game's own model-binding lifecycle: finish with
+        // UpdateVisuals so costs, text, portraits and external editor overrides all settle.
+        // Keep the existing model and preview context; never mutate gameplay to fix visuals.
+        ReloadCardMethod.Invoke(card, null);
+        card.UpdateVisuals(pile, previewMode);
+    }
+
+    private static void RefreshVisibleCards(NCardLibrary screen, string groupId,
+        IReadOnlyDictionary<NCard, (CardModel Model, string Selection)>? before = null)
+    {
+        try
+        {
+            CardSurfaceView.RefreshTinyCards();
+            var refreshed = 0;
+            var skipped = 0;
+            foreach (var card in Descendants(screen).OfType<NCard>())
+            {
+                if (card.Model == null ||
+                    !SkinService.CardBelongsToGroup(card.Model, groupId))
+                {
+                    continue;
+                }
+
+                if (before != null && before.TryGetValue(card, out var old) &&
+                    ReferenceEquals(old.Model, card.Model) &&
+                    old.Selection.Equals(SkinService.GetEffectiveCardSelection(card.Model), StringComparison.OrdinalIgnoreCase))
+                {
+                    // Coverage/priority colors may change even when this card keeps its winner.
+                    UpdateLibrarySourceIndicators(card);
+                    skipped++;
+                    continue;
+                }
+                // Detailed native snapshots are expensive; retain a small sample per operation
+                // rather than serializing every card's materials and scheduling hundreds of timers.
+                CardRefreshDiagnostics.Begin(card, refreshed < 3 && (
+                    PresentationLayouts.TryGetValue(card, out _) ||
+                    SkinService.GetCardPresentation(card.Model) != null));
+                try
+                {
+                    RefreshCardSkin(card);
+                }
+                finally
+                {
+                    CardRefreshDiagnostics.End(card);
+                }
+                refreshed++;
+            }
+            ModLog.Info($"卡牌分类刷新：{groupId}；重载={refreshed}，来源未变跳过={skipped}。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("刷新卡牌总览皮肤失败：" + exception);
+        }
+    }
+
+    private static void RefreshSourceIndicators(NCardLibrary screen)
+    {
+        foreach (var card in Descendants(screen).OfType<NCard>())
+        {
+            UpdateLibrarySourceIndicators(card);
+        }
+    }
+
+    private static CardSkinGroup? FindGroup(string? groupId) =>
+        groupId == null
+            ? null
+            : SkinService.Catalog?.CardGroups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+
+    private static string GetGroupId(NCardPoolFilter filter)
+    {
+        var id = filter.Name.ToString();
+        return id.EndsWith("Pool", StringComparison.OrdinalIgnoreCase)
+            ? id[..^4].ToLowerInvariant()
+            : id.ToLowerInvariant();
+    }
+
+    private static IEnumerable<Node> Descendants(Node root)
+    {
+        foreach (var child in root.GetChildren())
+        {
+            yield return child;
+            foreach (var descendant in Descendants(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    private sealed class CardLayoutState(
+        CardModel? model,
+        IReadOnlyList<CanvasItemState> items)
+    {
+        private static readonly string[] NodePaths =
+        [
+            "%Portrait",
+            "%PortraitShadow",
+            "%PortraitBorder",
+            "%Frame",
+            "%TitleBanner",
+            "%AncientPortrait",
+            "%AncientBorderGlassOverlay",
+            "%AncientBorder",
+            "%AncientTextBg",
+            "%AncientBanner",
+            "%AncientHighlight",
+            "%PortraitCanvasGroup",
+            "%EnergyIcon",
+            "%Highlight",
+            "%TypePlaque",
+            "%TypeLabel",
+            "%DescriptionLabel"
+        ];
+
+        public static CardLayoutState Capture(NCard card)
+        {
+            var states = NodePaths
+                .Select(path => card.GetNodeOrNull<CanvasItem>(path))
+                .Concat(Descendants(card)
+                    .OfType<CanvasItem>()
+                    .Where(item =>
+                        item.Name.ToString().Contains(
+                            "Infection",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        item.Name.ToString().Equals(
+                            "Fire",
+                            StringComparison.OrdinalIgnoreCase)))
+                .Where(item => item != null)
+                .Cast<CanvasItem>()
+                .DistinctBy(item => item.GetInstanceId())
+                .Select(item => new CanvasItemState(
+                    item,
+                    item.Visible,
+                    item.Material,
+                    item.Modulate,
+                    item.SelfModulate,
+                    item.ZIndex,
+                    (item as TextureRect)?.Texture,
+                    (item as TextureRect)?.ExpandMode,
+                    (item as TextureRect)?.StretchMode,
+                    (item as TextureRect)?.FlipH,
+                    (item as TextureRect)?.FlipV,
+                    (item as AnimatedSprite2D)?.IsPlaying()))
+                .ToArray();
+            return new CardLayoutState(card.Model, states);
+        }
+
+        public bool BelongsTo(CardModel? currentModel) => ReferenceEquals(model, currentModel);
+
+        public void Restore()
+        {
+            foreach (var state in items)
+            {
+                if (!GodotObject.IsInstanceValid(state.Item))
+                {
+                    continue;
+                }
+
+                state.Item.Visible = state.Visible;
+                if (state.Material == null || GodotObject.IsInstanceValid(state.Material))
+                {
+                    state.Item.Material = state.Material;
+                }
+                state.Item.Modulate = state.Modulate;
+                state.Item.SelfModulate = state.SelfModulate;
+                state.Item.ZIndex = state.ZIndex;
+                if (state.Item is TextureRect textureRect)
+                {
+                    if (state.Texture == null || GodotObject.IsInstanceValid(state.Texture))
+                    {
+                        textureRect.Texture = state.Texture;
+                    }
+                    if (state.ExpandMode is { } expandMode)
+                    {
+                        textureRect.ExpandMode = expandMode;
+                    }
+                    if (state.StretchMode is { } stretchMode)
+                    {
+                        textureRect.StretchMode = stretchMode;
+                    }
+                    if (state.FlipH is { } flipH)
+                    {
+                        textureRect.FlipH = flipH;
+                    }
+                    if (state.FlipV is { } flipV)
+                    {
+                        textureRect.FlipV = flipV;
+                    }
+                }
+                if (state.Item is AnimatedSprite2D animated && state.WasPlaying is { } wasPlaying)
+                {
+                    if (wasPlaying)
+                    {
+                        animated.Play();
+                    }
+                    else
+                    {
+                        animated.Stop();
+                    }
+                }
+                SyncHighlightShaderMaterial(state.Item, state.Material);
+            }
+        }
+    }
+
+    private sealed record CanvasItemState(
+        CanvasItem Item,
+        bool Visible,
+        Material? Material,
+        Color Modulate,
+        Color SelfModulate,
+        int ZIndex,
+        Texture2D? Texture,
+        TextureRect.ExpandModeEnum? ExpandMode,
+        TextureRect.StretchModeEnum? StretchMode,
+        bool? FlipH,
+        bool? FlipV,
+        bool? WasPlaying);
+
+    private sealed record CardPresentationState(
+        List<Node> AddedNodes);
+
+    private sealed class CardPreviewState
+    {
+        public CardModel? Model;
+        public CardPreviewMode Mode;
+
+        public CardPreviewMode GetMode(CardModel? currentModel) =>
+            ReferenceEquals(Model, currentModel) ? Mode : CardPreviewMode.Normal;
+    }
+}
+
+internal static class CardInspectSkinControls
+{
+    private const string SelectorName = "STS2IndividualCardSkinSelector";
+    private const string DragHandleName = "IndividualCardSkinDragHandle";
+    private const string DropdownName = "IndividualCardSkinDropdown";
+    private const string UpdatingMeta = "sts2_individual_card_skin_updating";
+    private const string OptionsCardMeta = "sts2_individual_card_skin_options_card";
+    private const string PreviewCardMeta = "sts2_individual_card_skin_preview_card";
+    private const string PreviewOptionMeta = "sts2_individual_card_skin_preview_option";
+
+    public static void Attach(NInspectCardScreen screen)
+    {
+        if (screen.GetNodeOrNull<HBoxContainer>(SelectorName) != null)
+        {
+            return;
+        }
+
+        var selector = new HBoxContainer
+        {
+            Name = SelectorName,
+            AnchorLeft = 0.5f,
+            AnchorTop = 0.5f,
+            AnchorRight = 0.5f,
+            AnchorBottom = 0.5f,
+            OffsetLeft = -CardSkinSelectorPlacementPolicy.SelectorWidth / 2f,
+            OffsetTop = -526f,
+            OffsetRight = CardSkinSelectorPlacementPolicy.SelectorWidth / 2f,
+            OffsetBottom = -478f,
+            GrowHorizontal = Control.GrowDirection.Both,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZIndex = 20,
+            Visible = false
+        };
+        selector.AddThemeConstantOverride("separation", 4);
+        var dragHandle = new Button
+        {
+            Name = DragHandleName,
+            Text = "⋮",
+            CustomMinimumSize = new Vector2(24, 48),
+            FocusMode = Control.FocusModeEnum.None,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            MouseDefaultCursorShape = Control.CursorShape.Move
+        };
+        ContextualSkinControls.ApplyGameTheme(dragHandle);
+        dragHandle.AddThemeFontSizeOverride("font_size", 22);
+        var dropdown = new OptionButton
+        {
+            Name = DropdownName,
+            CustomMinimumSize = new Vector2(308, 48),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            FitToLongestItem = false,
+            ClipText = true,
+            Alignment = HorizontalAlignment.Center
+        };
+        ContextualSkinControls.ApplyGameTheme(dropdown);
+        dropdown.AddThemeFontSizeOverride("font_size", 20);
+        var popup = dropdown.GetPopup();
+        popup.AddThemeFontSizeOverride("font_size", 20);
+        popup.AboutToPopup += () => PopulateOptions(screen, selector, dropdown);
+        // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
+        // Do not also poll PopupMenu.GetFocusedItem: its hidden rows have different geometry
+        // and a deferred mouse callback can overwrite the visible row's preview.
+        popup.IdFocused += id => PreviewSelection(
+            screen,
+            dropdown,
+            popup.GetItemIndex(checked((int)id)));
+        popup.PopupHide += () => RestorePreview(screen);
+        dropdown.ItemSelected += index => ApplySelection(
+            screen,
+            selector,
+            dropdown,
+            checked((int)index));
+        var dragging = false;
+        var dragOffset = Vector2.Zero;
+        dragHandle.GuiInput += inputEvent =>
+        {
+            if (inputEvent is InputEventMouseButton mouseButton)
+            {
+                if (mouseButton.ButtonIndex == MouseButton.Right && mouseButton.Pressed)
+                {
+                    dragging = false;
+                    SkinService.ResetIndividualCardSkinSelectorPosition();
+                    ApplyDefaultSelectorPosition(selector);
+                    dragHandle.AcceptEvent();
+                    return;
+                }
+
+                if (mouseButton.ButtonIndex != MouseButton.Left)
+                {
+                    return;
+                }
+
+                if (mouseButton.Pressed)
+                {
+                    dragging = true;
+                    dragOffset = screen.GetLocalMousePosition() -
+                                 (selector.Position + selector.Size / 2f);
+                    dragHandle.GrabClickFocus();
+                }
+                else if (dragging)
+                {
+                    dragging = false;
+                    SaveSelectorPosition(screen, selector);
+                }
+
+                dragHandle.AcceptEvent();
+                return;
+            }
+
+            if (inputEvent is not InputEventMouseMotion || !dragging)
+            {
+                return;
+            }
+
+            MoveSelector(
+                screen,
+                selector,
+                screen.GetLocalMousePosition() - dragOffset);
+            dragHandle.AcceptEvent();
+        };
+        selector.AddChild(dragHandle);
+        selector.AddChild(dropdown);
+        screen.AddChild(selector);
+        DragHandleHoverVisibility.Attach(selector, dragHandle, () => dragging);
+        ApplyStoredSelectorPosition(screen, selector);
+        ModLocalization.Bind(screen, () =>
+        {
+            dragHandle.TooltipText = ModLocalization.Get(ModText.CardSkinSelectorDragHint);
+            Sync(screen);
+        });
+        dragHandle.TooltipText = ModLocalization.Get(ModText.CardSkinSelectorDragHint);
+    }
+
+    private static void ApplyStoredSelectorPosition(
+        NInspectCardScreen screen,
+        HBoxContainer selector)
+    {
+        if (!SkinService.TryGetIndividualCardSkinSelectorPosition(out var x, out var y))
+        {
+            ApplyDefaultSelectorPosition(selector);
+            return;
+        }
+
+        var size = screen.Size;
+        var stored = CardSkinSelectorPlacementPolicy.ClampNormalized(x, y, size.X, size.Y);
+        ApplyNormalizedSelectorPosition(selector, stored);
+    }
+
+    private static void ApplyDefaultSelectorPosition(HBoxContainer selector)
+    {
+        selector.AnchorLeft = 0.5f;
+        selector.AnchorTop = 0.5f;
+        selector.AnchorRight = 0.5f;
+        selector.AnchorBottom = 0.5f;
+        selector.OffsetLeft = -CardSkinSelectorPlacementPolicy.SelectorWidth / 2f;
+        selector.OffsetTop = -526f;
+        selector.OffsetRight = CardSkinSelectorPlacementPolicy.SelectorWidth / 2f;
+        selector.OffsetBottom = -478f;
+    }
+
+    private static void MoveSelector(
+        NInspectCardScreen screen,
+        HBoxContainer selector,
+        Vector2 requestedCenter)
+    {
+        var size = screen.Size;
+        var clamped = CardSkinSelectorPlacementPolicy.ClampNormalized(
+            requestedCenter.X / Math.Max(1f, size.X),
+            requestedCenter.Y / Math.Max(1f, size.Y),
+            size.X,
+            size.Y);
+        ApplyNormalizedSelectorPosition(selector, clamped);
+    }
+
+    private static void ApplyNormalizedSelectorPosition(
+        HBoxContainer selector,
+        NormalizedControlPosition position)
+    {
+        selector.AnchorLeft = position.X;
+        selector.AnchorTop = position.Y;
+        selector.AnchorRight = position.X;
+        selector.AnchorBottom = position.Y;
+        selector.OffsetLeft = -CardSkinSelectorPlacementPolicy.SelectorWidth / 2f;
+        selector.OffsetTop = -CardSkinSelectorPlacementPolicy.SelectorHeight / 2f;
+        selector.OffsetRight = CardSkinSelectorPlacementPolicy.SelectorWidth / 2f;
+        selector.OffsetBottom = CardSkinSelectorPlacementPolicy.SelectorHeight / 2f;
+    }
+
+    private static void SaveSelectorPosition(
+        NInspectCardScreen screen,
+        HBoxContainer selector)
+    {
+        var size = screen.Size;
+        if (size.X <= 0f || size.Y <= 0f)
+        {
+            return;
+        }
+
+        var center = selector.Position + selector.Size / 2f;
+        var normalized = CardSkinSelectorPlacementPolicy.ClampNormalized(
+            center.X / size.X,
+            center.Y / size.Y,
+            size.X,
+            size.Y);
+        ApplyNormalizedSelectorPosition(selector, normalized);
+        SkinService.SetIndividualCardSkinSelectorPosition(normalized.X, normalized.Y);
+    }
+
+    public static void Sync(NInspectCardScreen screen)
+    {
+        var selector = screen.GetNodeOrNull<HBoxContainer>(SelectorName);
+        var card = screen.GetNodeOrNull<NCard>("Card")?.Model;
+        if (selector == null || card == null)
+        {
+            return;
+        }
+
+        var dropdown = selector.GetNode<OptionButton>(DropdownName);
+        selector.SetMeta(UpdatingMeta, true);
+        selector.RemoveMeta(OptionsCardMeta);
+        dropdown.Clear();
+        dropdown.TooltipText = string.Empty;
+        var selected = SkinService.GetCardOverrideSelection(card);
+        dropdown.AddItem(SelectionDisplayName(selected, card));
+        dropdown.SetItemMetadata(0, selected);
+        dropdown.Select(0);
+        SkinWorkshopEntry.RefreshSelectionColor(dropdown);
+        selector.SetMeta(UpdatingMeta, false);
+        selector.Visible = true;
+    }
+
+    private static void PopulateOptions(
+        NInspectCardScreen screen,
+        HBoxContainer selector,
+        OptionButton dropdown)
+    {
+        var card = screen.GetNodeOrNull<NCard>("Card")?.Model;
+        if (card == null)
+        {
+            return;
+        }
+
+        var cardId = card.Id.ToString();
+        if (selector.GetMeta(OptionsCardMeta, string.Empty).AsString().Equals(
+                cardId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // Matching a card against every portrait, frame and presentation source is the expensive
+        // part of the individual-card selector. Do it only when the player actually opens the
+        // dropdown, not whenever the enlarged card screen refreshes.
+        SkinService.InitializeCardGroupsAfterModels();
+        // Follow the manual order saved on the skin priority screen instead of the catalogue's
+        // name order; the inherit/original rows stay above these either way. The same snapshot
+        // says which of the skins the category switched off, so they can be dimmed below.
+        var (options, priority) = SkinService.GetCardOptionsForDisplay(card);
+        var selected = SkinService.GetCardOverrideSelection(card);
+
+        selector.SetMeta(UpdatingMeta, true);
+        dropdown.Clear();
+        SkinChoiceDimming.Bind(dropdown, priority);
+        dropdown.AddItem(CardSkinControls.InheritedSelectionText(card));
+        dropdown.SetItemMetadata(0, SkinService.InheritCardSelectionId);
+        dropdown.AddItem(ModLocalization.Get(ModText.GameOriginal));
+        dropdown.SetItemMetadata(1, SkinCatalog.BaseOptionId);
+        foreach (var option in options)
+        {
+            var index = dropdown.ItemCount;
+            dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
+            dropdown.SetItemMetadata(index, option.Id);
+        }
+
+        var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
+            .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString()
+                .Equals(selected, StringComparison.OrdinalIgnoreCase));
+        dropdown.Select(selectedIndex);
+        SkinWorkshopEntry.Append(dropdown);
+        // The dimming bound above must actually reach the screen: a native PopupMenu cannot tint
+        // single rows, so the popup draws through the shared colored list. The collapsed button
+        // keeps its own SkinWorkshopEntry coloring, hence colorSelection: false.
+        PresetChoiceColoring.Attach(dropdown, SkinOptionStylePolicy.IsAccented, colorSelection: false);
+        selector.SetMeta(OptionsCardMeta, cardId);
+        selector.SetMeta(UpdatingMeta, false);
+    }
+
+    private static string SelectionDisplayName(string optionId, CardModel card)
+    {
+        if (optionId.Equals(
+                SkinService.InheritCardSelectionId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return CardSkinControls.InheritedSelectionText(card);
+        }
+
+        if (optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return ModLocalization.Get(ModText.GameOriginal);
+        }
+
+        var optionName = SkinService.GetCardOptionName(optionId);
+        return string.IsNullOrWhiteSpace(optionName)
+            ? optionId
+            : ModLocalization.DisplayOptionName(optionName);
+    }
+
+    private static void ApplySelection(
+        NInspectCardScreen screen,
+        HBoxContainer selector,
+        OptionButton dropdown,
+        int index)
+    {
+        if (selector.GetMeta(UpdatingMeta, false).AsBool())
+        {
+            return;
+        }
+
+        var card = screen.GetNodeOrNull<NCard>("Card")?.Model;
+        if (card == null || index < 0 || index >= dropdown.ItemCount)
+        {
+            return;
+        }
+
+        var optionId = dropdown.GetItemMetadata(index).AsString();
+        if (SkinWorkshopEntry.Open(optionId, screen, SkinService.GetCardInheritedGroupId(card) ?? "", () => Sync(screen), cards: true)) return;
+        if (!SkinService.ApplyCardSelection(card, optionId))
+        {
+            ModLog.Error($"单卡皮肤界面切换失败：{SkinService.LastError}");
+            Sync(screen);
+            return;
+        }
+
+        var cardId = card.Id.ToString();
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(screen))
+            {
+                return;
+            }
+
+            RefreshMatchingCards(screen.GetTree()?.Root, cardId);
+            Sync(screen);
+        }).CallDeferred();
+    }
+
+    private static void PreviewSelection(
+        NInspectCardScreen screen,
+        OptionButton dropdown,
+        int index)
+    {
+        if (index < 0 || index >= dropdown.ItemCount)
+        {
+            RestorePreview(screen);
+            return;
+        }
+
+        var cardNode = screen.GetNodeOrNull<NCard>("Card");
+        var card = cardNode?.Model;
+        if (cardNode == null || card == null)
+        {
+            return;
+        }
+
+        var cardId = card.Id.ToString();
+        var optionId = dropdown.GetItemMetadata(index).AsString();
+        if (!WorkshopCatalogPolicy.IsSkinChoice(optionId)) { RestorePreview(screen); return; }
+        if (screen.GetMeta(PreviewCardMeta, string.Empty).AsString().Equals(
+                cardId,
+                StringComparison.OrdinalIgnoreCase) &&
+            screen.GetMeta(PreviewOptionMeta, string.Empty).AsString().Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        screen.SetMeta(PreviewCardMeta, cardId);
+        screen.SetMeta(PreviewOptionMeta, optionId);
+        try
+        {
+            SkinService.WithCardPreviewSelection(
+                card,
+                optionId,
+                () => CardSkinControls.RefreshCardSkin(cardNode));
+        }
+        catch (Exception exception)
+        {
+            screen.RemoveMeta(PreviewCardMeta);
+            screen.RemoveMeta(PreviewOptionMeta);
+            ModLog.Error("预览单卡皮肤失败：" + exception);
+        }
+    }
+
+    private static void RestorePreview(NInspectCardScreen screen)
+    {
+        if (!screen.HasMeta(PreviewOptionMeta))
+        {
+            return;
+        }
+
+        var previewCardId = screen.GetMeta(PreviewCardMeta, string.Empty).AsString();
+        screen.RemoveMeta(PreviewCardMeta);
+        screen.RemoveMeta(PreviewOptionMeta);
+
+        var cardNode = screen.GetNodeOrNull<NCard>("Card");
+        if (cardNode?.Model?.Id.ToString().Equals(
+                previewCardId,
+                StringComparison.OrdinalIgnoreCase) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            CardSkinControls.RefreshCardSkin(cardNode);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("恢复单卡皮肤预览失败：" + exception);
+        }
+    }
+
+    private static void RefreshMatchingCards(Node? root, string cardId)
+    {
+        CardSurfaceView.RefreshTinyCards();
+        if (root == null)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var card in Descendants(root).OfType<NCard>())
+            {
+                if (card.Model?.Id.ToString().Equals(
+                        cardId,
+                        StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    CardSkinControls.RefreshCardSkin(card);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("刷新单卡皮肤失败：" + exception);
+        }
+    }
+
+    private static IEnumerable<Node> Descendants(Node root)
+    {
+        foreach (var child in root.GetChildren())
+        {
+            yield return child;
+            foreach (var descendant in Descendants(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+}
+
+[HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary._Ready))]
+internal static class CardLibrarySkinReadyPatch
+{
+    private static void Postfix(NCardLibrary __instance) => CardSkinControls.Attach(__instance);
+}
+
+[HarmonyPatch(typeof(NInspectCardScreen), nameof(NInspectCardScreen._Ready))]
+internal static class CardInspectSkinReadyPatch
+{
+    private static void Postfix(NInspectCardScreen __instance) =>
+        CardInspectSkinControls.Attach(__instance);
+}
+
+[HarmonyPatch(typeof(NInspectCardScreen), "UpdateCardDisplay")]
+internal static class CardInspectSkinDisplayPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NInspectCardScreen __instance) =>
+        CardInspectSkinControls.Sync(__instance);
+}
+
+[HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary.OnSubmenuOpened))]
+internal static class CardLibrarySkinOpenedPatch
+{
+    private static void Prefix(NCardLibrary __instance) =>
+        CardSkinControls.ResetAvailabilityFilter(__instance);
+
+    private static void Postfix(NCardLibrary __instance) =>
+        CardSkinControls.SyncToSelectedFilter(__instance);
+}
+
+[HarmonyPatch]
+internal static class CardLibraryAvailabilityFilterPatch
+{
+    private static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(
+            typeof(NCardLibraryGrid),
+            nameof(NCardLibraryGrid.FilterCards),
+            [typeof(Func<CardModel, bool>), typeof(List<SortingOrders>)]);
+
+    private static void Prefix(
+        NCardLibraryGrid __instance,
+        ref Func<CardModel, bool> filter) =>
+        CardSkinControls.ApplyAvailabilityFilter(__instance, ref filter);
+}
+
+[HarmonyPatch(typeof(NCardLibrary), "UpdateCardPoolFilter")]
+internal static class CardLibraryPoolSkinPatch
+{
+    private static void Postfix(NCardLibrary __instance, NCardPoolFilter filter) =>
+        CardSkinControls.ShowForFilter(__instance, filter);
+}
+
+[HarmonyPatch]
+internal static class CardLibraryInitialPortraitPreloadPatch
+{
+    private static readonly System.Reflection.MethodInfo ColumnsGetter =
+        AccessTools.PropertyGetter(typeof(NCardGrid), "Columns");
+
+    private static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NCardGrid), "CalculateRowsNeeded");
+
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(NCardGrid __instance, int __result)
+    {
+        if (__instance is not NCardLibraryGrid libraryGrid || __result <= 0)
+        {
+            return;
+        }
+
+        int columns = (int)(ColumnsGetter.Invoke(__instance, null) ?? 0);
+        if (columns <= 0)
+        {
+            return;
+        }
+
+        SkinService.PreloadCardPortraits(
+            libraryGrid.VisibleCards.Take(__result * columns));
+    }
+}
+
+[HarmonyPatch(typeof(NCardLibraryGrid), "AssignCardsToRow")]
+internal static class CardLibraryRowPortraitPreloadPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(
+        NCardLibraryGrid __instance,
+        List<NGridCardHolder> row,
+        int startIndex) =>
+        SkinService.PreloadCardPortraits(
+            __instance.VisibleCards.Skip(startIndex).Take(row.Count));
+}
+
+[HarmonyPatch]
+internal static class CardRewardPortraitPreloadPatch
+{
+    internal static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(
+            typeof(NCardRewardSelectionScreen),
+            nameof(NCardRewardSelectionScreen.RefreshOptions));
+
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(IReadOnlyList<CardCreationResult> options) =>
+        SkinService.PreloadCardPortraits(options.Select(option => option.Card));
+}
+
+[HarmonyPatch(typeof(CardModel), nameof(CardModel.Portrait), MethodType.Getter)]
+internal static class CardPortraitResultPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(CardModel __instance, ref Texture2D __result) =>
+        CardSkinControls.ReplacePortrait(__instance, ref __result);
+}
+
+[HarmonyPatch(typeof(NCard), nameof(NCard.UpdateVisuals))]
+internal static class CardPreviewModeCapturePatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCard __instance, CardPreviewMode previewMode) =>
+        CardSkinControls.RememberPreviewMode(__instance, previewMode);
+}
+
+[HarmonyPatch(typeof(NCard), "ReloadOverlay")]
+internal static class CardBuiltInOverlayPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCard __instance)
+    {
+        if (__instance.Model is not { HasBuiltInOverlay: true }) return;
+        CardSkinControls.ApplyBuiltInOverlay(__instance, ExternalCardVisualBridge.GetOwnership(__instance).Frame
+            ? null : SkinService.GetCardPresentation(__instance.Model));
+    }
+}
+
+[HarmonyPatch(typeof(NCard), "set_Model")]
+internal static class CardLayoutModelRebindPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCard __instance, CardModel? value)
+    {
+        if (!ReferenceEquals(__instance.Model, value)) CardSkinControls.ReleasePresentationForReuse(__instance);
+    }
+}
+
+[HarmonyPatch]
+internal static class CardLayoutPoolReleasePatch
+{
+    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
+    {
+        yield return AccessTools.Method(typeof(NCard), "OnFreedToPool");
+        yield return AccessTools.Method(typeof(NCard), "OnReturnedFromPool");
+    }
+
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCard __instance) => CardSkinControls.ReleasePresentationForReuse(__instance);
+}
+
+[HarmonyPatch]
+internal static class CardLayoutResetPatch
+{
+    private static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NCard), "Reload");
+
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCard __instance) =>
+        CardSkinControls.RestoreBaselineLayout(__instance);
+}
+
+[HarmonyPatch]
+internal static class CardLayoutBaselineCapturePatch
+{
+    private static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NCard), "Reload");
+
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(NCard __instance) =>
+        CardSkinControls.CaptureBaselineLayout(__instance);
+}
+
+[HarmonyPatch]
+internal static class CardLayoutFinalPatch
+{
+    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
+    {
+        yield return AccessTools.Method(typeof(NCard), "Reload");
+        yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
+    }
+
+    [HarmonyPriority(Priority.Last)]
+    private static void Prefix(NCard __instance, System.Reflection.MethodBase __originalMethod)
+    {
+        if (__originalMethod.Name == nameof(NCard.UpdateVisuals))
+            StatefulCardArtView.BeforeRefresh(__instance, reload: false);
+    }
+
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCard __instance, System.Reflection.MethodBase __originalMethod, object[] __args)
+    {
+        // 基线已在 Priority.First 的 Postfix 中捕获，避免把其他 Mod 后置
+        // 修改过的卡框误当成原版。这里最后只做当前所有者的呈现。
+        var externalOwnership = ExternalCardVisualBridge.GetOwnership(__instance);
+        CardSkinControls.ApplySelectedPresentation(__instance, externalOwnership);
+        CardSkinControls.ApplySelectedPortraitToNode(__instance, externalOwnership);
+        StatefulCardArtView.Apply(__instance, externalOwnership,
+            __args.OfType<CardPreviewMode>().FirstOrDefault());
+        CardRefreshDiagnostics.Record(__instance, "managed", __originalMethod);
+        ExternalCardVisualBridge.SynchronizeProvider(__instance);
+        CardRefreshDiagnostics.Record(__instance, "editor", __originalMethod);
+        CardSkinControls.UpdateLibrarySourceIndicators(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(NCard), nameof(NCard._EnterTree))]
+internal static class CardTreeReentrySkinPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCard __instance) =>
+        CardSkinControls.ReapplyCardAfterTreeEntry(__instance);
+}
+
+[HarmonyPatch(typeof(NCardPlayQueue), nameof(NCardPlayQueue.OnLocalCardPlayed))]
+internal static class LocalCardPlayQueuePortraitPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCardPlayQueue __instance) =>
+        CardSkinControls.ReapplyQueuedCardPortraits(__instance);
+}
+
+[HarmonyPatch(typeof(NCardPlayQueue), nameof(NCardPlayQueue.UpdateCardBeforeExecution))]
+internal static class CardPlayQueueRebindPortraitPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCardPlayQueue __instance) =>
+        CardSkinControls.ReapplyQueuedCardPortraits(__instance);
+}
