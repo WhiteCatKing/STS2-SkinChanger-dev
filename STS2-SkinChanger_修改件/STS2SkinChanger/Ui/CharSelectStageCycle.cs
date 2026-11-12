@@ -316,6 +316,15 @@ internal static class CharSelectStageCycle
             next = 1;
         }
 
+        // The live spine can point into a remount namespace that only materialised this one stage,
+        // so stage 2/3 files are unreachable from that folder. Load them from the package's own
+        // root instead (res://<root>/s<stage>_<group>_data.tres).
+        var packageRoot = SkinService.Catalog?.GetAssetRootDirectory(groupId, optionId);
+        if (!string.IsNullOrWhiteSpace(packageRoot))
+        {
+            directory = packageRoot;
+        }
+
         return new StagePlan(directory, group, stage, next);
     }
 
@@ -719,7 +728,8 @@ internal static class CharSelectStageCycle
 [HarmonyPatch(typeof(NCharacterSelectScreen), "SelectCharacter")]
 internal static class CharSelectStageCyclePatch
 {
+    // v0.113.0 起 SelectCharacter 只收按钮参数，角色模型要自己从按钮上取。
     [HarmonyPostfix]
-    private static void Postfix(NCharacterSelectScreen __instance, CharacterModel characterModel) =>
-        CharSelectStageCycle.Attach(__instance, characterModel);
+    private static void Postfix(NCharacterSelectScreen __instance, NCharacterSelectButton charSelectButton) =>
+        CharSelectStageCycle.Attach(__instance, charSelectButton?.Character);
 }

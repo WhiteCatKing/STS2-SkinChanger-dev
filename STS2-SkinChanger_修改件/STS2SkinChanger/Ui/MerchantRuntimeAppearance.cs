@@ -763,13 +763,9 @@ internal static class MerchantRuntimeAppearance
 
             var previewPlayer = CreatePreviewPlayer("SkinChangerFakeMerchantPreview");
             previewPlayer.Gold = 9999;
-            var model = new MerchantInventory(previewPlayer);
-            foreach (var relic in ModelDb.AllRelics
-                         .OrderBy(relic => relic.Id.Entry, StringComparer.OrdinalIgnoreCase)
-                         .Take(6))
-            {
-                model.AddRelicEntry(new MerchantRelicEntry(relic.ToMutable(), previewPlayer));
-            }
+            // v0.113.0 removed the public per-entry builders (AddRelicEntry and friends); the
+            // inventory now has to come from the game's own factory, which fills every column.
+            var model = MerchantInventory.CreateForNormalMerchant(previewPlayer);
 
             FakeMerchantInventoryField.SetValue(preview, inventory);
             FakeMerchantProceedButtonField.SetValue(preview, proceed);
@@ -1628,7 +1624,11 @@ internal static class MerchantRoomPrewarmPatch
             MerchantRuntimeAppearance.MerchantRoomScenePath);
 }
 
-[HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom.Create))]
+// v0.113.0 removed NMerchantRoom.Create(): the shop room is no longer rebuilt through a static
+// factory, so the old "throw away the preloaded room and create a fresh one" path has no entry
+// point. Only the behaviour focus and the runtime-scope bookkeeping survive; player visuals are
+// applied by MerchantRoomPlayerAppearancePatch below, which already runs on _Ready.
+[HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._Ready))]
 internal static class MerchantRoomCreateAppearancePatch
 {
     [HarmonyPrefix]
@@ -1640,36 +1640,15 @@ internal static class MerchantRoomCreateAppearancePatch
 
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(ref NMerchantRoom? __result, long __state)
+    private static void Postfix(NMerchantRoom __instance, long __state)
     {
-        if (__result == null || !GodotObject.IsInstanceValid(__result))
+        if (!GodotObject.IsInstanceValid(__instance))
         {
             return;
         }
 
-        RoomRuntimeScopeOwnership.Record(__result, __state);
-        var rebuildStarted = Stopwatch.GetTimestamp();
-        if (!MerchantRuntimeAppearance.TryCreateCurrentMerchantRoom(
-                __result,
-                out var currentRoom,
-                out var error) ||
-            currentRoom == null)
-        {
-            ModLog.Warn("保留游戏预加载的商店房间：" + error);
-            MerchantRuntimeAppearance.ScopePartTakeover(__result);
-            return;
-        }
-
-        var preloadCreatedRoom = __result;
-        __result = currentRoom;
-        RoomRuntimeScopeOwnership.Record(currentRoom, __state);
-        preloadCreatedRoom.Free();
-        MerchantRuntimeAppearance.ScopePartTakeover(currentRoom);
-        var rebuildElapsed = Stopwatch.GetElapsedTime(rebuildStarted);
-        ModLog.Info(
-            "商店房间已绕过启动预加载缓存并按当前选择创建：" +
-            SkinService.Config.GetSelection(MerchantRuntimeAppearance.GroupId) +
-            $"（重建耗时={rebuildElapsed.TotalMilliseconds:F1} ms）");
+        RoomRuntimeScopeOwnership.Record(__instance, __state);
+        MerchantRuntimeAppearance.ScopePartTakeover(__instance);
     }
 }
 

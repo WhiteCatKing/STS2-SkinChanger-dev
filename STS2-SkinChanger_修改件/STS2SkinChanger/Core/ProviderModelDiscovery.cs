@@ -28,6 +28,16 @@ internal static class ProviderModelDiscovery
         "_modTypes",
         BindingFlags.Static | BindingFlags.NonPublic);
 
+    // Never reference SingletonModel by type here: this code is reached from the Harmony patch on
+    // OneTimeInitialization.ExecuteEssential, and v0.113.0 deleted that type. A compile-time token
+    // would make the patched method throw TypeLoadException while the game is still starting up.
+    private static readonly Type? SingletonModelType = typeof(ModelDb).Assembly.GetType(
+        "MegaCrit.Sts2.Core.Models.SingletonModel",
+        throwOnError: false,
+        ignoreCase: false);
+
+    private static bool _missingSingletonModelLogged;
+
     public static void Publish(Assembly? assembly, string providerId)    {
         if (assembly == null)
         {
@@ -149,10 +159,24 @@ internal static class ProviderModelDiscovery
             return;
         }
 
+        if (SingletonModelType == null)
+        {
+            if (!_missingSingletonModelLogged)
+            {
+                _missingSingletonModelLogged = true;
+                ModLog.Info(
+                    "当前游戏版本没有 SingletonModel 类型，跳过皮肤提供者单例补注册；" +
+                    "提供者的模型类型改由 ModelDb 自身的类型发现负责。");
+            }
+
+            return;
+        }
+
         foreach (var type in SafeTypes(assembly))
         {
             if (type == null || !type.IsClass || type.IsAbstract ||
-                !typeof(SingletonModel).IsAssignableFrom(type) ||
+                SingletonModelType == null ||
+                !SingletonModelType.IsAssignableFrom(type) ||
                 ModelDb.Contains(type))
             {
                 continue;

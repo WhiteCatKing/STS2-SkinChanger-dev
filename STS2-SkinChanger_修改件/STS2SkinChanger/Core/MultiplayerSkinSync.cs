@@ -1374,14 +1374,14 @@ internal static class MultiplayerSkinSync
         }
     }
 
-    internal static void OnLobbyCharacterChanged(StartRunLobby lobby, ulong playerId, bool randomResolution)
+    internal static void OnLobbyCharacterChanged(StartRunLobby lobby, ulong playerId, bool isRotatingDread)
     {
-        // Each client resolves all random characters. Only the owner may advertise their choice;
-        // never publish this machine's default for somebody else's resolved character.
+        // Only the owner may advertise their choice; never publish this machine's default for
+        // somebody else's resolved character.
         if (!ReferenceEquals(_lobby, lobby) || _netService?.Type.IsMultiplayer() != true ||
             playerId != _netService.NetId)
             return;
-        PublishLocalCharacterSelection(randomResolution ? "随机角色已确定" : "大厅角色改变");
+        PublishLocalCharacterSelection(isRotatingDread ? "大厅角色改变（轮转恐惧）" : "大厅角色改变");
         lock (Sync) PendingIconRefreshes.Add(playerId);
     }
 
@@ -2693,13 +2693,13 @@ internal static class MultiplayerSkinLobbyTickPatch
 [HarmonyPatch(typeof(StartRunLobby), "ChangeCharacter")]
 internal static class MultiplayerLobbyCharacterChangedPatch
 {
-    // Both supported versions call this after resolving a random character, even though the
-    // character-select UI intentionally skips its usual selection event on that path.
-    private static void Postfix(StartRunLobby __instance, ulong playerId, bool isRandomCharacterResolution)
+    // v0.113.0 renamed the third parameter to isRotatingDread: it no longer means "a random
+    // character was resolved", so it only picks the log reason now.
+    private static void Postfix(StartRunLobby __instance, ulong playerId, bool isRotatingDread)
     {
         try
         {
-            MultiplayerSkinSync.OnLobbyCharacterChanged(__instance, playerId, isRandomCharacterResolution);
+            MultiplayerSkinSync.OnLobbyCharacterChanged(__instance, playerId, isRotatingDread);
         }
         catch (Exception exception)
         {

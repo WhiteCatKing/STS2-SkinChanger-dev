@@ -17,7 +17,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.30.200";
+    public const string InternalTestVersion = "1.0.31.0";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -50,6 +50,9 @@ public static class Entry
         // Pengo's Tarot paints localized text with its bundled Latin-only Balatro font; give the
         // CJK labels the game's locale font so Chinese/Japanese/Korean stop rendering as boxes.
         PengoTarotFontCompat.Install(harmony);
+        // v0.113.0 renamed NCreature.OstyScaleToSize; the Osty skin pack still patches the old
+        // name, and one unresolved target makes it unpatch all of itself.
+        OstyDefectImpostorCompat.Install(harmony);
         ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
         ModLog.Info(failedPatchClasses.Count == 0
             ? "代码补丁已加载。等待游戏资源初始化。"
@@ -103,7 +106,7 @@ public static class Entry
         return failedPatchClasses;
     }
 
-    private static Type[] GetLoadableTypes(Assembly assembly)
+    internal static Type[] GetLoadableTypes(Assembly assembly)
     {
         try
         {
@@ -125,21 +128,41 @@ internal static class EssentialInitializationPatch
 {
     private static void Prefix()
     {
-        VisualPatchGuard.RemoveProviderVisualPatches(
-            ManagedSkinModLoader.ProviderRoots,
-            ManagedSkinModLoader.GetPreservedRuntimeRoots(ModManager.Mods));
-        SkinService.InitializeBeforeAssets();
+        try
+        {
+            VisualPatchGuard.RemoveProviderVisualPatches(
+                ManagedSkinModLoader.ProviderRoots,
+                ManagedSkinModLoader.GetPreservedRuntimeRoots(ModManager.Mods));
+            SkinService.InitializeBeforeAssets();
+        }
+        catch (Exception exception)
+        {
+            // 启动期是单点：这里任何异常都会顺着 OneTimeInitialization 冒到游戏启动流程，
+            // 直接把玩家挡在"致命错误"画面。皮肤只是外观，宁可选错皮也不能让游戏起不来。
+            ModLog.Error(
+                "启动期皮肤初始化前置步骤失败（已跳过，游戏继续启动）：" +
+                exception.GetBaseException().Message);
+        }
     }
 
     private static void Postfix()
     {
-        VisualPatchGuard.RemoveProviderVisualPatches(
-            ManagedSkinModLoader.ProviderRoots,
-            ManagedSkinModLoader.GetPreservedRuntimeRoots(ModManager.Mods));
-        SkinService.InitializeCardGroupsAfterModels();
-        SkinService.PrepareSelectedCharacterPreviews();
-        ExternalCardVisualBridge.WarmUp();
-        SkinWorkshopService.StartCommunityRefresh();
+        try
+        {
+            VisualPatchGuard.RemoveProviderVisualPatches(
+                ManagedSkinModLoader.ProviderRoots,
+                ManagedSkinModLoader.GetPreservedRuntimeRoots(ModManager.Mods));
+            SkinService.InitializeCardGroupsAfterModels();
+            SkinService.PrepareSelectedCharacterPreviews();
+            ExternalCardVisualBridge.WarmUp();
+            SkinWorkshopService.StartCommunityRefresh();
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error(
+                "启动期皮肤初始化后置步骤失败（已跳过，游戏继续启动）：" +
+                exception.GetBaseException().Message);
+        }
     }
 
     // Start-up is over once this runs: from here on a Quit call is the player leaving, and until
@@ -197,7 +220,10 @@ internal static class ModelTypeCompatibility
     private static IReadOnlySet<ModelId> BuildCanonicalModelIds()
     {
         var ids = new HashSet<ModelId>();
-        foreach (var type in typeof(AbstractModel).Assembly.GetTypes())
+        // 第三方皮肤包可能引用已被新版游戏删除的类型（例如 v0.113.0 的 SingletonModel），
+        // 这时 GameAssembly 的整份类型枚举会抛 ReflectionTypeLoadException。只取可加载的类型，
+        // 不能让一个包带崩模型 ID 兼容过滤，更不能带崩启动。
+        foreach (var type in Entry.GetLoadableTypes(typeof(AbstractModel).Assembly))
         {
             if (type.IsAbstract ||
                 !type.IsSubclassOf(typeof(AbstractModel)))

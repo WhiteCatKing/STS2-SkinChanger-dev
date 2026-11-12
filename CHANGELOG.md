@@ -9,6 +9,20 @@
 - 回退方式见文末。
 
 ---
+## 2026-11-13
+### 1.0.31.0 —— 适配游戏 v0.113.0（修「启动即致命错误」）
+根因：v0.113.0 删除了 `MegaCrit.Sts2.Core.Models.SingletonModel`。本 Mod 挂在 `OneTimeInitialization.ExecuteEssential` 上的补丁体直接引用该类型，补丁方法 JIT 时抛 `TypeLoadException`，游戏一启动就进「致命错误」画面（日志栈 `OneTimeInitialization.ExecuteEssential_Patch3` ← `NGame.GameStartup`）。
+- `Core\ProviderModelDiscovery.cs`：改用 `typeof(ModelDb).Assembly.GetType("MegaCrit.Sts2.Core.Models.SingletonModel", throwOnError:false)` 反射取类型；缺类型时只打一次日志并跳过「给皮肤包补注册单例模型」，改由 `ModelDb` 自身类型发现负责。补丁体不再持有该类型的编译期令牌。
+- `Ui\StatefulCardCosmeticPatches.cs`：删除已消失的 `MegaCrit.Sts2.Core.Models.Singleton` 命名空间引用。
+- `Ui\MerchantRuntimeAppearance.cs`：`NMerchantRoom.Create` 已删除 → 房间补丁改挂 `NMerchantRoom._Ready`（「丢弃启动预加载房间并按选择重建」随静态工厂入口一起退役，已留注释；玩家外观仍由同文件 `MerchantRoomPlayerAppearancePatch` 负责）。`MerchantInventory.AddRelicEntry` 已删除 → 假商人预览改用 `MerchantInventory.CreateForNormalMerchant(previewPlayer)`。
+- `Ui\CharSelectStageCycle.cs`、`Ui\ContextualSkinControls.cs`：`NCharacterSelectScreen.SelectCharacter` 只剩 `NCharacterSelectButton` 一个参数 → 改从 `charSelectButton.Character` 取角色（游戏内部本来就这么取），补丁类恢复安装。
+- `Core\MultiplayerSkinSync.cs`：`StartRunLobby.ChangeCharacter` 形参改名 `isRotatingDread`（语义为轮转恐惧），该值只用于日志措辞。
+- 启动期健壮性：`Entry.GetLoadableTypes` 提为 `internal`，`ModelTypeCompatibility` 枚举 GameAssembly 类型改走它；`EssentialInitializationPatch` 的前置/后置步骤各自 try/catch 并打 Error 日志。第三方包引用已删除类型时，异常不再顺着启动流程把玩家挡在「致命错误」外。
+- 新增 `Core\OstyDefectImpostorCompat.cs`：工坊 `3820801911`（撑在地上的鸡煲）仍按旧名 `NCreature.OstyScaleToSize` 打补丁，失败即 `UnpatchAll` 自己。这里给 `AccessTools.Method` 挂后置，把旧名请求重定向到 v0.113.0 的 `ScaleAndPositionOsty`；取重载用精确反射，避免同名重载二义性返回 null。
+- 战损档：`Ui\CharSelectStageCycle.cs` 的 `ResolvePlan` 改用皮肤包根目录（`SkinCatalog.GetAssetRootDirectory`）拼 `s<stage>_<group>_data.tres`，修掉「点角色切战损」每次都读到 0 个资源的问题。
+- 按作者要求，撤销此前为工坊 `3747527467` 做的延迟注册/作用域门闩等兼容改动（7 个文件回到 .30.200 状态），只保留本次版本适配。
+- 验证：构建 0 错误（仅 3 个既有 CS8601）、LogicTests 末行 `Skin Changer logic policy tests passed.`、启动进主菜单显示 v0.113.0、日志无「补丁类安装失败」、贞德变体与战损档点击切换恢复（作者实测确认）。
+---
 
 ## 2026-11-12
 
