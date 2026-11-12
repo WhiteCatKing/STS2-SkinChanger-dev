@@ -10,6 +10,11 @@
 
 ---
 ## 2026-11-13
+### 1.0.31.2 —— 修「商人皮肤无法切换」
+根因：v0.113.0 把商店房间拆成 `NStandardMerchantRoom` / `NBlitzMerchantRoom`，`NMerchantRoom.MerchantButton` 变成 **abstract 属性**，真正的 `<MerchantButton>k__BackingField` 只存在于具体子类。本 Mod 仍按 `typeof(NMerchantRoom)` 取该字段 → 反射得到 null，`TryRefreshMerchant` 直接以 `merchant visual fields unavailable` 退出，面板里点商人皮肤不生效。同时两个子类都覆写 `_Ready()` 并在第一行调 `base._Ready()`，挂在基类上的作用域捕获早于子类建好自己的 `%MerchantButton` / `%Inventory`。
+- `Ui\MerchantRuntimeAppearance.cs`：新增 `ResolveMerchantButtonField(object)`，按实例真实类型（含基类链）缓存解析 `<MerchantButton>k__BackingField` 或 `_merchantButton`；预览、刷新、回滚、预览原生引用四处改用它，不再依赖基类的静态字段。
+- 新增 `MerchantRoomConcreteReadyPatch`：同时挂 `NStandardMerchantRoom._Ready` 与 `NBlitzMerchantRoom._Ready` 的 `Priority.Last` postfix，等具体房间完成自身初始化后再跑一次 `ScopePartTakeover`。
+
 ### 1.0.31.1 —— 让「撑在地上的鸡煲」继续可用（奥斯提皮肤包兼容层）
 根因：工坊 `3820801911`（`OstyDefectImpostor`）把全部补丁塞进一次 `Harmony.PatchAll()`，只要有一个目标解析不到，它的 catch 就 `UnpatchAll()` 把自己整个停掉。v0.113.0 把 `NCreature.OstyScaleToSize(float)` 改名成 `ScaleAndPositionOsty(float, double)`，它仍按旧名打补丁 → 日志 `[OstyDefectImpostor] Patch unavailable; original visuals retained`，皮肤选项随之消失。
 - `Core\OstyDefectImpostorCompat.cs`（新增）：在 `AccessTools.Method(Type, string, Type[], Type[])` 上挂 postfix，只有当查找结果为 null、且请求的正是 `NCreature.OstyScaleToSize` 时，才返回改名后的 `NCreature.ScaleAndPositionOsty`；其它任何查找原样放行。

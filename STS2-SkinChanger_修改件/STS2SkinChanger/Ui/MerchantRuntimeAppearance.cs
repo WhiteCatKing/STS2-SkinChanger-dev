@@ -46,8 +46,37 @@ internal static class MerchantRuntimeAppearance
     private const string ProviderRootBasePositionMeta = "skin_changer_shop_provider_root_position";
     private const string ProviderRootBaseScaleMeta = "skin_changer_shop_provider_root_scale";
 
-    private static readonly FieldInfo? MerchantButtonField =
-        AccessTools.Field(typeof(NMerchantRoom), "<MerchantButton>k__BackingField");
+    // v0.113.0 made NMerchantRoom.MerchantButton abstract: the backing field no longer lives on
+    // the base type but on the concrete room (NStandardMerchantRoom / NBlitzMerchantRoom), so it
+    // has to be resolved from the live instance's own type instead of the abstract base.
+    private static readonly Dictionary<Type, FieldInfo?> MerchantButtonFields = [];
+
+    internal static FieldInfo? ResolveMerchantButtonField(object? instance)
+    {
+        if (instance == null)
+        {
+            return null;
+        }
+
+        var type = instance.GetType();
+        lock (MerchantButtonFields)
+        {
+            if (MerchantButtonFields.TryGetValue(type, out var cached))
+            {
+                return cached;
+            }
+
+            FieldInfo? field = null;
+            for (var current = type; current != null && field == null; current = current.BaseType)
+            {
+                field = AccessTools.Field(current, "<MerchantButton>k__BackingField") ??
+                        AccessTools.Field(current, "_merchantButton");
+            }
+
+            MerchantButtonFields[type] = field;
+            return field;
+        }
+    }
     private static readonly FieldInfo? FakeMerchantButtonField =
         AccessTools.Field(typeof(NFakeMerchant), "<MerchantButton>k__BackingField");
     private static readonly MethodInfo? FakeMerchantOpenedMethod =
@@ -679,7 +708,8 @@ internal static class MerchantRuntimeAppearance
     {
         try
         {
-            if (MerchantButtonField == null ||
+            var previewButtonField = ResolveMerchantButtonField(preview);
+            if (previewButtonField == null ||
                 MerchantRoomInventoryField == null ||
                 MerchantRoomProceedButtonField == null)
             {
@@ -705,7 +735,7 @@ internal static class MerchantRuntimeAppearance
 
             MerchantRoomInventoryField.SetValue(preview, inventory);
             MerchantRoomProceedButtonField.SetValue(preview, proceed);
-            MerchantButtonField.SetValue(preview, button);
+            previewButtonField.SetValue(preview, button);
             button.IsLocalPlayerDead = false;
             button.PlayerDeadLines = MerchantRoom.Dialogue.PlayerDeadLines;
             InstallMerchantPreviewInputProxy(button);
@@ -820,7 +850,8 @@ internal static class MerchantRuntimeAppearance
             return false;
         }
 
-        if (MerchantButtonField == null || MerchantHandField == null)
+        var merchantButtonField = ResolveMerchantButtonField(room);
+        if (merchantButtonField == null || MerchantHandField == null)
         {
             error = "merchant visual fields unavailable";
             return false;
@@ -929,7 +960,7 @@ internal static class MerchantRuntimeAppearance
 
                 if (buttonSwapped && previousButton != null && GodotObject.IsInstanceValid(previousButton))
                 {
-                    MerchantButtonField.SetValue(room, previousButton);
+                    merchantButtonField.SetValue(room, previousButton);
                     previousButton.Name = previousButton.Name.ToString().Replace(
                         "__SkinChangerPrevious",
                         string.Empty,
@@ -1286,7 +1317,7 @@ internal static class MerchantRuntimeAppearance
             previous,
             replacement,
             room,
-            MerchantButtonField!,
+            ResolveMerchantButtonField(room)!,
             button => room.OpenInventory());
     }
 
@@ -1407,7 +1438,7 @@ internal static class MerchantRuntimeAppearance
             {
                 case NMerchantRoom room:
                     SetPreviewReference(
-                        MerchantButtonField,
+                        ResolveMerchantButtonField(room),
                         room,
                         ResolveUniqueNode<NMerchantButton>(room, "MerchantButton"));
                     SetPreviewReference(
@@ -1648,6 +1679,27 @@ internal static class MerchantRoomCreateAppearancePatch
         }
 
         RoomRuntimeScopeOwnership.Record(__instance, __state);
+        MerchantRuntimeAppearance.ScopePartTakeover(__instance);
+    }
+}
+
+// v0.113.0 splits the shop into NStandardMerchantRoom / NBlitzMerchantRoom, and both override
+// _Ready() and call base._Ready() as their very first statement. A patch on the abstract base
+// therefore runs before the concrete room has built its own %MerchantButton / %Inventory, so the
+// part takeover is repeated once the concrete room finished its own initialisation.
+[HarmonyPatch(typeof(NStandardMerchantRoom), nameof(NStandardMerchantRoom._Ready))]
+[HarmonyPatch(typeof(NBlitzMerchantRoom), nameof(NBlitzMerchantRoom._Ready))]
+internal static class MerchantRoomConcreteReadyPatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NMerchantRoom __instance)
+    {
+        if (!GodotObject.IsInstanceValid(__instance))
+        {
+            return;
+        }
+
         MerchantRuntimeAppearance.ScopePartTakeover(__instance);
     }
 }
