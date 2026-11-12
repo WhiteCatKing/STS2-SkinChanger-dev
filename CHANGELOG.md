@@ -10,6 +10,13 @@
 
 ---
 ## 2026-11-13
+### 1.0.31.1 —— 让「撑在地上的鸡煲」继续可用（奥斯提皮肤包兼容层）
+根因：工坊 `3820801911`（`OstyDefectImpostor`）把全部补丁塞进一次 `Harmony.PatchAll()`，只要有一个目标解析不到，它的 catch 就 `UnpatchAll()` 把自己整个停掉。v0.113.0 把 `NCreature.OstyScaleToSize(float)` 改名成 `ScaleAndPositionOsty(float, double)`，它仍按旧名打补丁 → 日志 `[OstyDefectImpostor] Patch unavailable; original visuals retained`，皮肤选项随之消失。
+- `Core\OstyDefectImpostorCompat.cs`（新增）：在 `AccessTools.Method(Type, string, Type[], Type[])` 上挂 postfix，只有当查找结果为 null、且请求的正是 `NCreature.OstyScaleToSize` 时，才返回改名后的 `NCreature.ScaleAndPositionOsty`；其它任何查找原样放行。
+- 定位该重载必须用 `typeof(AccessTools).GetMethod(..., [typeof(Type), typeof(string), typeof(Type[]), typeof(Type[])], null)`：`AccessTools` 有两个同名 `Method` 重载，用 `AccessTools.Method(typeof(AccessTools), ...)` 去查会二义性命中失败、静默返回 null。
+- 类型判定按 `FullName + 程序集名` 比较，不用 `typeof(NCreature)` 引用比较：每个模组各有 AssemblyLoadContext，同一个游戏类型在不同 ALC 里是不同的 `Type` 实例，引用比较永远不相等、重定向不会触发。
+- `Entry.cs`：在 `PengoTarotFontCompat.Install(harmony)` 之后调用 `OstyDefectImpostorCompat.Install(harmony)`，早于任何第三方模组的初始化器。
+
 ### 1.0.31.0 —— 适配游戏 v0.113.0（修「启动即致命错误」）
 根因：v0.113.0 删除了 `MegaCrit.Sts2.Core.Models.SingletonModel`。本 Mod 挂在 `OneTimeInitialization.ExecuteEssential` 上的补丁体直接引用该类型，补丁方法 JIT 时抛 `TypeLoadException`，游戏一启动就进「致命错误」画面（日志栈 `OneTimeInitialization.ExecuteEssential_Patch3` ← `NGame.GameStartup`）。
 - `Core\ProviderModelDiscovery.cs`：改用 `typeof(ModelDb).Assembly.GetType("MegaCrit.Sts2.Core.Models.SingletonModel", throwOnError:false)` 反射取类型；缺类型时只打一次日志并跳过「给皮肤包补注册单例模型」，改由 `ModelDb` 自身类型发现负责。补丁体不再持有该类型的编译期令牌。

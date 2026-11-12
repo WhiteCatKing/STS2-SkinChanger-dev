@@ -25,6 +25,8 @@ internal static class OstyDefectImpostorCompat
 {
     private const string LegacyMethodName = "OstyScaleToSize";
     private const string RenamedMethodName = "ScaleAndPositionOsty";
+    private const string CreatureTypeName = "MegaCrit.Sts2.Core.Nodes.Combat.NCreature";
+    private const string GameAssemblyName = "sts2";
 
     private static MethodInfo? _renamedMethod;
     private static bool _resolving;
@@ -78,8 +80,13 @@ internal static class OstyDefectImpostorCompat
             return;
         }
 
-        if (type != typeof(NCreature)
-            || !string.Equals(name, LegacyMethodName, StringComparison.Ordinal))
+        // Each mod loads into its own assembly load context, so the NCreature the other mod sees
+        // is a different Type instance from the one this mod can see. Compare by identity instead
+        // of by reference, otherwise the redirect never fires.
+        if (type == null
+            || !string.Equals(name, LegacyMethodName, StringComparison.Ordinal)
+            || !string.Equals(type.FullName, CreatureTypeName, StringComparison.Ordinal)
+            || !string.Equals(type.Assembly.GetName().Name, GameAssemblyName, StringComparison.Ordinal))
         {
             return;
         }
