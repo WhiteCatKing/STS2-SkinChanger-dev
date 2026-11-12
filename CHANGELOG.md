@@ -10,6 +10,11 @@
 
 ---
 ## 2026-11-13
+### 1.0.31.3 —— 修「商人皮肤刷新报『独立皮肤资源不是场景』」
+根因：v0.113.0 把商店房间场景从 `res://scenes/rooms/merchant_room.tscn` 拆成 `res://scenes/rooms/standard_merchant_room.tscn` 与 `res://scenes/rooms/blitz_merchant_room.tscn`，旧路径在新版游戏包里已不存在。本 Mod 的 `MerchantRoomScenePath` 仍是旧路径，运行时 overlay 里取不到 PackedScene，于是在 `SkinService.InstantiateRuntimeScene` 抛 `InvalidOperationException: 独立皮肤资源不是场景：res://scenes/rooms/merchant_room.tscn`，面板里切换商人皮肤一律失败。
+- `Ui\MerchantRuntimeAppearance.cs`：新增 `StandardMerchantRoomScenePath` / `BlitzMerchantRoomScenePath` 与 `ResolveMerchantRoomScenePath(NMerchantRoom?)`（按活体房间类型名选场景，`NBlitzMerchantRoom` 走 blitz，其余走 standard）；`MerchantRoomScenePath` 保留为 standard 默认值，供预览预热与无房间实例的场景使用。
+- `TryCreateCurrentMerchantRoom` 改用 `ResolveMerchantRoomScenePath(preloadCreatedRoom)`，主路径与兜底路径都用同一个场景。
+
 ### 1.0.31.2 —— 修「商人皮肤无法切换」
 根因：v0.113.0 把商店房间拆成 `NStandardMerchantRoom` / `NBlitzMerchantRoom`，`NMerchantRoom.MerchantButton` 变成 **abstract 属性**，真正的 `<MerchantButton>k__BackingField` 只存在于具体子类。本 Mod 仍按 `typeof(NMerchantRoom)` 取该字段 → 反射得到 null，`TryRefreshMerchant` 直接以 `merchant visual fields unavailable` 退出，面板里点商人皮肤不生效。同时两个子类都覆写 `_Ready()` 并在第一行调 `base._Ready()`，挂在基类上的作用域捕获早于子类建好自己的 `%MerchantButton` / `%Inventory`。
 - `Ui\MerchantRuntimeAppearance.cs`：新增 `ResolveMerchantButtonField(object)`，按实例真实类型（含基类链）缓存解析 `<MerchantButton>k__BackingField` 或 `_merchantButton`；预览、刷新、回滚、预览原生引用四处改用它，不再依赖基类的静态字段。

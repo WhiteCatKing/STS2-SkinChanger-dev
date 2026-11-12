@@ -35,7 +35,19 @@ internal static class MerchantRuntimeAppearance
 {
     internal const string GroupId = "merchant";
     internal const string FakeMerchantGroupId = "fake_merchant_monster";
-    internal const string MerchantRoomScenePath = "res://scenes/rooms/merchant_room.tscn";
+    // v0.113.0 split the shop room into two concrete scenes and dropped the shared
+    // scenes/rooms/merchant_room.tscn: loading the old path now yields a non-PackedScene
+    // resource ("独立皮肤资源不是场景"), which is why the merchant preview refused to refresh.
+    internal const string StandardMerchantRoomScenePath = "res://scenes/rooms/standard_merchant_room.tscn";
+    internal const string BlitzMerchantRoomScenePath = "res://scenes/rooms/blitz_merchant_room.tscn";
+
+    /// <summary>Scene used when the live room type is unknown (preview prewarm, base fallback).</summary>
+    internal const string MerchantRoomScenePath = StandardMerchantRoomScenePath;
+
+    internal static string ResolveMerchantRoomScenePath(NMerchantRoom? room) =>
+        room != null && string.Equals(room.GetType().Name, "NBlitzMerchantRoom", StringComparison.Ordinal)
+            ? BlitzMerchantRoomScenePath
+            : StandardMerchantRoomScenePath;
     private const string FakeMerchantScenePath = "res://scenes/events/custom/fake_merchant.tscn";
     private const string MerchantInventoryScenePath = "res://scenes/merchant/merchant_inventory.tscn";
     private const string MerchantPreviewRootMeta = "skin_changer_merchant_preview_root";
@@ -512,17 +524,18 @@ internal static class MerchantRuntimeAppearance
             // does not ship a replacement room scene, retain the base-game fallback.
             NMerchantRoom replacement;
             var replacementTransferred = false;
+            var roomScenePath = ResolveMerchantRoomScenePath(preloadCreatedRoom);
             try
             {
                 replacement = SkinService.InstantiateRuntimeScene<NMerchantRoom>(
                     GroupId,
-                    MerchantRoomScenePath);
+                    roomScenePath);
             }
             catch (Exception runtimeException)
             {
                 ModLog.Warn("当前商人没有独立房间场景，使用游戏场景兜底：" +
                             runtimeException.GetBaseException().Message);
-                replacement = LoadRuntimeOrBaseScene(MerchantRoomScenePath)
+                replacement = LoadRuntimeOrBaseScene(roomScenePath)
                     .Instantiate<NMerchantRoom>(PackedScene.GenEditState.Disabled);
             }
             try
