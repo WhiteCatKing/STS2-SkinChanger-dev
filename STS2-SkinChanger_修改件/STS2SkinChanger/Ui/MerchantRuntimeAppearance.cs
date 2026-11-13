@@ -216,6 +216,26 @@ internal static class MerchantRuntimeAppearance
     }
 
     /// <summary>
+    /// Replays the selected provider's own NMerchantButton._Ready prefix on a freshly built
+    /// merchant node. Mid-run skin switches never re-run the room's _Ready, so this is the only
+    /// place the new pack's authored offset/scale can be applied.
+    /// </summary>
+    private static void ReplayMerchantNodeReadyFor(Node node, string groupId)
+    {
+        var providerId = SkinService.GetSelectedFullRuntimeProvider(groupId);
+        if (providerId == null)
+        {
+            return;
+        }
+
+        EnsureSelectedMerchantProviderActive(groupId, providerId);
+        ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(
+            ManagedSkinModLoader.ResolveBehaviorProviderId(providerId),
+            node);
+        ModLog.Info($"[商人] 热切换已重放商人节点就绪行为：{providerId}（分组={groupId}）。");
+    }
+
+    /// <summary>
     /// A merchant skin positions and scales its figure from the native node's own <c>_Ready</c>
     /// prefix. Skin Changer removes that callback from Harmony and replays it, but the replay only
     /// works while the provider's behaviour is installed: the run narrows behaviour down to the
@@ -1539,6 +1559,13 @@ internal static class MerchantRuntimeAppearance
             // and %MerchantSelectionReticle resolve to the freed template and the button's
             // _Ready path receives Nil.
             SetOwnerRecursive(button, button);
+            // The provider applies its own offset/scale in a NMerchantButton._Ready prefix. That
+            // prefix is detached from Harmony while we own the resource mount, and replayed only
+            // through ReplaySelectedNodeReadyPrefixes. The room's own _Ready has long finished by
+            // the time the player switches skins mid-run, so without this explicit replay the new
+            // button keeps the base transform and the figure jumps to the baseline offset at 2.6x
+            // scale. Replay before the node enters the tree so nothing overwrites it afterwards.
+            ReplayMerchantNodeReadyFor(button, groupId);
             return button;
         }
         finally
