@@ -2638,15 +2638,25 @@ internal sealed partial class SkinCatalog : IDisposable
     /// example <c>portrait_palettes/1/s1_run_icon.png</c>). Used for per-variant portraits, which are
     /// raw PNGs inside the pack and may not exist under the mounted <c>res://</c> namespace.
     /// </summary>
+    private static string StripVariantSuffix(string optionId)
+    {
+        var marker = optionId.IndexOf("::variant:", StringComparison.Ordinal);
+        return marker < 0 ? optionId : optionId[..marker];
+    }
+
+    private SkinOption? FindOption(string groupId, string optionId) =>
+        Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(candidate => candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+
     public byte[]? ReadProviderFile(string groupId, string optionId, string relativePath)
     {
         try
         {
-            var option = Groups.FirstOrDefault(group =>
-                    group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
-                .Options.FirstOrDefault(candidate =>
-                    candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
-            var root = GetAssetRootDirectory(groupId, optionId);
+            // A settings variant is a separate option id (<mod>::variant:<key>) whose asset list only
+            // carries its palette files, so the package root has to come from the base option.
+            var option = FindOption(groupId, optionId) ?? FindOption(groupId, StripVariantSuffix(optionId));
+            var root = GetAssetRootDirectory(groupId, optionId) ??
+                       GetAssetRootDirectory(groupId, StripVariantSuffix(optionId));
             if (option == null || string.IsNullOrWhiteSpace(root))
             {
                 return null;
@@ -2697,10 +2707,7 @@ internal sealed partial class SkinCatalog : IDisposable
     /// </summary>
     public string? GetAssetRootDirectory(string groupId, string optionId)
     {
-        var option = Groups.FirstOrDefault(group =>
-                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
-            .Options.FirstOrDefault(candidate =>
-                candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+        var option = FindOption(groupId, optionId) ?? FindOption(groupId, StripVariantSuffix(optionId));
         if (option == null)
         {
             return null;
@@ -2736,10 +2743,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public AncientLayeredImagePaths? GetAncientLayeredImagePaths(string groupId, string optionId)
     {
-        var option = Groups.FirstOrDefault(group =>
-                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
-            .Options.FirstOrDefault(candidate =>
-                candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+        var option = FindOption(groupId, optionId) ?? FindOption(groupId, StripVariantSuffix(optionId));
         if (option == null)
         {
             return null;

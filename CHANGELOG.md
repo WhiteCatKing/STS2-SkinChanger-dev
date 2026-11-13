@@ -10,6 +10,13 @@
 
 ---
 ## 2026-11-13
+### 1.0.31.9 —— 修「战损变体的选人背景/头像全都一样」（真因：变体 id 查不到包根）
+
+设置变体的选项 id 是 `<mod>::variant:<key>`，它的资产列表里只有配色文件、没有 `s1_*`，于是 `GetAssetRootDirectory` 返回 null，`ReadProviderFile` 也拿不到包内文件——`VariantPortraits` 因此读不到 `portrait_palettes/<变体>/s1_select_icon.png`，四个变体全退回规范图。
+
+改法：`SkinCatalog` 新增 `StripVariantSuffix` 与 `FindOption`，`ReadProviderFile` / `GetAssetRootDirectory` 在按变体 id 查不到时回退到基础 option id（并不改动任何选中值）。
+
+贞德包里确认存在 `portrait_palettes/1..3/s1_{run,select}_icon.png`，索引 0 是包自己的默认外观、本来就没有目录。
 ### 1.0.31.8 —— 修「战损变体的背景/头像全都一样」
 
 1.0.31.3 为了让战损档能读到 `s2_/s3_*_data.tres`，把 `ResolvePlan` 里的 `directory` 直接改成了包根目录。`directory` 同时被拿去拼 `portrait_palettes/<变体>/s<阶段>_select_icon.png` 与配色路径，于是四个变体的选人背景、选人头像全退回到同一张默认图——**同一个变量被两件事共用**，是这次倒退的根因。
