@@ -39,15 +39,18 @@ internal static class MerchantRuntimeAppearance
 
     private static void ApplyRememberedTransform(Node? visual)
     {
-        if (visual is not Node2D node2D
-            || !GodotObject.IsInstanceValid(node2D)
-            || !RememberedTransforms.TryGetValue(
-                ManagedSkinModLoader.ResolveBehaviorProviderId(SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? string.Empty),
-                out var remembered)
+        if (visual is not Node2D node2D || !GodotObject.IsInstanceValid(node2D))
+        {
+            return;
+        }
+
+        var current = SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? string.Empty;
+        if (!RememberedTransforms.TryGetValue(current, out var remembered)
             && !RememberedTransforms.TryGetValue(
-                SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? string.Empty,
+                ManagedSkinModLoader.ResolveBehaviorProviderId(current),
                 out remembered))
         {
+            ModLog.Warn($"[商人] 没有可重放的位姿（选择={current}），保持节点原样。");
             return;
         }
 
@@ -246,14 +249,16 @@ internal static class MerchantRuntimeAppearance
 
             var behaviorProviderId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
             ManagedSkinModLoader.MarkMerchantFigureProvider(visual, providerId, groupId);
-        if (visual is Node2D authored)
-        {
-            // 局内切换时房间的 _Ready 早已跑完，新皮肤不会再有"第一次量的机会"，
-            // 所以把它自己那次正确的位姿记下来，切换后重放。
-            RememberedTransforms.TryAdd(
-                providerId,
-                (authored.Position.X, authored.Position.Y, authored.Scale.X, authored.Scale.Y));
-        }
+            if (visual is Node2D authored)
+            {
+                // 切换过去的那一瞬间节点可能还停在基础坐标（-1122.7 / 0.4701），
+                // 那种值不能当记忆，否则重放等于把错误再写一遍：只在拿到像样位姿时覆盖。
+                if (authored.Position.X > -500f)
+                {
+                    RememberedTransforms[providerId] =
+                        (authored.Position.X, authored.Position.Y, authored.Scale.X, authored.Scale.Y);
+                }
+            }
             if (visual is Node2D node2D)
             {
                 // A same-ID variation runs the other copy's code; say so once, otherwise the id in

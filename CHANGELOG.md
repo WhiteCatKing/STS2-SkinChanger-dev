@@ -1,4 +1,17 @@
-### 1.0.31.52 —— 商人骨骼变换按 source 隔离
+## 2026-11-14
+
+### 1.0.31.54 —— 商人位姿记忆只存“像样”的值
+
+- 切换瞬间节点常停在基础坐标（`-1122.7 / 0.4701`），原先的 `TryAdd` 把这种值当成记忆，重放等于把错误再写一遍。改为只在 `Position.X > -500` 时覆盖 `RememberedTransforms`。
+- `ApplyRememberedTransform` 找不到记录时打 `[商人] 没有可重放的位姿（选择=…），保持节点原样。`，便于区分“没记住”与“记住但错”。
+
+
+## 2026-11-14
+
+### 1.0.31.53 —— 商人皮肤局内切换后重放位姿
+
+- `Ui\MerchantRuntimeAppearance.cs`：`RememberMerchantFigureProvider` 把皮肤自己写下的商人位姿（位置/缩放）按 providerId 记进 `RememberedTransforms`；`TryRefreshMerchant` 成功换皮后调用 `ApplyRememberedTransform(refreshedVisual)` 重放，避免切换后退回基础坐标（位置 `-1122.7, -396.7`、缩放 `0.4701`）导致「模型放大并飞到左上角」。
+- 不改动 1.0.31.51 的补丁摘除范围；未命中记录时保持原样。### 1.0.31.52 —— 商人骨骼变换按 source 隔离
 
 三套商人包共用 manifest id `Merchant2CuteII`，`KeepsMerchantFigureTransform` 用
 `ResolveBehaviorProviderId(selected)` 比较，把三份来源都归一到同一个 id，于是 a/b/c
@@ -515,6 +528,8 @@ git checkout v1.0.30.200              # 回到某个标签看代码（只读，�
 
 回退代码之后必须：重建 → `LogicTests` 通过 → 复制到 4 处部署目录 → 重启游戏确认 `godot.log` 里的 `内测版本` 与提交相符。
 2026-11-12 之前的版本没有 git 标签，只有本文件与交接文档的记录；那几天要"回退"只能改代码或改用 `D:\工作2026.11.10`、`D:\工作2026.11.11` 里的历史安装包。
+
+
 
 
 
