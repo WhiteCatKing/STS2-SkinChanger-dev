@@ -56,6 +56,8 @@ internal static class VisualPatchGuard
                 .Select(entry => (entry.Patch, entry.Kind, Root: GetProviderRoot(entry.Patch, roots, preservedRoots)))
                 .Where(entry =>
                     entry.Root != null &&
+                    ManagedSkinModLoader.IsManagedProviderAssembly(
+                        entry.Patch.PatchMethod.Module.Assembly) &&
                     !ManagedSkinModLoader.IsProviderAssemblyActive(
                         entry.Patch.PatchMethod.Module.Assembly))
                 .DistinctBy(entry => (entry.Patch.PatchMethod, entry.Kind))

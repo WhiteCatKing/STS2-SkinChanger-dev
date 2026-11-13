@@ -191,6 +191,15 @@ internal static class ManagedSkinModLoader
         ActiveProviderRuntimes.Values.Any(runtime => ReferenceEquals(runtime.Assembly, assembly));
 
     /// <summary>
+    /// 这个程序集是不是由本 Mod 加载/接管的皮肤提供者。
+    /// 排在 SkinChanger 前面、由游戏原生加载的提供者不在此列：我们没接管它，
+    /// 它的行为补丁就不能被当成"未选中提供者"摘掉（实测会摘掉 Merchant2CuteII 的
+    /// 8 个呈现补丁，商人直接回原版）。
+    /// </summary>
+    public static bool IsManagedProviderAssembly(Assembly assembly) =>
+        ProviderIdsByAssembly.ContainsKey(assembly);
+
+    /// <summary>
     /// Whether a provider's behaviour is installed right now. A selected provider whose groups are
     /// outside the current run scope is loaded but inactive, so its isolated node-ready callbacks
     /// cannot be replayed.

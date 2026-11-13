@@ -1,3 +1,12 @@
+### 1.0.31.31 —— 不再摘除「我们没接管」的 provider 呈现补丁（玩家反馈修复）
+
+`Core\VisualPatchGuard.cs` 摘补丁的判据原来是「程序集不是激活中的 provider」。对**排在本 Mod 前面、
+由游戏原生加载**的皮肤包（玩家实测 Merchant2CuteII 排第 2、我们排第 51），`IsProviderAssemblyActive`
+恒为 false，于是它的 8 个呈现补丁（含 `NMerchantButton._Ready`、`NMerchantCharacter.PlayAnimation`）
+被我们摘掉，商人回原版。
+
+现在加一道前提：只有**由本 Mod 加载/接管**的程序集（`ManagedSkinModLoader.IsManagedProviderAssembly`）
+才可能被摘。没接管的包一律保留原样。
 ### 1.0.31.30 —— 外观覆盖包跨会话缓存命中（性能）
 
 修复「每次启动都重写 587.8 MB 外观覆盖包」。原因是覆盖包签名里用了归档的**物理路径**，
@@ -362,4 +371,5 @@ git checkout v1.0.30.200              # 回到某个标签看代码（只读，�
 
 回退代码之后必须：重建 → `LogicTests` 通过 → 复制到 4 处部署目录 → 重启游戏确认 `godot.log` 里的 `内测版本` 与提交相符。
 2026-11-12 之前的版本没有 git 标签，只有本文件与交接文档的记录；那几天要"回退"只能改代码或改用 `D:\工作2026.11.10`、`D:\工作2026.11.11` 里的历史安装包。
+
 
