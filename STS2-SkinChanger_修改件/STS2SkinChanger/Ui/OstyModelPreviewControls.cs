@@ -33,7 +33,6 @@ internal static class OstyModelPreviewControls
     public static void Refresh(NCharacterSelectScreen screen)
     {
         var diagnostic = screen.GetNodeOrNull<Control>($"InfoPanel/{PanelName}");
-        ModLog.Info($"[奥斯提诊断] Refresh 进入：面板存在={diagnostic != null} 面板可见={diagnostic?.Visible}");
         // 非主人页面（作者要求：除骨妹外都不显示随从与预览框）即使被再次调用也不显示。
         if (screen.GetMeta("sts2_skin_companion_hidden", false).AsBool())
         {

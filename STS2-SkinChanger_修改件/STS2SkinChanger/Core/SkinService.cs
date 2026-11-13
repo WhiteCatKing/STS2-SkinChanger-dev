@@ -5174,8 +5174,6 @@ internal static partial class SkinService
             if (!string.Equals(probe, _lastRuntimeProviderProbe, StringComparison.Ordinal))
             {
                 _lastRuntimeProviderProbe = probe;
-                ModLog.Info(
-                    $"[选角闸门] 分组={groupId} 选择={selection} 是运行包={isRuntime} 返回={resolved ?? "<null>"}");
             }
 
             return resolved;

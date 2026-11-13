@@ -1987,7 +1987,6 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
-        ModLog.Info($"[奥斯提诊断] RebuildCharacterDisplay 进入：分组={groupId} 隐藏标记={screen.GetMeta(CompanionHiddenMeta, false).AsBool()}");
         // F29 取证：卡死复现停在选角预览重建时，godot.log 以此行与挂载日志分界。
         ModLog.Info($"开始重建选角预览：{groupId}。");
         CharacterModelPreviewControls.Hide(screen);
@@ -2070,7 +2069,6 @@ internal static partial class ContextualSkinControls
                     // 这个包没有规范背景场景（例如 DefectSkinMod 用自己的 DefectAnimatedBg，魅魔战士只有
                     // char_select_ironclad.png）。资源解析这时会退回游戏原版场景，拿它替换只会把包自己
                     // 画的那套背景冲掉，所以什么都不换。
-                    ModLog.Info($"[选角背景] 分组={groupId} 没有规范背景场景，保留皮肤包自己的背景。");
                 }
                 else
                 {
@@ -2119,7 +2117,6 @@ internal static partial class ContextualSkinControls
         }
         catch (Exception exception)
         {
-            ModLog.Warn($"[选角背景] 检查规范背景场景失败：{exception.GetBaseException().Message}");
             return true;
         }
     }
@@ -2245,12 +2242,9 @@ internal static partial class ContextualSkinControls
                 }
             }
 
-            ModLog.Info($"[选角背景] 分组={groupId} 角色={character.Id.Entry}：" +
-                        (parts.Count == 0 ? "没有 AnimatedBg/BgContainer" : string.Join(" | ", parts)));
         }
         catch (Exception exception)
         {
-            ModLog.Warn($"[选角背景] 分组={groupId} 采集失败：{exception.GetBaseException().Message}");
         }
     }
 

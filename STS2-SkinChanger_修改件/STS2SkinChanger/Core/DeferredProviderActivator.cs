@@ -19,7 +19,7 @@ namespace STS2SkinChanger.Core;
 internal static class DeferredProviderActivator
 {
     private const double TickSeconds = 0.12;
-    private const double MaxTickMilliseconds = 45;
+    private const double MaxTickMilliseconds = 12;
 
     private static readonly Queue<string> Pending = new();
     private static readonly object Sync = new();
@@ -267,3 +267,4 @@ internal static class DeferredProviderActivator
         _slowestProvider = null;
     }
 }
+
