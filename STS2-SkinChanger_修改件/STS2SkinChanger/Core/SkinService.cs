@@ -1132,15 +1132,12 @@ internal static partial class SkinService
             }
 
             Config.LastKnownBeforeAllSkinMods = isBeforeAllSkinMods;
-            Config.LastKnownFirstInLoadOrder = isBeforeAllSkinMods;
             if (stateChanged || movedBehindSkinMod)
             {
                 Config.Save(ConfigPath);
             }
 
-            // 只有「排序确实变了」并且「确实有皮肤 Mod 排在本 Mod 之前」时才提醒，
-            // 否则每次启动都会因为别的运行时差异误报。
-            var shouldShow = !isBeforeAllSkinMods && (stateChanged || movedBehindSkinMod);
+            var shouldShow = !isBeforeAllSkinMods;
             if (isBeforeAllSkinMods)
             {
                 _loadOrderAutoReorderLogged = false;
