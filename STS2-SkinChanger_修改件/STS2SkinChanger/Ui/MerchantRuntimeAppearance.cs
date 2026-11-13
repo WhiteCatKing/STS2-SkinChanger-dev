@@ -882,10 +882,17 @@ internal static class MerchantRuntimeAppearance
             }
 
             var scale = visual.Scale.X;
-            var providerId = SkinService.GetSelectedRuntimeProvider(GroupId) ?? string.Empty;
+            var poseGroupId = ResolveMerchantGroupId(visual.GetParent() ?? visual) ?? GroupId;
+            var providerId = SkinService.GetSelectedRuntimeProvider(poseGroupId) ?? string.Empty;
             ModLog.Info($"[商人] 本次选择={providerId} 缩放={scale:0.0000} 位置=({visual.Position.X:0.0}, {visual.Position.Y:0.0}) 节点={visual.Name}");
             if (scale <= 0f || scale >= 0.1f)
             {
+                return;
+            }
+
+            if (string.Equals(poseGroupId, FakeMerchantGroupId, StringComparison.OrdinalIgnoreCase))
+            {
+                ModLog.Warn($"[商人] 假商人位姿未校准，保持原版（选择={providerId}，缩放={scale:0.0000}）。");
                 return;
             }
 
