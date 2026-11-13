@@ -2109,6 +2109,55 @@ internal static partial class ContextualSkinControls
 
         ModLog.Info($"已从隔离依赖路径重建完整 DLL 皮肤 {character.Id.Entry} 的选角展示。");
         CharSelectPackRebindCompat.AfterRebuild(screen, groupId, SkinService.GetSelectedRuntimeProvider(groupId));
+        DescribeCharacterSelectBackground(screen, groupId, character);
+    }
+
+    /// <summary>
+    /// 诊断用：把选人界面背景容器的子节点现状打出来。皮肤包自己的背景（例如 DefectSkinMod 的
+    /// <c>DefectAnimatedBg</c>）如果被我们的重建整段换掉，这里会看不到它；如果还在但不可见，
+    /// 就会显示 <c>可见=False</c>。只有这两种情况之一，才会出现「背景退回原版」。
+    /// </summary>
+    private static void DescribeCharacterSelectBackground(
+        NCharacterSelectScreen screen,
+        string groupId,
+        CharacterModel character)
+    {
+        try
+        {
+            var animated = screen.GetNodeOrNull<Node>("AnimatedBg");
+            var parts = new List<string>();
+            if (animated != null)
+            {
+                parts.Add($"AnimatedBg 子节点={animated.GetChildCount()}");
+                foreach (var child in animated.GetChildren())
+                {
+                    var item = child as CanvasItem;
+                    parts.Add(
+                        $"{child.Name}[{child.GetType().Name}] 可见={item?.Visible} " +
+                        $"在树可见={item?.IsVisibleInTree()} 子={child.GetChildCount()}");
+                }
+            }
+
+            var container = screen.GetNodeOrNull<Node>("BgContainer");
+            if (container != null)
+            {
+                parts.Add($"BgContainer 子节点={container.GetChildCount()}");
+                foreach (var child in container.GetChildren())
+                {
+                    var item = child as CanvasItem;
+                    parts.Add(
+                        $"{child.Name}[{child.GetType().Name}] 可见={item?.Visible} " +
+                        $"在树可见={item?.IsVisibleInTree()} 子={child.GetChildCount()}");
+                }
+            }
+
+            ModLog.Info($"[选角背景] 分组={groupId} 角色={character.Id.Entry}：" +
+                        (parts.Count == 0 ? "没有 AnimatedBg/BgContainer" : string.Join(" | ", parts)));
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"[选角背景] 分组={groupId} 采集失败：{exception.GetBaseException().Message}");
+        }
     }
 
     private static void RestoreCharacterInfoText(

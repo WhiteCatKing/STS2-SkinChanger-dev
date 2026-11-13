@@ -1,3 +1,10 @@
+### 1.0.31.14 —— 加「选角背景」诊断日志（不改任何行为）
+
+`DefectSkinMod`（鸡煲娘化）的选人背景不由规范路径提供，而是它自己的 DLL 补丁在选人界面塞一个
+`DefectAnimatedBg`（场景 `res://Scenes/DefectSelectBg.tscn`）到 `AnimatedBg` / `BgContainer` 之下；
+我们的重建如果把这个节点整段换掉，背景就会退回原版。这一版只记录现状：重建之后打印
+`AnimatedBg` 与 `BgContainer` 的每个子节点名、类型、`可见`、`在树可见`、子节点数，据此判断
+「节点被我们删了」还是「节点还在但被隐藏」。
 ### 1.0.31.13 —— 加「选角点击」诊断日志（不改任何行为）
 
 1.0.31.12 让骨妹包重新量到背景并成功挂上点击接收器（日志 `char-select toggle attached (necrobinder, stage 1/3, silenced 0 skin handler(s))`），
