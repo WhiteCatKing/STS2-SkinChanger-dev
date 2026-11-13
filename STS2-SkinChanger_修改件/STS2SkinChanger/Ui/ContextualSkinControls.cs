@@ -29,6 +29,7 @@ internal static partial class ContextualSkinControls
     /// <summary>随从（奥斯提）专属下拉：所有角色界面共用一份，放在主皮肤下拉的左边。</summary>
     private const string OstyDropdownName = "OstyDropdown";
     private const string OstyGroupMeta = "sts2_skin_companion_group";
+    internal const string CompanionHiddenMeta = "sts2_skin_companion_hidden";
     private const string OstyPopupListName = "STS2OstyChoicePopupList";
     private const string MonsterScaleSliderName = "MonsterScaleSlider";
     private const string MonsterScaleValueName = "MonsterScaleValue";
@@ -973,14 +974,18 @@ internal static partial class ContextualSkinControls
         // 随从下拉只在它主人（骨妹）的页面显示。作者要求：除骨妹外所有角色都不显示。
         var ownerGroup = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var companionOwner = SkinService.Catalog?.CompanionOwnerGroup("osty");
+        screen.SetMeta(CompanionHiddenMeta, false);
         if (companionOwner != null &&
             !string.Equals(ownerGroup, companionOwner, StringComparison.OrdinalIgnoreCase))
         {
             osty.Visible = false;
             selector.SetMeta(OstyGroupMeta, string.Empty);
             // 作者要求：非主人页面连右侧的随从预览框一起不显示。
+            // 面板挂在 InfoPanel 下，而且 Refresh 会无条件 ShowOsty，所以这里既收一次，
+            // 也在 screen 上留标记让后续 Refresh 别再把它显示出来。
+            screen.SetMeta(CompanionHiddenMeta, true);
             OstyModelPreviewControls.Hide(screen);
-            var panel = screen.GetNodeOrNull<Control>(OstyModelPreviewControls.PanelName);
+            var panel = screen.GetNodeOrNull<Control>($"InfoPanel/{OstyModelPreviewControls.PanelName}");
             if (panel != null)
             {
                 panel.Visible = false;
@@ -4154,6 +4159,8 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
+
 
 
 
