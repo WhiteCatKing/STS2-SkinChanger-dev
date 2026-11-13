@@ -862,8 +862,19 @@ internal static class MerchantRuntimeAppearance
     private static bool _watchedRoomDone;
     private static string? _watchedRoomSelection;
 
+    /// <summary>
+    /// 临时总开关：关闭商人的全部增强刷新（房间就绪后的重试看门狗、热切换重放、位姿记忆）。
+    /// 只保留最基础的一条：房间 _Ready 时按当前选择套用资源（MerchantRoomConcreteReadyPatch）。
+    /// </summary>
+    internal const bool EnhancedMerchantRefreshEnabled = false;
+
     internal static void TickRefreshAfterLoad()
     {
+        if (!EnhancedMerchantRefreshEnabled)
+        {
+            return;
+        }
+
         var room = NMerchantRoom.Instance;
         if (room == null || !GodotObject.IsInstanceValid(room))
         {
