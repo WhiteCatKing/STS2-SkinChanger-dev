@@ -1987,9 +1987,17 @@ internal static partial class ContextualSkinControls
         screen.SetMeta(CompanionHiddenMeta, companionHidden);
         if (companionHidden)
         {
-            // 作者要求：一旦当前选中的不是骨妹，预览框立刻销毁/收起，不等下一次刷新。
+            // 作者要求：一旦当前选中的不是骨妹，预览框立刻收起。
+            // 只查 InfoPanel 不够：切角色时面板可能被重新挂到别的父节点下，
+            // 所以这里把所有同名节点都收掉，并跑一次 Refresh 让包内状态跟着复位。
             OstyModelPreviewControls.Hide(screen);
+            foreach (var node in screen.FindChildren("*", OstyModelPreviewControls.PanelName, recursive: true, owned: false))
+            {
+                node.Set("visible", false);
+            }
+
             screen.GetNodeOrNull<Control>($"InfoPanel/{OstyModelPreviewControls.PanelName}")?.Set("visible", false);
+            OstyModelPreviewControls.Refresh(screen);
         }
         // F29 取证：卡死复现停在选角预览重建时，godot.log 以此行与挂载日志分界。
         ModLog.Info($"开始重建选角预览：{groupId}。");
@@ -4171,6 +4179,7 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
 
 
 
