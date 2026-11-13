@@ -1037,6 +1037,7 @@ internal static class ManagedSkinModLoader
     /// Unpatching by callback method instead of Harmony owner is important because third-party mods
     /// sometimes reuse the same owner string; only the selected provider's assembly is touched.
     /// </summary>
+    public static string[] ActiveProviderRuntimeIds() => ActiveProviderRuntimes.Keys.ToArray();
     public static void EnsureProviderPatchesInstalled(string providerId)
     {
         var assembly = ProviderIdsByAssembly
@@ -1045,8 +1046,7 @@ internal static class ManagedSkinModLoader
         // 第一次切到某个商人皮肤时，它可能还没登记进 ProviderIdsByAssembly（激活发生在后面），
         // 但程序集往往已经在 AppDomain 里。按程序集名兜底，避免“前两次必错”。
         assembly ??= AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(candidate =>
-            string.Equals(candidate.GetName().Name, providerId, StringComparison.OrdinalIgnoreCase) ||
-            (candidate.GetName().Name?.StartsWith(providerId, StringComparison.OrdinalIgnoreCase) ?? false));
+            string.Equals(candidate.GetName().Name, providerId, StringComparison.OrdinalIgnoreCase));
         var existing = assembly == null ? -1 : CaptureProviderPatches(assembly).Count;
         ModLog.Info($"[商人注册] 补装检查 {providerId}：程序集={assembly?.GetName().Name ?? "<未登记>"} 现有补丁={existing}");
         if (assembly == null || existing > 0)

@@ -1506,11 +1506,22 @@ internal static class MerchantRuntimeAppearance
             // 第一次切到某个商人皮肤时，它的补丁可能还没装上（激活发生在重放之后），
             // 此时重放拿不到任何步骤 → 位姿退回基础值。先确保补丁在位再重放。
             ManagedSkinModLoader.EnsureProviderPatchesInstalled(providerId);
-            ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(
-                ManagedSkinModLoader.ResolveBehaviorProviderId(providerId),
-                node);
-            ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(providerId, node);
-            ModLog.Info($"[商人] 建节点前已重放外观初始化步骤：{providerId}（分组={groupId}）。");
+            var behaviorProviderId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
+            var replayed = 0;
+            foreach (var key in ManagedSkinModLoader.ActiveProviderRuntimeIds())
+            {
+                if (!string.Equals(key, providerId, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(key, behaviorProviderId, StringComparison.OrdinalIgnoreCase) &&
+                    !key.Contains(providerId, StringComparison.OrdinalIgnoreCase) &&
+                    !providerId.Contains(key, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                replayed += ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(key, node).Count;
+            }
+
+            ModLog.Info($"[商人] 建节点前已重放外观初始化步骤：{providerId}（分组={groupId}，重放={replayed}，运行时={string.Join("|", ManagedSkinModLoader.ActiveProviderRuntimeIds())}）。");
         }
         catch (Exception exception)
         {
