@@ -195,6 +195,7 @@ internal static partial class ContextualSkinControls
 
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
+        ModLog.Info($"[奥斯提诊断] ShowCharacter 进入：角色={character.Id.Entry} 隐藏标记={screen.GetMeta(CompanionHiddenMeta, false).AsBool()}");
         CharacterModelPreviewControls.Hide(screen);
         CaptureCharacterBackgroundHostLayout(screen);
         CancelCharacterDropdownSelection(screen);
@@ -1979,6 +1980,7 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
+        ModLog.Info($"[奥斯提诊断] RebuildCharacterDisplay 进入：分组={groupId} 隐藏标记={screen.GetMeta(CompanionHiddenMeta, false).AsBool()}");
         // F29 取证：卡死复现停在选角预览重建时，godot.log 以此行与挂载日志分界。
         ModLog.Info($"开始重建选角预览：{groupId}。");
         CharacterModelPreviewControls.Hide(screen);
@@ -4159,6 +4161,8 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
+
 
 
 
