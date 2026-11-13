@@ -37,6 +37,35 @@ internal static class MerchantRuntimeAppearance
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
         string, (float X, float Y, float ScaleX, float ScaleY)> RememberedTransforms = new(StringComparer.OrdinalIgnoreCase);
 
+    private static void GuardPoseForFrames(Node2D authored, string providerId)
+    {
+        var tree = authored.GetTree();
+        if (tree == null)
+        {
+            return;
+        }
+
+        for (var step = 1; step <= 3; step++)
+        {
+            var timer = tree.CreateTimer(0.05 * step);
+            timer.Timeout += () =>
+            {
+                if (!GodotObject.IsInstanceValid(authored)
+                    || !RememberedTransforms.TryGetValue(providerId, out var known)
+                    || authored.Position.X > -500f)
+                {
+                    return;
+                }
+
+                authored.Position = new Vector2(known.X, known.Y);
+                authored.Scale = new Vector2(known.ScaleX, known.ScaleY);
+                ModLog.Info(
+                    $"[商人] 延迟矫正商人位姿：{providerId} → ({known.X:F1}, {known.Y:F1})，" +
+                    $"缩放=({known.ScaleX:F4}, {known.ScaleY:F4})。");
+            };
+        }
+    }
+
     private static void ApplyRememberedTransform(Node? visual)
     {
         if (visual is not Node2D node2D || !GodotObject.IsInstanceValid(node2D))
@@ -266,6 +295,7 @@ internal static class MerchantRuntimeAppearance
                     ModLog.Info(
                         $"[商人] 已重放皮肤位姿：{providerId} 位置=({known.X:F1}, {known.Y:F1})，" +
                         $"缩放=({known.ScaleX:F4}, {known.ScaleY:F4})。");
+                    GuardPoseForFrames(authored, providerId);
                 }
             }
             if (visual is Node2D node2D)
