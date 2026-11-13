@@ -472,6 +472,39 @@ internal static class MerchantRuntimeAppearance
     internal static void ScopePartTakeover(Node room) =>
         PartTakeoverVisualScope.Capture(room, GroupId);
 
+    /// <summary>
+    /// 读档（<c>RunManager.SetUpSaved*</c>）时，房间节点往往先于皮肤包资源挂载就绪，
+    /// 于是商人保持游戏原版外观。这里在下一帧补做一次接管与刷新，只重试一次、幂等。
+    /// </summary>
+    internal static void ScheduleRefreshAfterLoad(Node room)
+    {
+        if (!GodotObject.IsInstanceValid(room))
+        {
+            return;
+        }
+
+        Callable.From(() =>
+        {
+            try
+            {
+                if (!GodotObject.IsInstanceValid(room))
+                {
+                    return;
+                }
+
+                ScopePartTakeover(room);
+                if (!TryRefreshMerchant(out var error) && !string.IsNullOrWhiteSpace(error))
+                {
+                    ModLog.Info("[商人] 读档后重试商人外观：" + error);
+                }
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn("读档后恢复商人外观失败：" + exception.GetBaseException().Message);
+            }
+        }).CallDeferred();
+    }
+
     internal static void PrepareMerchantSelectionChange()
     {
         var room = NMerchantRoom.Instance;
@@ -1714,6 +1747,8 @@ internal static class MerchantRoomConcreteReadyPatch
         }
 
         MerchantRuntimeAppearance.ScopePartTakeover(__instance);
+        // 读档进来的房间可能先于皮肤包资源就绪，下一帧再补一次接管与刷新。
+        MerchantRuntimeAppearance.ScheduleRefreshAfterLoad(__instance);
     }
 }
 
