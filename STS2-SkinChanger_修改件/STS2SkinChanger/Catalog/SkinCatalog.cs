@@ -2181,6 +2181,25 @@ internal sealed partial class SkinCatalog : IDisposable
         return providers;
     }
 
+    /// <summary>当前每个分组已选中的运行时 provider（启动期只对这批同步激活，其余延后到选中时）。</summary>
+    public IReadOnlySet<string> GetSelectedRuntimeProviders(IReadOnlyDictionary<string, string> selections)
+    {
+        var providers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in _groups)
+        {
+            if (!selections.TryGetValue(group.Id, out var selection) || string.IsNullOrWhiteSpace(selection))
+            {
+                continue;
+            }
+
+            if (TryGetVisualProviderId(group.Id, selection, out var providerId) && !string.IsNullOrWhiteSpace(providerId))
+            {
+                providers.Add(providerId);
+            }
+        }
+
+        return providers;
+    }
     public IReadOnlyList<string> GetScopedMonsterRuntimeProviderGroups(string optionId) =>
         _scopedMonsterRuntimeProviderGroups.GetValueOrDefault(optionId) ?? [];
 
@@ -9914,5 +9933,6 @@ internal static class DisplayTextExtensions
             .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
     }
 }
+
 
 
