@@ -1509,12 +1509,11 @@ internal static class MerchantRuntimeAppearance
             var behaviorProviderId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
             // 只按一个键重放一次：ReplaySelectedNodeReadyPrefixes 开头会 RestoreNodeReadyMutation，
             // 同一节点重放两次会把自己刚建出来的节点回收掉，表现为“模型消失”。
-            var replayKey = ManagedSkinModLoader.ActiveProviderRuntimeIds()
-                .FirstOrDefault(key =>
-                    string.Equals(key, providerId, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(key, behaviorProviderId, StringComparison.OrdinalIgnoreCase) ||
-                    key.Contains(providerId, StringComparison.OrdinalIgnoreCase) ||
-                    providerId.Contains(key, StringComparison.OrdinalIgnoreCase));
+            // 必须先全等：Merchant2CuteIIB 也 Contains("Merchant2CuteII")，混用会让 a 命中 b 的运行时，
+            // 重放拿到 b 的步骤 → a 每次切换都错。
+            var runtimeIds = ManagedSkinModLoader.ActiveProviderRuntimeIds();
+            var replayKey = runtimeIds.FirstOrDefault(key => string.Equals(key, providerId, StringComparison.OrdinalIgnoreCase))
+                            ?? runtimeIds.FirstOrDefault(key => string.Equals(key, behaviorProviderId, StringComparison.OrdinalIgnoreCase));
             var replayed = replayKey == null
                 ? 0
                 : ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(replayKey, node).Count;
