@@ -229,10 +229,20 @@ internal static class MerchantRuntimeAppearance
         }
 
         EnsureSelectedMerchantProviderActive(groupId, providerId);
-        ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(
-            ManagedSkinModLoader.ResolveBehaviorProviderId(providerId),
-            node);
-        ModLog.Info($"[商人] 热切换已重放商人节点就绪行为：{providerId}（分组={groupId}）。");
+        // The replay table is keyed by the behaviour provider id. A pack reached through a
+        // source-scoped selection (or an alias id) may be registered under its raw id, and the
+        // replay silently returns nothing when the key misses. Try both before giving up.
+        var behaviorId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
+        var replayed = ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(behaviorId, node);
+        var key = behaviorId;
+        if (replayed.Count == 0 && !string.Equals(behaviorId, providerId, StringComparison.Ordinal))
+        {
+            replayed = ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(providerId, node);
+            key = providerId;
+        }
+
+        ModLog.Info(
+            $"[商人] 热切换已重放商人节点就绪行为：{providerId}（分组={groupId}，键={key}，重放={replayed.Count} 个新增节点）。");
     }
 
     /// <summary>
