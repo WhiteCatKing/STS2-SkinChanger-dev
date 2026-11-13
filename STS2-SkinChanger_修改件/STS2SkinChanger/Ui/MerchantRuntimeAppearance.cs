@@ -472,58 +472,6 @@ internal static class MerchantRuntimeAppearance
     internal static void ScopePartTakeover(Node room) =>
         PartTakeoverVisualScope.Capture(room, GroupId);
 
-    /// <summary>
-    /// 读档（<c>RunManager.SetUpSaved*</c>）时，房间节点往往先于皮肤包资源挂载就绪，
-    /// 于是商人保持游戏原版外观。这里在下一帧补做一次接管与刷新，只重试一次、幂等。
-    /// </summary>
-    private static Node? _loadRefreshRoom;
-    private static int _loadRefreshAttempt;
-
-    internal static void ScheduleRefreshAfterLoad(Node room)
-    {
-        if (!GodotObject.IsInstanceValid(room))
-        {
-            return;
-        }
-
-        _loadRefreshRoom = room;
-        _loadRefreshAttempt = 0;
-        Callable.From(RetryRefreshAfterLoad).CallDeferred();
-    }
-
-    private static void RetryRefreshAfterLoad()
-    {
-        try
-        {
-            var room = _loadRefreshRoom;
-            if (room == null || !GodotObject.IsInstanceValid(room))
-            {
-                return;
-            }
-
-            // NMerchantRoom.Instance is only assigned after the room finishes entering the tree, so a
-            // single deferred call is too early right after a save is loaded. Retry for about a
-            // second and stop as soon as the rebuild succeeds.
-            if (TryRefreshMerchant(out var error))
-            {
-                ModLog.Info("[商人] 读档后已恢复商人外观。");
-                return;
-            }
-
-            if (++_loadRefreshAttempt < 90)
-            {
-                Callable.From(RetryRefreshAfterLoad).CallDeferred();
-                return;
-            }
-
-            ModLog.Info("[商人] 读档后重试商人外观失败：" + error);
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn("读档后恢复商人外观失败：" + exception.GetBaseException().Message);
-        }
-    }
-
     internal static void PrepareMerchantSelectionChange()
     {
         var room = NMerchantRoom.Instance;
@@ -1766,23 +1714,6 @@ internal static class MerchantRoomConcreteReadyPatch
         }
 
         MerchantRuntimeAppearance.ScopePartTakeover(__instance);
-        // 读档进来的房间可能先于皮肤包资源就绪，下一帧再补一次接管与刷新。
-        MerchantRuntimeAppearance.ScheduleRefreshAfterLoad(__instance);
-    }
-}
-
-// 读档时房间不一定再走一次 _Ready，但 NRun 一定会把它设为当前场景。
-[HarmonyPatch(typeof(NRun), nameof(NRun.SetCurrentRoom))]
-internal static class MerchantRoomShownPatch
-{
-    [HarmonyPostfix]
-    [HarmonyPriority(Priority.Last)]
-    private static void Postfix(Control? node)
-    {
-        if (node is NMerchantRoom room && GodotObject.IsInstanceValid(room))
-        {
-            MerchantRuntimeAppearance.ScheduleRefreshAfterLoad(room);
-        }
     }
 }
 
