@@ -1370,7 +1370,12 @@ internal static class ManagedSkinModLoader
 
             ModLog.Warn(
                 $"启用 {provider.Name} 的完整视觉会话失败，已回滚其行为补丁并继续使用资源皮肤：" +
-                exception.GetBaseException().Message);
+                exception.GetBaseException().Message +
+                " || " + exception.GetType().Name +
+                " @ " + string.Join(" <- ", (exception.StackTrace ?? string.Empty)
+                    .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Take(4)
+                    .Select(line => line.Trim())));
         }
         finally
         {
