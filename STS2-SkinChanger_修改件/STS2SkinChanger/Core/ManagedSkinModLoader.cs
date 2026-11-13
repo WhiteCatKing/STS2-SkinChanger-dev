@@ -1042,7 +1042,9 @@ internal static class ManagedSkinModLoader
         var assembly = ProviderIdsByAssembly
             .FirstOrDefault(pair => pair.Value.Contains(providerId))
             .Key;
-        if (assembly == null || CaptureProviderPatches(assembly).Count > 0)
+        var existing = assembly == null ? -1 : CaptureProviderPatches(assembly).Count;
+        ModLog.Info($"[商人注册] 补装检查 {providerId}：程序集={assembly?.GetName().Name ?? "<未登记>"} 现有补丁={existing}");
+        if (assembly == null || existing > 0)
         {
             return;
         }
