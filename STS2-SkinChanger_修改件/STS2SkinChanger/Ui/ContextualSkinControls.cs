@@ -964,7 +964,8 @@ internal static partial class ContextualSkinControls
         }
 
         // 只在"角色选择"界面显示；图鉴/怪物分类等选择器不挂随从下拉。
-        if (FindAncestor<NCharacterSelectScreen>(selector) == null)
+        var screen = FindAncestor<NCharacterSelectScreen>(selector);
+        if (screen == null)
         {
             osty.Visible = false;
             return;
@@ -977,6 +978,14 @@ internal static partial class ContextualSkinControls
         {
             osty.Visible = false;
             selector.SetMeta(OstyGroupMeta, string.Empty);
+            // 作者要求：非主人页面连右侧的随从预览框一起不显示。
+            OstyModelPreviewControls.Hide(screen);
+            var panel = screen.GetNodeOrNull<Control>(OstyModelPreviewControls.PanelName);
+            if (panel != null)
+            {
+                panel.Visible = false;
+            }
+
             return;
         }
 
@@ -4145,6 +4154,8 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
+
 
 
 
