@@ -1262,6 +1262,22 @@ internal static class ManagedSkinModLoader
                             assembly,
                             provider.Name);
                     }
+
+                    // Merchant packs register their patches through the initializer, and the
+                    // blueprint only remembers what was installed the first time. A merchant pack
+                    // whose first activation happened before its visual node existed ends up with an
+                    // empty blueprint, so a skipped initializer would leave it with no patches at
+                    // all - the node then stays at the vanilla transform and looks like a vanilla
+                    // merchant. Re-install tolerantly only when nothing is currently applied.
+                    if (providerId.Contains("Merchant", StringComparison.OrdinalIgnoreCase) &&
+                        CaptureProviderPatches(assembly).Count == 0)
+                    {
+                        PatchAllTolerant(
+                            new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}"),
+                            assembly,
+                            provider.Name);
+                        ModLog.Info($"[商人注册] 已为 {provider.Name} 重新安装补丁（此前补丁不在位）。");
+                    }
                 }
             }
             FrameworkCompatibilityLayer.NotifyProviderActivated(assembly);
