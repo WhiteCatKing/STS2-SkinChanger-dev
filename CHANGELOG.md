@@ -1,15 +1,12 @@
-# 更新日志（CHANGELOG）
+### 1.0.31.12 —— 让血量换装族皮肤包在选人界面重新量取背景
 
-本文件记录「皮肤切换器 / Gurio.SkinChanger」每个内部版本的改动，来源是各天的交接文档与问题单：
-`给下一个AI的交接说明_2026-11-07 / 11-09 / 11-10 / 11-11 / 11-12`（通用交接说明只讲环境与铁律，不记版本，故不在此列）。
-2026-11-12 之前的版本早于 git 仓库，只能在这里追溯；之后每个版本都会同时有提交记录、git 标签与本文件小节。
+necrobinderHpWear 这一族包给选人背景挂「点击切战损」时，会先量当前背景 SpineSprite 的图集页尺寸，
+只有等于自己预设尺寸才接管；量测发生在包初始化那一刻，而我们的皮肤资源包要等用户选中后才挂载，
+于是它们量到原版图集、判定「没装对应皮肤」并永久放弃（日志 `atlas page 9132x5386 != 4757x4757`）。
 
-- 版本号真身 = `internal_test_version`，写在 4 个文件里：`STS2SkinChanger\Entry.cs`、`STS2SkinChanger.csproj`、`SkinChanger.json`、`workshop\workshop.json`。
-- 仓库**不包含** DLL/PCK（被 `.gitignore` 排除），所以回退代码后必须重新构建并复制到 4 处部署目录，游戏里才会变。
-- 回退方式见文末。
-
----
-## 2026-11-13
+新增 `Core\CharSelectPackRebindCompat.cs`：每次重建选角展示后，按当前选择的提供者程序集名找到它的
+`TryReattachFromScreen` 并再调用一次，让它重新量一次背景；带 700ms 节流，包内部仍用自己的
+`SkinSelectionGate.MenuAllowed()` 决定是否接管，未选中的包不会响应。
 ### 1.0.31.11 —— 加「选角闸门」诊断日志（不改任何行为）
 
 血量换装那一族皮肤包（魅魔战士、骨妹「明前奶绿」等）在选人界面自己挂 `NCharacterSelectScreen.SelectCharacter` postfix 做点击切战损，但被它们自己的三道闸门挡住时**一行日志都不打**。这一版只加观测：

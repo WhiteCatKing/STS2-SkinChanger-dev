@@ -2027,6 +2027,7 @@ internal static partial class ContextualSkinControls
         RefreshLocalLobbyAvatar(screen);
         CharacterModelPreviewControls.Refresh(screen, character);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
+        CharSelectPackRebindCompat.AfterRebuild(screen, groupId, SkinService.GetSelectedRuntimeProvider(groupId));
     }
 
     /// <summary>
@@ -2107,6 +2108,7 @@ internal static partial class ContextualSkinControls
             includeProviderDependencies: true);
 
         ModLog.Info($"已从隔离依赖路径重建完整 DLL 皮肤 {character.Id.Entry} 的选角展示。");
+        CharSelectPackRebindCompat.AfterRebuild(screen, groupId, SkinService.GetSelectedRuntimeProvider(groupId));
     }
 
     private static void RestoreCharacterInfoText(
