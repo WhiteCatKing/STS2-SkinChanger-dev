@@ -1,3 +1,9 @@
+### 1.0.31.43 —— 随从预览框的判定挪到角色切换入口
+
+前几版把判定放在 `RebuildCharacterDisplay`，实测切角色时那条路径并不总是跑，于是状态陈旧。
+
+这一版把 `CompanionPreviewAllowed` 的计算放进 `ShowCharacter(screen, character)`——
+游戏的 `SelectCharacter` 每次点击都会进来——不是骨妹就当场收起预览框。
 ### 1.0.31.42 —— 奥斯提预览框改单一真源判定
 
 作者实测：框出现后切角色仍会重现，说明 screen 上的标记被多条路径互相覆盖（`PopulateOsty` 会写、`RebuildCharacterDisplay` 也会写）。
@@ -451,6 +457,7 @@ git checkout v1.0.30.200              # 回到某个标签看代码（只读，�
 
 回退代码之后必须：重建 → `LogicTests` 通过 → 复制到 4 处部署目录 → 重启游戏确认 `godot.log` 里的 `内测版本` 与提交相符。
 2026-11-12 之前的版本没有 git 标签，只有本文件与交接文档的记录；那几天要"回退"只能改代码或改用 `D:\工作2026.11.10`、`D:\工作2026.11.11` 里的历史安装包。
+
 
 
 

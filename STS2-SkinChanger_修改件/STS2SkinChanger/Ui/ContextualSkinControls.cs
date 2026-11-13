@@ -198,6 +198,21 @@ internal static partial class ContextualSkinControls
 
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
+        // 角色切换的唯一入口（游戏的 SelectCharacter 每次点击都会调到这里）。
+        // 随从预览框只认这里算出来的结果，避免 RebuildCharacterDisplay 没被调用时状态陈旧。
+        var ownerGroup = SkinService.Catalog?.CompanionOwnerGroup("osty");
+        CompanionPreviewAllowed = ownerGroup != null &&
+            string.Equals(character.Id.Entry, ownerGroup, StringComparison.OrdinalIgnoreCase);
+        if (!CompanionPreviewAllowed)
+        {
+            OstyModelPreviewControls.Hide(screen);
+            foreach (var node in screen.FindChildren("*", OstyModelPreviewControls.PanelName, recursive: true, owned: false))
+            {
+                node.Set("visible", false);
+            }
+
+            screen.GetNodeOrNull<Control>($"InfoPanel/{OstyModelPreviewControls.PanelName}")?.Set("visible", false);
+        }
         CharacterModelPreviewControls.Hide(screen);
         CaptureCharacterBackgroundHostLayout(screen);
         CancelCharacterDropdownSelection(screen);
@@ -4183,6 +4198,7 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
 
 
 
