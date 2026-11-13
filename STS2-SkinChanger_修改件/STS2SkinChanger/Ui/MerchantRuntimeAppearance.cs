@@ -222,7 +222,7 @@ internal static class MerchantRuntimeAppearance
             }
 
             var behaviorProviderId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
-            ManagedSkinModLoader.MarkMerchantFigureProvider(visual, behaviorProviderId, groupId);
+            ManagedSkinModLoader.MarkMerchantFigureProvider(visual, providerId, groupId);
             if (visual is Node2D node2D)
             {
                 // A same-ID variation runs the other copy's code; say so once, otherwise the id in
@@ -2029,3 +2029,4 @@ internal static class MerchantPreviewPurchaseBlockPatch
         return false;
     }
 }
+

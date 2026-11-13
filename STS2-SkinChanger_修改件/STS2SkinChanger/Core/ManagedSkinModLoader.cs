@@ -2861,11 +2861,7 @@ internal static class ManagedSkinModLoader
         var selected = groupId.Length == 0
             ? null
             : SkinService.GetSelectedFullRuntimeProvider(groupId);
-        var stillSelected = selected != null &&
-                            string.Equals(
-                                ResolveBehaviorProviderId(selected),
-                                providerId,
-                                StringComparison.OrdinalIgnoreCase);
+        var stillSelected = selected != null && (string.Equals(selected, owner, StringComparison.OrdinalIgnoreCase) || (!owner.Contains("::source:", StringComparison.OrdinalIgnoreCase) && string.Equals(ResolveBehaviorProviderId(selected), owner, StringComparison.OrdinalIgnoreCase)));
         return MerchantFigureRestorePolicy.KeepsTransform(owner, providerId, stillSelected);
     }
 
@@ -4885,3 +4881,5 @@ internal static class ManagedSkinModLoadPatch
             FrameworkCompatibilityLayer.TryBindOriginalFramework();
     }
 }
+
+

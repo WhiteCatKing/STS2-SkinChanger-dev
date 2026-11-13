@@ -1,3 +1,10 @@
+### 1.0.31.52 —— 商人骨骼变换按 source 隔离
+
+三套商人包共用 manifest id `Merchant2CuteII`，`KeepsMerchantFigureTransform` 用
+`ResolveBehaviorProviderId(selected)` 比较，把三份来源都归一到同一个 id，于是 a/b/c
+互相认成"还是它"，旧骨骼变换不还原：a/b 跑到左上角，c 变原版。
+现在按完整选择 id（含 `::source:`）比较，只有完全同一个来源才保留变换；
+`MarkMerchantFigureProvider` 记录的也是原始选择 id 而非归一后的行为 id。
 ### 1.0.31.51 —— 商人包的行为补丁重新纳入摘除范围
 
 1.0.31.31 给 `VisualPatchGuard` 加了「只摘本 Mod 接管过的程序集」前置，副作用是
@@ -508,6 +515,7 @@ git checkout v1.0.30.200              # 回到某个标签看代码（只读，�
 
 回退代码之后必须：重建 → `LogicTests` 通过 → 复制到 4 处部署目录 → 重启游戏确认 `godot.log` 里的 `内测版本` 与提交相符。
 2026-11-12 之前的版本没有 git 标签，只有本文件与交接文档的记录；那几天要"回退"只能改代码或改用 `D:\工作2026.11.10`、`D:\工作2026.11.11` 里的历史安装包。
+
 
 
 
