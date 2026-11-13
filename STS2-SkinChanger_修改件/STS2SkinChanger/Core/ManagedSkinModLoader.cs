@@ -3081,6 +3081,27 @@ internal static class ManagedSkinModLoader
                 case "__instance" when parameterType.IsInstanceOfType(instance):
                     arguments[index] = instance;
                     break;
+                case "__args" when parameterType == typeof(object[]) &&
+                                   target.Name == nameof(NCharacterSelectScreen.SelectCharacter) &&
+                                   instance is NCharacterSelectScreen:
+                    // Older builds take only the button. Beta also passes the character model.
+                    var targetParameters = target.GetParameters();
+                    if (targetParameters.Length == 1 &&
+                        targetParameters[0].ParameterType == typeof(NCharacterSelectButton))
+                    {
+                        arguments[index] = new object[] { button };
+                    }
+                    else if (targetParameters.Length == 2 &&
+                             targetParameters[0].ParameterType == typeof(NCharacterSelectButton) &&
+                             targetParameters[1].ParameterType == typeof(CharacterModel))
+                    {
+                        arguments[index] = new object[] { button, character };
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                    break;
                 case "__originalMethod" when parameterType == typeof(MethodBase):
                     arguments[index] = target;
                     break;

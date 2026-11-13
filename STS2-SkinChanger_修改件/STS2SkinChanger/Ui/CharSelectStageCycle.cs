@@ -107,11 +107,12 @@ internal static class CharSelectStageCycle
                 return;
             }
 
-            // Always drive the cycle ourselves when the package ships stages: the pack's own catcher is
-            // parented to the background node that the Skin Changer rebuilds on every skin change, so it
-            // dies after the first switch. Ours sits one level up (AnimatedBg) and is moved last, so it is
-            // the only one that receives the click (a single click must never advance twice).
-            var usable = ResolvePlan(groupId, spine) is not null;
+            // Let Joan's own click handler run its transition when it owns this background.
+            var joanCatcher = background.GetNodeOrNull<Control>("JoanofArcIroncladHpwearClickCatcher");
+            var joanHandlesClick = GodotObject.IsInstanceValid(joanCatcher) &&
+                                   joanCatcher!.IsVisibleInTree() &&
+                                   joanCatcher.MouseFilter == Control.MouseFilterEnum.Stop;
+            var usable = !joanHandlesClick && ResolvePlan(groupId, spine) is not null;
 
             // Parent to the container that holds the background art (AnimatedBg), not to the background
             // node itself and not to the screen: the Skin Changer rebuilds the per-character background
