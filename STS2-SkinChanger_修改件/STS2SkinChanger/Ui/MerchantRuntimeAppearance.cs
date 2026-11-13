@@ -1151,6 +1151,7 @@ internal static class MerchantRuntimeAppearance
             swapped = true;
 
             var providerId = SkinService.GetSelectedFullRuntimeProvider(FakeMerchantGroupId);
+            ModLog.Info($"[商人] 假商人诊断 选择={providerId ?? "<null>"} 手节点={(FindMerchantHand(fakeMerchant) != null ? "有" : "无")} 视觉节点={fakeMerchant.GetNodeOrNull<Node>("%MerchantVisual")?.Name ?? "<无>"}");
             var behaviorProviderId = providerId == null
                 ? null
                 : ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
