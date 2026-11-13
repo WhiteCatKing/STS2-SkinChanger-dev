@@ -906,6 +906,12 @@ internal static partial class ContextualSkinControls
         dropdown.SetItemMetadata(defaultIndex, SkinCatalog.BaseOptionId);
         foreach (var option in visualOptions)
         {
+            if (SkinService.Catalog?.IsCompanionGroup(group.Id) != true &&
+                SkinService.Catalog?.IsCompanionOnlyProvider(option.EffectiveProviderId) == true)
+            {
+                continue;
+            }
+
             var index = dropdown.ItemCount;
             dropdown.AddItem(CharacterSkinCompositionPolicy.ResolveDisplayName(
                 option.Name,
@@ -4129,4 +4135,5 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
 

@@ -25,6 +25,37 @@ internal sealed partial class SkinCatalog : IDisposable
     /// <summary>是否是随从分组（奥斯提等）。随从的选择与主人完全独立，不参与全量提供者的原子联动。</summary>
     public bool IsCompanionGroup(string groupId) =>
         CompanionGroups.Any(pair => pair.Companion.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+    /// <summary>
+    /// 不看当前选择、只看声明：这个 provider 是否只被随从分组的选项引用。
+    /// 下拉过滤用它，避免把随从专用条目挂到主人页面（选到后会占用主人的选人槽位并卡死）。
+    /// </summary>
+    public bool IsCompanionOnlyProvider(string providerId)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+        {
+            return false;
+        }
+
+        var seen = false;
+        foreach (var group in _groups)
+        {
+            foreach (var option in group.Options)
+            {
+                if (!string.Equals(option.EffectiveProviderId, providerId, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                seen = true;
+                if (!IsCompanionGroup(group.Id))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return seen;
+    }
 
     /// <summary>
     /// 是否仍按主人皮肤自动推导随从外观。默认 true（老行为）；
@@ -9876,3 +9907,4 @@ internal static class DisplayTextExtensions
             .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
     }
 }
+
