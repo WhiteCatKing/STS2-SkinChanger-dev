@@ -1,3 +1,18 @@
+### 1.0.31.15 —— 不自带选人背景场景的皮肤包，不再用原版背景覆盖
+
+`DefectSkinMod`（鸡煲娘化）、`succubusIroncladHpWear`（魅魔战士）这类包没有
+`res://scenes/screens/char_select/char_select_bg_<角色>.tscn`，它们用自己的补丁把背景画上去
+（`DefectAnimatedBg` / `AnimatedBg` 之下）。此前重建选角展示时会走「按规范路径取场景」的流程，
+资源解析在覆盖包里查不到该路径就退回游戏原版场景，于是原版背景被装上去，包自己画的那套被冲掉，
+表现为「选人界面只剩下方头像不一样」。
+
+现在重建前先问一句 `ProviderShipsCanonicalBackground`：该选择是否真的带规范背景场景。
+不带就跳过 `TakeOverCharacterSelectSceneCache` 与 `ReplaceCharacterBackground`，只刷新图标、
+重放呈现步骤并保留包自己的背景，同时打一行
+`[选角背景] 分组=… 没有规范背景场景，保留皮肤包自己的背景。`。
+带规范背景的包（贞德、A 类战损等）行为完全不变。
+
+同时把 `[选角背景]` 诊断也接到这条分支上，便于确认背景容器里到底还剩哪些节点。
 ### 1.0.31.14 —— 加「选角背景」诊断日志（不改任何行为）
 
 `DefectSkinMod`（鸡煲娘化）的选人背景不由规范路径提供，而是它自己的 DLL 补丁在选人界面塞一个

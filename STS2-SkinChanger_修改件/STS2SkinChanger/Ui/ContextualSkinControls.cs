@@ -2007,13 +2007,27 @@ internal static partial class ContextualSkinControls
             resourcePaths,
             resources =>
             {
-                var scene = resources[characterSelectPath] as PackedScene ??
-                            throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
-                TakeOverCharacterSelectSceneCache(characterSelectPath, scene);
-                // The scene must be instantiated before WithRuntimeResources restores canonical
-                // dependency paths; otherwise a skeleton/animation resource can come from the
-                // previous character skin even though the PackedScene itself loaded correctly.
-                ReplaceCharacterBackground(screen, character, scene, resources);
+                var scene = resources[characterSelectPath] as PackedScene;
+                if (scene == null && ProviderShipsCanonicalBackground(groupId, characterId))
+                {
+                    throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
+                }
+
+                if (scene == null)
+                {
+                    // 这个包没有规范背景场景（例如 DefectSkinMod 用自己的 DefectAnimatedBg，魅魔战士只有
+                    // char_select_ironclad.png）。资源解析这时会退回游戏原版场景，拿它替换只会把包自己
+                    // 画的那套背景冲掉，所以什么都不换。
+                    ModLog.Info($"[选角背景] 分组={groupId} 没有规范背景场景，保留皮肤包自己的背景。");
+                }
+                else
+                {
+                    TakeOverCharacterSelectSceneCache(characterSelectPath, scene);
+                    // The scene must be instantiated before WithRuntimeResources restores canonical
+                    // dependency paths; otherwise a skeleton/animation resource can come from the
+                    // previous character skin even though the PackedScene itself loaded correctly.
+                    ReplaceCharacterBackground(screen, character, scene, resources);
+                }
                 RefreshCharacterButtonIcon(screen, character);
                 RefreshAllCharacterButtonIcons(screen);
                 // CZN and similar complete packs create their own background variant and toolbar
@@ -2027,7 +2041,35 @@ internal static partial class ContextualSkinControls
         RefreshLocalLobbyAvatar(screen);
         CharacterModelPreviewControls.Refresh(screen, character);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
+        DescribeCharacterSelectBackground(screen, groupId, character);
         CharSelectPackRebindCompat.AfterRebuild(screen, groupId, SkinService.GetSelectedRuntimeProvider(groupId));
+    }
+
+    /// <summary>
+    /// 这个皮肤包自己是否带规范选人背景场景。没有的话，资源解析会退回游戏原版场景，
+    /// 此时替换背景只会冲掉包自己画的那一套，所以要跳过替换。
+    /// </summary>
+    private static bool ProviderShipsCanonicalBackground(string groupId, string characterId)
+    {
+        try
+        {
+            var catalog = SkinService.Catalog;
+            var selection = SkinService.GetSelectedRuntimeProvider(groupId);
+            if (catalog == null || string.IsNullOrEmpty(selection))
+            {
+                return true;
+            }
+
+            return catalog.ReadProviderFile(
+                groupId,
+                selection!,
+                $"scenes/screens/char_select/char_select_bg_{characterId}.tscn") != null;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"[选角背景] 检查规范背景场景失败：{exception.GetBaseException().Message}");
+            return true;
+        }
     }
 
     /// <summary>
