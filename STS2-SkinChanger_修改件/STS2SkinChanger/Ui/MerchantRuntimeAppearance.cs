@@ -33,61 +33,6 @@ namespace STS2SkinChanger.Ui;
 /// </summary>
 internal static class MerchantRuntimeAppearance
 {
-    /// <summary>providerId → 该皮肤自己写下的商人位姿（位置/缩放），用于局内切换后重放。</summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
-        string, (float X, float Y, float ScaleX, float ScaleY)> RememberedTransforms = new(StringComparer.OrdinalIgnoreCase);
-
-    private static void GuardPoseForFrames(Node2D authored, string providerId)
-    {
-        var tree = authored.GetTree();
-        if (tree == null)
-        {
-            return;
-        }
-
-        for (var step = 1; step <= 3; step++)
-        {
-            var timer = tree.CreateTimer(0.05 * step);
-            timer.Timeout += () =>
-            {
-                if (!GodotObject.IsInstanceValid(authored)
-                    || !RememberedTransforms.TryGetValue(providerId, out var known)
-                    || authored.Position.X > -500f)
-                {
-                    return;
-                }
-
-                authored.Position = new Vector2(known.X, known.Y);
-                authored.Scale = new Vector2(known.ScaleX, known.ScaleY);
-                ModLog.Info(
-                    $"[商人] 延迟矫正商人位姿：{providerId} → ({known.X:F1}, {known.Y:F1})，" +
-                    $"缩放=({known.ScaleX:F4}, {known.ScaleY:F4})。");
-            };
-        }
-    }
-
-    private static void ApplyRememberedTransform(Node? visual)
-    {
-        if (visual is not Node2D node2D || !GodotObject.IsInstanceValid(node2D))
-        {
-            return;
-        }
-
-        var current = SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? string.Empty;
-        if (!RememberedTransforms.TryGetValue(current, out var remembered)
-            && !RememberedTransforms.TryGetValue(
-                ManagedSkinModLoader.ResolveBehaviorProviderId(current),
-                out remembered))
-        {
-            ModLog.Warn($"[商人] 没有可重放的位姿（选择={current}），保持节点原样。");
-            return;
-        }
-
-        node2D.Position = new Vector2(remembered.X, remembered.Y);
-        node2D.Scale = new Vector2(remembered.ScaleX, remembered.ScaleY);
-        ModLog.Info($"[商人] 已重放皮肤位姿：位置=({remembered.X:F1}, {remembered.Y:F1})，缩放=({remembered.ScaleX:F4}, {remembered.ScaleY:F4})。");
-    }
-
     internal const string GroupId = "merchant";
     internal const string FakeMerchantGroupId = "fake_merchant_monster";
     // v0.113.0 split the shop room into two concrete scenes and dropped the shared
@@ -216,36 +161,6 @@ internal static class MerchantRuntimeAppearance
     }
 
     /// <summary>
-    /// Replays the selected provider's own NMerchantButton._Ready prefix on a freshly built
-    /// merchant node. Mid-run skin switches never re-run the room's _Ready, so this is the only
-    /// place the new pack's authored offset/scale can be applied.
-    /// </summary>
-    private static void ReplayMerchantNodeReadyFor(Node node, string groupId)
-    {
-        var providerId = SkinService.GetSelectedFullRuntimeProvider(groupId);
-        if (providerId == null)
-        {
-            return;
-        }
-
-        EnsureSelectedMerchantProviderActive(groupId, providerId);
-        // The replay table is keyed by the behaviour provider id. A pack reached through a
-        // source-scoped selection (or an alias id) may be registered under its raw id, and the
-        // replay silently returns nothing when the key misses. Try both before giving up.
-        var behaviorId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
-        var replayed = ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(behaviorId, node);
-        var key = behaviorId;
-        if (replayed.Count == 0 && !string.Equals(behaviorId, providerId, StringComparison.Ordinal))
-        {
-            replayed = ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(providerId, node);
-            key = providerId;
-        }
-
-        ModLog.Info(
-            $"[商人] 热切换已重放商人节点就绪行为：{providerId}（分组={groupId}，键={key}，重放={replayed.Count} 个新增节点）。");
-    }
-
-    /// <summary>
     /// A merchant skin positions and scales its figure from the native node's own <c>_Ready</c>
     /// prefix. Skin Changer removes that callback from Harmony and replays it, but the replay only
     /// works while the provider's behaviour is installed: the run narrows behaviour down to the
@@ -307,27 +222,7 @@ internal static class MerchantRuntimeAppearance
             }
 
             var behaviorProviderId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
-            ManagedSkinModLoader.MarkMerchantFigureProvider(visual, providerId, groupId);
-            if (visual is Node2D authored)
-            {
-                // 切换过去的那一瞬间节点可能还停在基础坐标（-1122.7 / 0.4701），
-                // 那种值不能当记忆，否则重放等于把错误再写一遍：只在拿到像样位姿时覆盖。
-                if (authored.Position.X > -500f)
-                {
-                    RememberedTransforms[providerId] =
-                        (authored.Position.X, authored.Position.Y, authored.Scale.X, authored.Scale.Y);
-                }
-                else if (RememberedTransforms.TryGetValue(providerId, out var known))
-                {
-                    // 这次量到的是基础坐标：说明皮肤自己的 _Ready 不会再跑，就地补回上次记住的位姿。
-                    authored.Position = new Vector2(known.X, known.Y);
-                    authored.Scale = new Vector2(known.ScaleX, known.ScaleY);
-                    ModLog.Info(
-                        $"[商人] 已重放皮肤位姿：{providerId} 位置=({known.X:F1}, {known.Y:F1})，" +
-                        $"缩放=({known.ScaleX:F4}, {known.ScaleY:F4})。");
-                    GuardPoseForFrames(authored, providerId);
-                }
-            }
+            ManagedSkinModLoader.MarkMerchantFigureProvider(visual, behaviorProviderId, groupId);
             if (visual is Node2D node2D)
             {
                 // A same-ID variation runs the other copy's code; say so once, otherwise the id in
@@ -1362,12 +1257,10 @@ internal static class MerchantRuntimeAppearance
             CaptureLocalPlayerBaseline(replacement);
             ApplyLocalPlayerTransform(replacement, groupId);
 
-            ApplyRememberedTransform(refreshedVisual);
-        previous.GetParent()?.RemoveChild(previous);
+            previous.GetParent()?.RemoveChild(previous);
             ShopProviderRoots.Remove(previous.GetInstanceId());
             previous.QueueFree();
             refreshedVisual = replacement;
-            ApplyRememberedTransform(refreshedVisual);
             replacement = null;
             listSwapped = false;
             replacementAdded = false;
@@ -1569,13 +1462,6 @@ internal static class MerchantRuntimeAppearance
             // and %MerchantSelectionReticle resolve to the freed template and the button's
             // _Ready path receives Nil.
             SetOwnerRecursive(button, button);
-            // The provider applies its own offset/scale in a NMerchantButton._Ready prefix. That
-            // prefix is detached from Harmony while we own the resource mount, and replayed only
-            // through ReplaySelectedNodeReadyPrefixes. The room's own _Ready has long finished by
-            // the time the player switches skins mid-run, so without this explicit replay the new
-            // button keeps the base transform and the figure jumps to the baseline offset at 2.6x
-            // scale. Replay before the node enters the tree so nothing overwrites it afterwards.
-            ReplayMerchantNodeReadyFor(button, groupId);
             return button;
         }
         finally
@@ -2143,6 +2029,3 @@ internal static class MerchantPreviewPurchaseBlockPatch
         return false;
     }
 }
-
-
-
