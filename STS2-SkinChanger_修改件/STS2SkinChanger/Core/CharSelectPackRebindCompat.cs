@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Godot;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 
 namespace STS2SkinChanger.Core;
@@ -37,7 +38,7 @@ internal static class CharSelectPackRebindCompat
         }
 
         var throttleKey = providerId!;
-        var now = Environment.TickCount64;
+        var now = System.Environment.TickCount64;
         if (LastCall.TryGetValue(throttleKey, out var previous) && now - previous < ThrottleMilliseconds)
         {
             return;
@@ -87,6 +88,7 @@ internal static class CharSelectPackRebindCompat
                     if (groupId != null)
                     {
                         ModLog.Info($"[选角重挂] 已请求 {assemblyName} 重新量取选人背景（分组={groupId}）。");
+                        DescribeClickCatchers(screen, groupId);
                     }
                 }
                 catch (Exception exception)
@@ -104,5 +106,56 @@ internal static class CharSelectPackRebindCompat
     private static bool IsWearDriverProvider(string providerId)
     {
         return providerId.EndsWith("HpWear", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 诊断用：把它们挂的点击接收器（<c>DBWCharSelectClickCatcher</c> 一类）的尺寸、可见性、
+    /// 以及所在背景节点的可见性打出来，用来判断「点击没反应」到底是没收到还是收到了被拒。
+    /// </summary>
+    private static void DescribeClickCatchers(Node screen, string groupId)
+    {
+        try
+        {
+            var found = new List<string>();
+            CollectClickCatchers(screen, found, 0, "screen");
+            if (found.Count == 0)
+            {
+                ModLog.Info($"[选角点击] {groupId}: 没找到任何点击接收器节点。");
+                return;
+            }
+
+            foreach (var line in found)
+            {
+                ModLog.Info($"[选角点击] {groupId}: {line}");
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"[选角点击] {groupId}: 采集失败：{exception.GetBaseException().Message}");
+        }
+    }
+
+    private static void CollectClickCatchers(Node node, List<string> found, int depth, string path)
+    {
+        if (depth > 32)
+        {
+            return;
+        }
+
+        if (node.Name.ToString().Contains("ClickCatcher", StringComparison.Ordinal))
+        {
+            if (node is Control control)
+            {
+                found.Add(
+                    $"节点={path}/{node.Name} 尺寸={control.Size} 位置={control.Position} " +
+                    $"可见={control.Visible} 在树可见={control.IsVisibleInTree()} " +
+                    $"过滤={control.MouseFilter} 父可见={(control.GetParent() as CanvasItem)?.Visible}");
+            }
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            CollectClickCatchers(child, found, depth + 1, $"{path}/{node.Name}");
+        }
     }
 }
