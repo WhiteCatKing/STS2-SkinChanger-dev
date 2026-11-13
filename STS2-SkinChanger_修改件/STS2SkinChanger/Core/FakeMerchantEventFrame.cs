@@ -108,28 +108,42 @@ internal static class FakeMerchantEventFrame
 
             // 坐标校正只服务于 NSFW-Event（工坊 3765802910）那张帐篷美术的构图：
             // 没装这个包时保持原版构图，其余逻辑（美术归属判定等）不受影响。
+            // 判据用「游戏自己记下的启用/加载列表」，这样本地手动装进 mods 的玩家也算装；
+            // 只看磁盘目录会把「已取消订阅但文件残留」误判成已安装。
             static bool HasNsfwEventPack()
             {
-                string[] roots =
-                [
-                    @"D:\steam\steamapps\workshop\content\2868840",
-                    System.IO.Path.Combine(AppContext.BaseDirectory, "mods"),
-                    @"D:\steam\steamapps\common\Slay the Spire 2\mods",
-                ];
-
-                foreach (var root in roots)
+                var steamRoot = System.IO.Path.Combine(
+                    System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData),
+                    "SlayTheSpire2", "steam");
+                if (System.IO.Directory.Exists(steamRoot))
                 {
-                    if (!System.IO.Directory.Exists(root))
+                    foreach (var settings in System.IO.Directory.EnumerateFiles(steamRoot, "settings.save", System.IO.SearchOption.AllDirectories))
+                    {
+                        try
+                        {
+                            var text = System.IO.File.ReadAllText(settings);
+                            if (text.Contains("NSFW-Event", StringComparison.OrdinalIgnoreCase) ||
+                                text.Contains("3765802910", StringComparison.Ordinal))
+                            {
+                                return true;
+                            }
+                        }
+                        catch
+                        {
+                            // 读不到就当没装，宁可不动构图。
+                        }
+                    }
+                }
+
+                // 兜底：本地 mods 目录里存在该包的清单文件。
+                foreach (var modsRoot in new[] { System.IO.Path.Combine(AppContext.BaseDirectory, "mods"), @"D:\steam\steamapps\common\Slay the Spire 2\mods" })
+                {
+                    if (!System.IO.Directory.Exists(modsRoot))
                     {
                         continue;
                     }
 
-                    if (System.IO.Directory.Exists(System.IO.Path.Combine(root, "3765802910")))
-                    {
-                        return true;
-                    }
-
-                    if (System.IO.Directory.EnumerateFileSystemEntries(root, "*3765802910*").Any())
+                    if (System.IO.Directory.EnumerateFiles(modsRoot, "NSFW-Event.json", System.IO.SearchOption.AllDirectories).Any())
                     {
                         return true;
                     }
@@ -137,7 +151,6 @@ internal static class FakeMerchantEventFrame
 
                 return false;
             }
-
             if (!HasNsfwEventPack())
             {
                 ModLog.Info("假商人帐篷坐标校正仅对 NSFW-Event（3765802910）启用，当前未检测到该包，保持原构图。");
