@@ -1037,11 +1037,27 @@ internal static class ManagedSkinModLoader
     /// Unpatching by callback method instead of Harmony owner is important because third-party mods
     /// sometimes reuse the same owner string; only the selected provider's assembly is touched.
     /// </summary>
+    private static bool IsMerchantSkinProvider(string providerId, string? merchantSelection)
+    {
+        if (!string.IsNullOrWhiteSpace(merchantSelection) &&
+            string.Equals(providerId, merchantSelection, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return providerId.Contains("Merchant", StringComparison.OrdinalIgnoreCase);
+    }
     public static void DeactivateProvidersExcept(IEnumerable<string> selectedProviderIds)
     {
         var selected = selectedProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var merchantSelection = SkinService.GetSelectedRuntimeProvider("merchant");
         foreach (var providerId in ActiveProviderRuntimes.Keys
                      .Where(providerId => !selected.Contains(providerId))
+                     // 商人皮肤是独立一块：一旦选中并激活，就保持它的补丁在位。
+                     // 场景收窄若把它卸掉，局内重挂节点时它已没有可执行的位姿逻辑，
+                     // 于是退回原版商人（c）或基础变换（a/b）。这里只做“不卸”，
+                     // 不重新初始化、不重放补丁，因此不会双份执行。
+                     .Where(providerId => !IsMerchantSkinProvider(providerId, merchantSelection))
                      .ToArray())
         {
             DeactivateProvider(providerId);
