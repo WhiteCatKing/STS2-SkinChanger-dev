@@ -1970,15 +1970,18 @@ internal static partial class ContextualSkinControls
 
         var characterId = character.Id.Entry.ToLowerInvariant();
         var characterSelectPath = CanonicalScenePath("screens/char_select/char_select_bg_" + characterId);
-        // 选角诊断：一眼看出「这组皮肤到底带没带选人背景/选人场景」，用来定位 魅魔战士、故障机器人
-        // 这类「背景是原版」到底是包没做，还是我们没接上。纯日志，不改变任何行为。
         var diagnosticOptionId = SkinService.GetCharacterSelectionOptionId(groupId);
-        var diagnosticRelative = characterSelectPath.StartsWith("res://", StringComparison.OrdinalIgnoreCase)
-            ? characterSelectPath["res://".Length..]
-            : characterSelectPath;
-        var shipsCharacterSelectBackground =
-            SkinService.Catalog?.ReadProviderFile(groupId, diagnosticOptionId, diagnosticRelative) is { Length: > 0 };
-        ModLog.Info($"[选角诊断] 分组={groupId} 选择={diagnosticOptionId} 背景场景={characterSelectPath} 包内自带背景={shipsCharacterSelectBackground}");
+        // 规范路径优先；只有该皮肤包根本没带规范背景时才启用「包自己命名」的兜底（且拒绝别名路径）。
+        var shippedCharacterSelectPath = SkinService.Catalog?.ResolveCharacterSelectBackgroundScene(
+            groupId,
+            diagnosticOptionId,
+            characterId);
+        if (!string.IsNullOrWhiteSpace(shippedCharacterSelectPath))
+        {
+            characterSelectPath = shippedCharacterSelectPath;
+        }
+
+        ModLog.Info($"[选角诊断] 分组={groupId} 选择={diagnosticOptionId} 背景场景={characterSelectPath}");
         var characterSelectTextures = new[]
         {
             CanonicalImagePath("packed/character_select/char_select_" + characterId + ".png"),
