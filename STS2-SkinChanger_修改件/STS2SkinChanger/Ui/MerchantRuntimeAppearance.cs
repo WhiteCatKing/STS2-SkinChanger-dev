@@ -33,6 +33,29 @@ namespace STS2SkinChanger.Ui;
 /// </summary>
 internal static class MerchantRuntimeAppearance
 {
+    /// <summary>providerId → 该皮肤自己写下的商人位姿（位置/缩放），用于局内切换后重放。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+        string, (float X, float Y, float ScaleX, float ScaleY)> RememberedTransforms = new(StringComparer.OrdinalIgnoreCase);
+
+    private static void ApplyRememberedTransform(Node? visual)
+    {
+        if (visual is not Node2D node2D
+            || !GodotObject.IsInstanceValid(node2D)
+            || !RememberedTransforms.TryGetValue(
+                ManagedSkinModLoader.ResolveBehaviorProviderId(SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? string.Empty),
+                out var remembered)
+            && !RememberedTransforms.TryGetValue(
+                SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? string.Empty,
+                out remembered))
+        {
+            return;
+        }
+
+        node2D.Position = new Vector2(remembered.X, remembered.Y);
+        node2D.Scale = new Vector2(remembered.ScaleX, remembered.ScaleY);
+        ModLog.Info($"[商人] 已重放皮肤位姿：位置=({remembered.X:F1}, {remembered.Y:F1})，缩放=({remembered.ScaleX:F4}, {remembered.ScaleY:F4})。");
+    }
+
     internal const string GroupId = "merchant";
     internal const string FakeMerchantGroupId = "fake_merchant_monster";
     // v0.113.0 split the shop room into two concrete scenes and dropped the shared
@@ -223,6 +246,14 @@ internal static class MerchantRuntimeAppearance
 
             var behaviorProviderId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
             ManagedSkinModLoader.MarkMerchantFigureProvider(visual, providerId, groupId);
+        if (visual is Node2D authored)
+        {
+            // 局内切换时房间的 _Ready 早已跑完，新皮肤不会再有"第一次量的机会"，
+            // 所以把它自己那次正确的位姿记下来，切换后重放。
+            RememberedTransforms.TryAdd(
+                providerId,
+                (authored.Position.X, authored.Position.Y, authored.Scale.X, authored.Scale.Y));
+        }
             if (visual is Node2D node2D)
             {
                 // A same-ID variation runs the other copy's code; say so once, otherwise the id in
@@ -1257,10 +1288,12 @@ internal static class MerchantRuntimeAppearance
             CaptureLocalPlayerBaseline(replacement);
             ApplyLocalPlayerTransform(replacement, groupId);
 
-            previous.GetParent()?.RemoveChild(previous);
+            ApplyRememberedTransform(refreshedVisual);
+        previous.GetParent()?.RemoveChild(previous);
             ShopProviderRoots.Remove(previous.GetInstanceId());
             previous.QueueFree();
             refreshedVisual = replacement;
+            ApplyRememberedTransform(refreshedVisual);
             replacement = null;
             listSwapped = false;
             replacementAdded = false;
@@ -2029,4 +2062,6 @@ internal static class MerchantPreviewPurchaseBlockPatch
         return false;
     }
 }
+
+
 
