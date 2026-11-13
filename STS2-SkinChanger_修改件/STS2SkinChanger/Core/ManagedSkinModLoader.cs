@@ -1145,8 +1145,10 @@ internal static class ManagedSkinModLoader
                 // is also the intentional path for native-managed providers), so do it immediately
                 // before PatchAll/scene use.
                 EnsureProviderGodotScripts(providerId);
-                new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
-                    .PatchAll(assembly);
+                PatchAllTolerant(
+                    new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}"),
+                    assembly,
+                    provider.Name);
                 if (provider.HasDeclarativeCharacterAssetReplacement && !runsAuthorInitializer)
                 {
                     ModLog.Info(
@@ -1224,8 +1226,10 @@ internal static class ManagedSkinModLoader
                     EnsureProviderGodotScripts(providerId);
                     if (CaptureProviderPatches(assembly).Count == patchesBeforeInitializer)
                     {
-                        new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
-                            .PatchAll(assembly);
+                        PatchAllTolerant(
+                            new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}"),
+                            assembly,
+                            provider.Name);
                     }
                     else
                     {
@@ -1242,8 +1246,10 @@ internal static class ManagedSkinModLoader
                     }
                     else
                     {
-                        new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
-                            .PatchAll(assembly);
+                        PatchAllTolerant(
+                            new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}"),
+                            assembly,
+                            provider.Name);
                     }
                 }
             }
@@ -3390,6 +3396,46 @@ internal static class ManagedSkinModLoader
                     $"卸载提供者行为补丁 {patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
                     exception.GetBaseException().Message);
             }
+        }
+    }
+
+    /// <summary>
+    /// Applies the provider's attribute-based patches one class at a time. A blanket
+    /// <c>PatchAll(assembly)</c> aborts the whole assembly on the first class Harmony cannot bind -
+    /// for example a pack that still declares a parameter the game removed in a later version - and
+    /// that used to roll back every behaviour patch the pack owns. Losing one patch class must only
+    /// cost that class.
+    /// </summary>
+    private static void PatchAllTolerant(Harmony harmony, Assembly assembly, string providerName)
+    {
+        var patched = 0;
+        var skipped = 0;
+        foreach (var type in GetLoadableTypes(assembly))
+        {
+            if (type.GetCustomAttribute<HarmonyPatch>() == null)
+            {
+                continue;
+            }
+
+            try
+            {
+                harmony.CreateClassProcessor(type).Patch();
+                patched++;
+            }
+            catch (Exception exception)
+            {
+                skipped++;
+                ModLog.Warn(
+                    $"{providerName} 的补丁类 {type.FullName} 装不上，已跳过该补丁并保留其余补丁：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        if (skipped > 0)
+        {
+            ModLog.Warn(
+                $"{providerName} 共 {skipped} 个补丁类无法应用（游戏接口变更），" +
+                $"其余 {patched} 个已生效。");
         }
     }
 

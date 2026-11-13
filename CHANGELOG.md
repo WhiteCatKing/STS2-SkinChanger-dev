@@ -1,3 +1,12 @@
+### 1.0.31.17 —— 一个补丁类装不上，不再拖垮整包行为补丁
+
+`DefectSkinMod`（鸡煲娘化）的补丁类里有一个方法声明了 `characterModel` 参数，而 v0.113.0 把
+`NCharacterSelectScreen.SelectCharacter` 改成只接收按钮（`SelectCharacter(NCharacterSelectButton)`），
+Harmony 绑不上这个参数就抛异常；我们此前用的是整程序集 `PatchAll`，一处失败整包回滚，
+于是它的局内换装、背景绘制补丁一起失效，只剩走规范路径的头像还能换。
+
+改为 `PatchAllTolerant`：逐个补丁类走 `CreateClassProcessor(type).Patch()`，装不上的类跳过并记警告，
+其余照常生效，最后汇总一行「共 N 个补丁类无法应用（游戏接口变更），其余 M 个已生效」。
 ### 1.0.31.16 —— 「这个包带不带规范背景」改用包自身 PCK 判定
 
 1.0.31.15 的检查用 `ReadProviderFile`，而它会在「包没有该文件」时命中游戏本体和我方缓存覆盖包里的
