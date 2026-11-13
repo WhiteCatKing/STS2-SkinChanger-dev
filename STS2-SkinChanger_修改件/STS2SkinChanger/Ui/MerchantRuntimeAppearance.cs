@@ -258,6 +258,15 @@ internal static class MerchantRuntimeAppearance
                     RememberedTransforms[providerId] =
                         (authored.Position.X, authored.Position.Y, authored.Scale.X, authored.Scale.Y);
                 }
+                else if (RememberedTransforms.TryGetValue(providerId, out var known))
+                {
+                    // 这次量到的是基础坐标：说明皮肤自己的 _Ready 不会再跑，就地补回上次记住的位姿。
+                    authored.Position = new Vector2(known.X, known.Y);
+                    authored.Scale = new Vector2(known.ScaleX, known.ScaleY);
+                    ModLog.Info(
+                        $"[商人] 已重放皮肤位姿：{providerId} 位置=({known.X:F1}, {known.Y:F1})，" +
+                        $"缩放=({known.ScaleX:F4}, {known.ScaleY:F4})。");
+                }
             }
             if (visual is Node2D node2D)
             {
