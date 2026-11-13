@@ -1037,11 +1037,36 @@ internal static class ManagedSkinModLoader
     /// Unpatching by callback method instead of Harmony owner is important because third-party mods
     /// sometimes reuse the same owner string; only the selected provider's assembly is touched.
     /// </summary>
+    private static readonly HashSet<string> PinnedBehaviorProviders = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Keeps a provider's behaviour patches applied across scene-scope narrowing. The merchant
+    /// group is not part of the character-visibility scope, so its selected provider would
+    /// otherwise be deactivated right after we activate it, and its node-level _Ready prefix
+    /// (which carries the authored position/scale) would never run again.
+    /// </summary>
+    public static void PinBehaviorProvider(string? providerId)
+    {
+        if (!string.IsNullOrWhiteSpace(providerId))
+        {
+            PinnedBehaviorProviders.Add(providerId);
+        }
+    }
+
+    public static void UnpinBehaviorProvider(string? providerId)
+    {
+        if (!string.IsNullOrWhiteSpace(providerId))
+        {
+            PinnedBehaviorProviders.Remove(providerId);
+        }
+    }
+
     public static void DeactivateProvidersExcept(IEnumerable<string> selectedProviderIds)
     {
         var selected = selectedProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var providerId in ActiveProviderRuntimes.Keys
-                     .Where(providerId => !selected.Contains(providerId))
+                     .Where(providerId => !selected.Contains(providerId) &&
+                                          !PinnedBehaviorProviders.Contains(providerId))
                      .ToArray())
         {
             DeactivateProvider(providerId);

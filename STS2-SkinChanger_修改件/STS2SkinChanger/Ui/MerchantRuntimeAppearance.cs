@@ -277,6 +277,14 @@ internal static class MerchantRuntimeAppearance
             CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
                 [groupId],
                 "商人外观");
+            // Focusing narrows the visible behaviour groups; the merchant group is not part of that
+            // set, so the provider we just focused keeps getting deactivated again. Pin it and run
+            // its initializer so its own NMerchantButton._Ready prefix is actually applied to the
+            // node we are about to build — without that prefix the figure keeps the vanilla offset
+            // and renders ~2.6x too large in the top-left corner.
+            ManagedSkinModLoader.PinBehaviorProvider(providerId);
+            ManagedSkinModLoader.ActivateSelectedProviders([providerId]);
+            ModLog.Info($"已为商人外观真正执行提供者代码：{providerId}（分组={groupId}）。");
         }
         catch (Exception exception)
         {
