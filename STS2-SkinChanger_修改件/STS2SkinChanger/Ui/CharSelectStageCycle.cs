@@ -172,11 +172,11 @@ internal static class CharSelectStageCycle
         }
 
         var next = plan.NextStage;
-        var data = LoadStageData(groupId, plan.Directory, plan.Group, next);
+        var data = LoadStageData(groupId, plan.DataDirectory ?? plan.Directory, plan.Group, next);
         if (data == null)
         {
             next = 1;
-            data = LoadStageData(groupId, plan.Directory, plan.Group, 1);
+            data = LoadStageData(groupId, plan.DataDirectory ?? plan.Directory, plan.Group, 1);
         }
 
         if (data == null)
@@ -320,12 +320,7 @@ internal static class CharSelectStageCycle
         // so stage 2/3 files are unreachable from that folder. Load them from the package's own
         // root instead (res://<root>/s<stage>_<group>_data.tres).
         var packageRoot = SkinService.Catalog?.GetAssetRootDirectory(groupId, optionId);
-        if (!string.IsNullOrWhiteSpace(packageRoot))
-        {
-            directory = packageRoot;
-        }
-
-        return new StagePlan(directory, group, stage, next);
+        return new StagePlan(directory, group, stage, next, packageRoot);
     }
 
 
@@ -722,7 +717,8 @@ internal static class CharSelectStageCycle
         string Directory,
         string Group,
         int CurrentStage,
-        int NextStage);
+        int NextStage,
+        string? DataDirectory = null);
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), "SelectCharacter")]

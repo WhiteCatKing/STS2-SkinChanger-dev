@@ -1970,18 +1970,6 @@ internal static partial class ContextualSkinControls
 
         var characterId = character.Id.Entry.ToLowerInvariant();
         var characterSelectPath = CanonicalScenePath("screens/char_select/char_select_bg_" + characterId);
-        var diagnosticOptionId = SkinService.GetCharacterSelectionOptionId(groupId);
-        // 规范路径优先；只有该皮肤包根本没带规范背景时才启用「包自己命名」的兜底（且拒绝别名路径）。
-        var shippedCharacterSelectPath = SkinService.Catalog?.ResolveCharacterSelectBackgroundScene(
-            groupId,
-            diagnosticOptionId,
-            characterId);
-        if (!string.IsNullOrWhiteSpace(shippedCharacterSelectPath))
-        {
-            characterSelectPath = shippedCharacterSelectPath;
-        }
-
-        ModLog.Info($"[选角诊断] 分组={groupId} 选择={diagnosticOptionId} 背景场景={characterSelectPath}");
         var characterSelectTextures = new[]
         {
             CanonicalImagePath("packed/character_select/char_select_" + characterId + ".png"),

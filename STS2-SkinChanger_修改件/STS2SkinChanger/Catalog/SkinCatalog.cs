@@ -2695,60 +2695,6 @@ internal sealed partial class SkinCatalog : IDisposable
     /// the per-variant portrait folders (<c>portrait_palettes/&lt;variant&gt;/s&lt;stage&gt;_*_icon.png</c>)
     /// that the pack itself would have used.
     /// </summary>
-    /// <summary>
-    /// Character-select background scene for one option. The canonical name always wins; only when
-    /// the option does not ship it do we look for a scene the pack named itself (for example
-    /// <c>res://Scenes/DefectSelectBg.tscn</c>). Alias paths (<c>res://custom/…</c>,
-    /// <c>res://sts2_skin_runtime/…</c>) are never returned: they only resolve while that overlay is
-    /// mounted, and using one made the previously working background disappear.
-    /// </summary>
-    public string? ResolveCharacterSelectBackgroundScene(string groupId, string optionId, string characterId)
-    {
-        var group = Groups.FirstOrDefault(candidate =>
-            candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
-        var option = group?.Options.FirstOrDefault(candidate =>
-            candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
-        if (option == null || option.Assets.Count == 0)
-        {
-            return null;
-        }
-
-        var canonical = $"res://scenes/screens/char_select/char_select_bg_{characterId}.tscn";
-        if (option.Assets.ContainsKey(canonical))
-        {
-            return canonical;
-        }
-
-        string? best = null;
-        foreach (var path in option.Assets.Keys)
-        {
-            if (!path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (path.StartsWith("res://custom/", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("res://sts2_skin_runtime/", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var fileName = Path.GetFileNameWithoutExtension(path);
-            if (!fileName.Contains("selectbg", StringComparison.OrdinalIgnoreCase) &&
-                !fileName.StartsWith("char_select_bg_", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (best == null || path.Length < best.Length)
-            {
-                best = path;
-            }
-        }
-
-        return best;
-    }
-
     public string? GetAssetRootDirectory(string groupId, string optionId)
     {
         var option = Groups.FirstOrDefault(group =>
