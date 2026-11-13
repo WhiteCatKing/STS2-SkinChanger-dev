@@ -1189,9 +1189,11 @@ internal static class ManagedSkinModLoader
                         method.Invoke(null, null);
                         InvokedProviderInitializers.Add(initializerKey);
                     }
-                    catch (Exception exception) when (
-                        FrameworkProviderInitializerPolicy.KeepsSessionWhenAuthorInitializerFails(
-                            provider.HasDeclarativeCharacterAssetReplacement))
+                    // An author initializer that throws - typically its own PatchAll binding a
+                    // parameter the game removed in a later version - must not take the whole
+                    // visual session down. Keep the session and reinstall, tolerantly, whatever
+                    // still binds.
+                    catch (Exception exception)
                     {
                         initializerFailed = true;
                         InvokedProviderInitializers.Add(initializerKey);
