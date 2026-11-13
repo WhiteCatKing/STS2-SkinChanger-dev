@@ -1,3 +1,6 @@
+using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Modding;
+
 namespace STS2SkinChanger.Core;
 
 // The filesystem half of the exit path, separated from the engine boundary so the same code the
@@ -19,3 +22,24 @@ internal static class QuitExitCleanup
                (report.Errors.Count == 0 ? "" : "部分目录无法检查：" + string.Join("；", report.Errors));
     }
 }
+
+// 退出耗时诊断（纯日志，不改行为）：定位「日志已写完但进程不退出」卡在谁身上。
+[HarmonyLib.HarmonyPatch(typeof(NGame), nameof(NGame.Quit))]
+internal static class QuitTimingDiagnostics
+{
+    private static readonly System.Diagnostics.Stopwatch Clock = new();
+
+    [HarmonyLib.HarmonyPrefix]
+    private static void Prefix()
+    {
+        Clock.Restart();
+        ModLog.Info("[退出诊断] NGame.Quit 进入。");
+    }
+
+    [HarmonyLib.HarmonyPostfix]
+    private static void Postfix()
+    {
+        ModLog.Info($"[退出诊断] NGame.Quit 返回，用时 {Clock.ElapsedMilliseconds} ms；此后若卡住即引擎侧收尾。");
+    }
+}
+
