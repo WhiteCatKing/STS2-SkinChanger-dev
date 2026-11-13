@@ -10,6 +10,14 @@
 
 ---
 ## 2026-11-13
+### 1.0.31.5 —— 撤销 1.0.31.4 的选人背景识别放宽
+
+1.0.31.4 把选人背景改成「先找包里的 `*selectbg*` 场景、否则退回规范路径」，实测把贞德的选人背景也弄丢了（回退后恢复），问题也没真正解决，因此整段撤销，回到 1.0.31.3 的选人背景逻辑。
+
+- `Catalog\SkinCatalog.cs`：删除 `FindCharacterSelectBackgroundScene`。
+- `Ui\ContextualSkinControls.cs`：`RebuildCharacterDisplay` 恢复只按 `res://scenes/screens/char_select/char_select_bg_<角色>.tscn` 取背景。
+
+结论记录：故障机器人（DefectSkinMod）的背景用的是它自己命名的 `res://Scenes/DefectSelectBg.tscn`，靠「放宽文件名匹配」这条路走不通，需要按包注册（provider contract）显式声明背景场景，另开改动。
 ### 1.0.31.4 —— 选人界面背景识别放宽（支持包自己的场景命名）
 
 v0.113.0 之后，故障机器人（DefectSkinMod）这类把选人背景放在自己命名下（es://Scenes/DefectSelectBg.tscn）的皮肤包，选人界面一直被换回原版背景：我们只认游戏的规范路径 es://scenes/screens/char_select/char_select_bg_<角色>.tscn。
