@@ -1,3 +1,12 @@
+### 1.0.31.32 —— 随从分组不再占用主人选人槽位 + 整包重建兜底（玩家反馈修复）
+
+玩家在战士页选中随从专用条目后整局卡死：
+`NSpineAutoPlayer's parent's skeleton data must have exactly 1 animation. This has 6.`
+栈为 `WithRuntimeResourcesForSelection` ← `RebuildMountedFullRuntimeCharacterDisplay` ← `RebuildCharacterDisplay`。
+
+`Ui\ContextualSkinControls.cs:1991` 的整包运行时重建分支改为：
+1. 随从分组（`SkinService.Catalog.IsCompanionGroup`）不再走整包重建，改走普通资源挂载；
+2. 整段 try/catch 兜底，异常打 `[骨骼防护]` 后退回资源挂载，不再 `return` 卡死整局。
 ### 1.0.31.31 —— 不再摘除「我们没接管」的 provider 呈现补丁（玩家反馈修复）
 
 `Core\VisualPatchGuard.cs` 摘补丁的判据原来是「程序集不是激活中的 provider」。对**排在本 Mod 前面、
@@ -371,5 +380,6 @@ git checkout v1.0.30.200              # 回到某个标签看代码（只读，�
 
 回退代码之后必须：重建 → `LogicTests` 通过 → 复制到 4 处部署目录 → 重启游戏确认 `godot.log` 里的 `内测版本` 与提交相符。
 2026-11-12 之前的版本没有 git 标签，只有本文件与交接文档的记录；那几天要"回退"只能改代码或改用 `D:\工作2026.11.10`、`D:\工作2026.11.11` 里的历史安装包。
+
 
 

@@ -1988,17 +1988,30 @@ internal static partial class ContextualSkinControls
         // skeleton or atlas cached from the skin that was active at startup. Instantiate the
         // display through the same isolated alias overlay used by resource skins so the whole
         // dependency graph is loaded from the selected provider's files as one coherent set.
-        if (SkinService.GetSelectedFullRuntimeProvider(groupId) != null)
+        // 随从分组（osty 等）的骨架只认 1 条动画，不能占主人选人展示的整包运行时槽位；
+        // 这条分支一旦抛异常（实测 6 条动画 → NSpineAutoPlayer 报错）会卡死整局，因此：
+        // ① 随从分组不走整包重建；② 任何异常都退回普通资源挂载，而不是 return。
+        if (SkinService.GetSelectedFullRuntimeProvider(groupId) != null &&
+            SkinService.Catalog?.IsCompanionGroup(groupId) != true)
         {
-            RebuildMountedFullRuntimeCharacterDisplay(
-                screen,
-                character,
-                groupId,
-                characterSelectPath,
-                characterSelectTextures);
-            RefreshLocalLobbyAvatar(screen);
-            CharacterModelPreviewControls.Refresh(screen, character);
-            return;
+            try
+            {
+                RebuildMountedFullRuntimeCharacterDisplay(
+                    screen,
+                    character,
+                    groupId,
+                    characterSelectPath,
+                    characterSelectTextures);
+                RefreshLocalLobbyAvatar(screen);
+                CharacterModelPreviewControls.Refresh(screen, character);
+                return;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"[骨骼防护] 完整运行时皮肤重建失败，已退回资源挂载（分组={groupId}）：" +
+                    $"{exception.GetBaseException().Message}");
+            }
         }
 
         // 需要包含提供者依赖：DLL 提供者的场景可能引用其 PCK 里的编译脚本(.gdc)、导出场景(.scn)等。
