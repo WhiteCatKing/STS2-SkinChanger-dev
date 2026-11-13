@@ -10,6 +10,13 @@
 
 ---
 ## 2026-11-13
+### 1.0.31.6 —— 皮肤缓存总量兜底 + 选角诊断日志
+
+玩家磁盘被 %APPDATA%\SlayTheSpire2\Gurio.SkinChanger\cache 撑到 63 GB：缓存按「一次游戏会话一个目录」存放，清理只在正常退出时执行，崩溃/卡死/强退会整份留下，越积越多（单目录 1–4 GB）。
+
+- Core\SkinChangerStorage.cs：新增 TrimCacheBudget(long maxBytes)，按最后写入时间从最旧开始整目录删除，直到总量回落到预算内；正在使用的会话目录永不删除。
+- Core\SkinService.cs：启动清理后追加一次 TrimCacheBudget(8 GB)，并打出删除数量、释放量、剩余量。
+- Ui\ContextualSkinControls.cs：RebuildCharacterDisplay 增加一行 [选角诊断]，输出分组、当前选择、规范背景路径、以及该皮肤包是否自带这份背景资源。纯日志。
 ### 1.0.31.5 —— 撤销 1.0.31.4 的选人背景识别放宽
 
 1.0.31.4 把选人背景改成「先找包里的 `*selectbg*` 场景、否则退回规范路径」，实测把贞德的选人背景也弄丢了（回退后恢复），问题也没真正解决，因此整段撤销，回到 1.0.31.3 的选人背景逻辑。

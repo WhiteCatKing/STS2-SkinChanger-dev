@@ -1239,6 +1239,11 @@ internal static partial class SkinService
                 var cleaned = SkinChangerPaths.Storage.CleanCaches();
                 if (cleaned.RemovedFiles > 0) ModLog.Info($"已清理 {cleaned.RemovedFiles} 个过期皮肤缓存文件。");
                 foreach (var error in cleaned.Errors) ModLog.Warn("部分旧缓存清理失败：" + error);
+                // 退出清理在崩溃/卡死/强退时会整份跳过，孤儿会话会堆到几十 GB；这里按总量再兜一次底。
+                var trimmed = SkinChangerPaths.Storage.TrimCacheBudget(8L * 1024 * 1024 * 1024);
+                if (trimmed.RemovedSessions > 0)
+                    ModLog.Info($"皮肤缓存超出 8 GB 预算，已删除 {trimmed.RemovedSessions} 个旧会话（{trimmed.RemovedBytes / (1024 * 1024)} MB），剩余约 {trimmed.RemainingBytes / (1024 * 1024)} MB。");
+                foreach (var error in trimmed.Errors) ModLog.Warn("皮肤缓存预算清理失败：" + error);
                 var gamePckPath = GamePackLocator.Resolve(
                     OS.GetExecutablePath(),
                     GameCommandLine.Arguments(),

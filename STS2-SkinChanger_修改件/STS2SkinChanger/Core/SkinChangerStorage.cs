@@ -152,6 +152,62 @@ internal sealed class SkinChangerStorage : IDisposable
         return report;
     }
 
+    /// <summary>
+    /// Keeps the session cache under a byte budget. Cleanup on quit is enough while the game exits
+    /// normally; a crashed, hung or force-killed session leaves its whole multi-gigabyte folder
+    /// behind, and those orphans were piling up to tens of gigabytes on players' disks. Sorted by
+    /// last write, newest first, so the freshest session always survives.
+    /// </summary>
+    public CacheTrimReport TrimCacheBudget(long maxBytes)
+    {
+        var report = new CacheTrimReport();
+        var root = Path.Combine(RootDirectory, "cache");
+        try
+        {
+            if (!SafePath(root, UserDirectory) || !Directory.Exists(root)) return report;
+            var sessions = Directory.EnumerateDirectories(root)
+                .Where(directory => SafePath(directory, root))
+                .Select(directory => new
+                {
+                    Path = directory,
+                    Bytes = Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+                        .Sum(file => new FileInfo(file).Length)
+                })
+                .OrderByDescending(session => Directory.GetLastWriteTimeUtc(session.Path))
+                .ToList();
+            report.RemainingBytes = sessions.Sum(session => session.Bytes);
+            foreach (var session in sessions)
+            {
+                if (report.RemainingBytes <= maxBytes) break;
+                if (string.Equals(session.Path, CacheDirectory, StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    Directory.Delete(session.Path, recursive: true);
+                    report.RemovedSessions++;
+                    report.RemovedBytes += session.Bytes;
+                    report.RemainingBytes -= session.Bytes;
+                }
+                catch (Exception e) when (IsIoError(e))
+                {
+                    report.Errors.Add(e.Message);
+                }
+            }
+        }
+        catch (Exception e) when (IsIoError(e))
+        {
+            report.Errors.Add(e.Message);
+        }
+        return report;
+    }
+
+    internal sealed class CacheTrimReport
+    {
+        public int RemovedSessions { get; set; }
+        public long RemovedBytes { get; set; }
+        public long RemainingBytes { get; set; }
+        public List<string> Errors { get; } = [];
+    }
+
     private void CleanSessionRoot(string root, CacheCleanupReport report)
     {
         if (!SafePath(root, root.StartsWith(UserDirectory, StringComparison.Ordinal) ? UserDirectory : TempDirectory) || !Directory.Exists(root)) return;
