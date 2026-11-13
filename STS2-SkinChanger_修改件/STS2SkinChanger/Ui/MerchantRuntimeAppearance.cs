@@ -1771,6 +1771,21 @@ internal static class MerchantRoomConcreteReadyPatch
     }
 }
 
+// 读档时房间不一定再走一次 _Ready，但 NRun 一定会把它设为当前场景。
+[HarmonyPatch(typeof(NRun), nameof(NRun.SetCurrentRoom))]
+internal static class MerchantRoomShownPatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(Control? node)
+    {
+        if (node is NMerchantRoom room && GodotObject.IsInstanceValid(room))
+        {
+            MerchantRuntimeAppearance.ScheduleRefreshAfterLoad(room);
+        }
+    }
+}
+
 [HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._Ready))]
 internal static class MerchantRoomPlayerAppearancePatch
 {
