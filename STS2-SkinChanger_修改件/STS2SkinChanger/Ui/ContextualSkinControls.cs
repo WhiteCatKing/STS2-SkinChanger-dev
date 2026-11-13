@@ -30,9 +30,6 @@ internal static partial class ContextualSkinControls
     private const string OstyDropdownName = "OstyDropdown";
     private const string OstyGroupMeta = "sts2_skin_companion_group";
     internal const string CompanionHiddenMeta = "sts2_skin_companion_hidden";
-
-    // 唯一真源：当前选人界面显示的角色是不是随从主人（骨妹）。Refresh 只看这个。
-    internal static bool CompanionPreviewAllowed { get; private set; }
     private const string OstyPopupListName = "STS2OstyChoicePopupList";
     private const string MonsterScaleSliderName = "MonsterScaleSlider";
     private const string MonsterScaleValueName = "MonsterScaleValue";
@@ -198,21 +195,6 @@ internal static partial class ContextualSkinControls
 
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
-        // 角色切换的唯一入口（游戏的 SelectCharacter 每次点击都会调到这里）。
-        // 随从预览框只认这里算出来的结果，避免 RebuildCharacterDisplay 没被调用时状态陈旧。
-        var ownerGroup = SkinService.Catalog?.CompanionOwnerGroup("osty");
-        CompanionPreviewAllowed = ownerGroup != null &&
-            string.Equals(character.Id.Entry, ownerGroup, StringComparison.OrdinalIgnoreCase);
-        if (!CompanionPreviewAllowed)
-        {
-            OstyModelPreviewControls.Hide(screen);
-            foreach (var node in screen.FindChildren("*", OstyModelPreviewControls.PanelName, recursive: true, owned: false))
-            {
-                node.Set("visible", false);
-            }
-
-            screen.GetNodeOrNull<Control>($"InfoPanel/{OstyModelPreviewControls.PanelName}")?.Set("visible", false);
-        }
         CharacterModelPreviewControls.Hide(screen);
         CaptureCharacterBackgroundHostLayout(screen);
         CancelCharacterDropdownSelection(screen);
@@ -992,13 +974,13 @@ internal static partial class ContextualSkinControls
         // 随从下拉只在它主人（骨妹）的页面显示。作者要求：除骨妹外所有角色都不显示。
         var ownerGroup = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var companionOwner = SkinService.Catalog?.CompanionOwnerGroup("osty");
+        screen.SetMeta(CompanionHiddenMeta, false);
         if (companionOwner != null &&
             !string.Equals(ownerGroup, companionOwner, StringComparison.OrdinalIgnoreCase))
         {
             osty.Visible = false;
             selector.SetMeta(OstyGroupMeta, string.Empty);
             // 作者要求：非主人页面连右侧的随从预览框一起不显示。
-            screen.SetMeta(CompanionHiddenMeta, true);
             // 面板挂在 InfoPanel 下，而且 Refresh 会无条件 ShowOsty，所以这里既收一次，
             // 也在 screen 上留标记让后续 Refresh 别再把它显示出来。
             screen.SetMeta(CompanionHiddenMeta, true);
@@ -1997,27 +1979,6 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
-        // 作者要求：随从（奥斯提）与骨妹强绑定——只有当前选中的是骨妹时，预览框才允许出现；
-        // 选其他角色时相当于"指向空"，直接收起。只作用于选人界面，局内不碰。
-        var companionOwner = SkinService.Catalog?.CompanionOwnerGroup("osty");
-        var companionHidden = companionOwner != null &&
-            !string.Equals(groupId, companionOwner, StringComparison.OrdinalIgnoreCase);
-        screen.SetMeta(CompanionHiddenMeta, companionHidden);
-        CompanionPreviewAllowed = !companionHidden;
-        if (companionHidden)
-        {
-            // 作者要求：一旦当前选中的不是骨妹，预览框立刻收起。
-            // 只查 InfoPanel 不够：切角色时面板可能被重新挂到别的父节点下，
-            // 所以这里把所有同名节点都收掉，并跑一次 Refresh 让包内状态跟着复位。
-            OstyModelPreviewControls.Hide(screen);
-            foreach (var node in screen.FindChildren("*", OstyModelPreviewControls.PanelName, recursive: true, owned: false))
-            {
-                node.Set("visible", false);
-            }
-
-            screen.GetNodeOrNull<Control>($"InfoPanel/{OstyModelPreviewControls.PanelName}")?.Set("visible", false);
-            OstyModelPreviewControls.Refresh(screen);
-        }
         // F29 取证：卡死复现停在选角预览重建时，godot.log 以此行与挂载日志分界。
         ModLog.Info($"开始重建选角预览：{groupId}。");
         CharacterModelPreviewControls.Hide(screen);
@@ -4198,12 +4159,6 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
-
-
-
-
-
-
 
 
 
