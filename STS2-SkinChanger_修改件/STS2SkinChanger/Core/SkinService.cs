@@ -5149,6 +5149,8 @@ internal static partial class SkinService
         }
     }
 
+    private static string _lastRuntimeProviderProbe = string.Empty;
+
     public static string? GetSelectedRuntimeProvider(string groupId)
     {
         lock (Sync)
@@ -5160,10 +5162,23 @@ internal static partial class SkinService
             }
 
             var selection = GetVisualSelection(groupId);
-            return catalog.IsRuntimeProviderOption(groupId, selection) &&
-                   catalog.TryGetVisualProviderId(groupId, selection, out var providerId)
+            var isRuntime = catalog.IsRuntimeProviderOption(groupId, selection);
+            var resolved = isRuntime &&
+                           catalog.TryGetVisualProviderId(groupId, selection, out var providerId)
                 ? providerId
                 : null;
+
+            // 皮肤包（血量换装那一族）靠这个方法拿到「当前选中的是不是它自己」。
+            // 日志只在结果变化时打一次，避免每帧刷屏。
+            var probe = groupId + "\n" + selection + "\n" + (resolved ?? "<null>");
+            if (!string.Equals(probe, _lastRuntimeProviderProbe, StringComparison.Ordinal))
+            {
+                _lastRuntimeProviderProbe = probe;
+                ModLog.Info(
+                    $"[选角闸门] 分组={groupId} 选择={selection} 是运行包={isRuntime} 返回={resolved ?? "<null>"}");
+            }
+
+            return resolved;
         }
     }
 

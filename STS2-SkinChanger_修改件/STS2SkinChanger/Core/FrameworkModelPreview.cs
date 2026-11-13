@@ -78,6 +78,7 @@ internal static class FrameworkModelPreview
             else staged.BeginCapture();
             ModLog.Info($"已刷新选角小模型：{character.Id.Entry}/{(groupId == null ? "unmanaged" : SkinService.Config.GetSelection(groupId))}；" +
                         $"模型类型={visuals.GetType().Name}；完整模型子节点={visuals.GetChildCount()}。");
+            DriverGateProbe.Report(groupId);
             staged = null;
             visuals = null;
         }

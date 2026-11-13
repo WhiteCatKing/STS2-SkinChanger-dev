@@ -10,6 +10,13 @@
 
 ---
 ## 2026-11-13
+### 1.0.31.11 —— 加「选角闸门」诊断日志（不改任何行为）
+
+血量换装那一族皮肤包（魅魔战士、骨妹「明前奶绿」等）在选人界面自己挂 `NCharacterSelectScreen.SelectCharacter` postfix 做点击切战损，但被它们自己的三道闸门挡住时**一行日志都不打**。这一版只加观测：
+
+- `Core\SkinService.cs` 的 `GetSelectedRuntimeProvider(groupId)` 在返回值变化时打 `[选角闸门] 分组=… 选择=… 是运行包=… 返回=…`（皮肤包反射调这个方法判断「当前选中的是不是我」，返回 null 或名字不匹配它们就整个关掉）。
+- 新增 `Core\DriverGateProbe.cs`：选角小模型刷新后，反射扫描所有 `*HpWear*` 程序集里的 `BattleWear.SkinSelectionGate.MenuAllowed()` 与 `BattleWear.WearActivation.PeekActiveDriver()`，把实测布尔值打进日志；同一分组只打一次。
+- 副作用：无（只读探测 + 一次 Info 日志）。诊断完成后整个 `DriverGateProbe.cs` 与这两行日志应当删除。
 ### 1.0.31.10 —— 撤销 1.0.31.9（贞德变体方案暂缓）
 
 1.0.31.9 让变体 id 回退到基础 option 查包根，实际效果是把贞德的「变体 + 战损」两条链搅在一起、点击切换更乱。整段回退，`SkinCatalog` 回到 1.0.31.8 状态。
