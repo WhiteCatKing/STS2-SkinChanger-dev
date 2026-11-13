@@ -30,6 +30,9 @@ internal static partial class ContextualSkinControls
     private const string OstyDropdownName = "OstyDropdown";
     private const string OstyGroupMeta = "sts2_skin_companion_group";
     internal const string CompanionHiddenMeta = "sts2_skin_companion_hidden";
+
+    // 唯一真源：当前选人界面显示的角色是不是随从主人（骨妹）。Refresh 只看这个。
+    internal static bool CompanionPreviewAllowed { get; private set; }
     private const string OstyPopupListName = "STS2OstyChoicePopupList";
     private const string MonsterScaleSliderName = "MonsterScaleSlider";
     private const string MonsterScaleValueName = "MonsterScaleValue";
@@ -1985,6 +1988,7 @@ internal static partial class ContextualSkinControls
         var companionHidden = companionOwner != null &&
             !string.Equals(groupId, companionOwner, StringComparison.OrdinalIgnoreCase);
         screen.SetMeta(CompanionHiddenMeta, companionHidden);
+        CompanionPreviewAllowed = !companionHidden;
         if (companionHidden)
         {
             // 作者要求：一旦当前选中的不是骨妹，预览框立刻收起。
@@ -4179,6 +4183,7 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
 
 
 

@@ -30,7 +30,7 @@ internal static class OstyModelPreviewControls
     public static void Refresh(NCharacterSelectScreen screen)
     {
         // 非主人页面（作者要求：除骨妹外都不显示随从与预览框）即使被再次调用也不显示。
-        if (screen.GetMeta("sts2_skin_companion_hidden", false).AsBool())
+        if (!ContextualSkinControls.CompanionPreviewAllowed)
         {
             Hide(screen);
             screen.GetNodeOrNull<Control>($"InfoPanel/{PanelName}")?.Set("visible", false);
@@ -1102,4 +1102,5 @@ internal partial class OstyModelPreviewPanel : Control
 
     private bool Alive() => GodotObject.IsInstanceValid(this) && IsInsideTree() && !IsQueuedForDeletion();
 }
+
 

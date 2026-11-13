@@ -1,3 +1,10 @@
+### 1.0.31.42 —— 奥斯提预览框改单一真源判定
+
+作者实测：框出现后切角色仍会重现，说明 screen 上的标记被多条路径互相覆盖（`PopulateOsty` 会写、`RebuildCharacterDisplay` 也会写）。
+
+这一版不再用 screen 标记做判定，改成 `ContextualSkinControls.CompanionPreviewAllowed` 单一静态真源：
+每次 `RebuildCharacterDisplay` 按当前选中角色重算；`OstyModelPreviewControls.Refresh` 只看它，
+不是骨妹就 `Hide` 并 return，任何"显示"调用都过不去。
 ### 1.0.31.41 —— 修奥斯提预览框"切角色后又冒出来"
 
 1.0.40 里 `PopulateOsty` 每次都会无条件 `screen.SetMeta(CompanionHiddenMeta, false)`，
@@ -444,6 +451,7 @@ git checkout v1.0.30.200              # 回到某个标签看代码（只读，�
 
 回退代码之后必须：重建 → `LogicTests` 通过 → 复制到 4 处部署目录 → 重启游戏确认 `godot.log` 里的 `内测版本` 与提交相符。
 2026-11-12 之前的版本没有 git 标签，只有本文件与交接文档的记录；那几天要"回退"只能改代码或改用 `D:\工作2026.11.10`、`D:\工作2026.11.11` 里的历史安装包。
+
 
 
 
