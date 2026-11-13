@@ -1473,8 +1473,13 @@ internal static class MerchantRuntimeAppearance
             // and %MerchantSelectionReticle resolve to the freed template and the button's
             // _Ready path receives Nil.
             SetOwnerRecursive(button, button);
+            // SL 能修好，是因为它会在节点进入场景树、原生 _Ready 之前先把该皮肤的外观初始化步骤写上去。
+            // 局内切换必须用同样的顺序，否则包的补丁只能写到一个已经被初始化过的节点上，
+            // 结果就是 a/b 位姿丢失、c 退回原版商人。
+            ReplayNodeReadyBeforeTree(button, groupId);
             return button;
         }
+
         finally
         {
             if (GodotObject.IsInstanceValid(sceneTemplate))
@@ -1484,6 +1489,31 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
+    /// <summary>
+    /// 在节点加入场景树之前重放选中皮肤的外观初始化步骤（等价于 SL 后的重建顺序）。
+    /// </summary>
+    private static void ReplayNodeReadyBeforeTree(Node node, string groupId)
+    {
+        try
+        {
+            var providerId = SkinService.GetSelectedFullRuntimeProvider(groupId);
+            if (string.IsNullOrWhiteSpace(providerId) || !GodotObject.IsInstanceValid(node))
+            {
+                return;
+            }
+
+            EnsureSelectedMerchantProviderActive(groupId, providerId);
+            ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(
+                ManagedSkinModLoader.ResolveBehaviorProviderId(providerId),
+                node);
+            ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(providerId, node);
+            ModLog.Info($"[商人] 建节点前已重放外观初始化步骤：{providerId}（分组={groupId}）。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"[商人] 建节点前重放失败（分组={groupId}）：{exception.GetBaseException().Message}");
+        }
+    }
     internal static (Node Scene, string ScenePath) InstantiateMerchantPreviewScene(
         string groupId = GroupId)
     {
