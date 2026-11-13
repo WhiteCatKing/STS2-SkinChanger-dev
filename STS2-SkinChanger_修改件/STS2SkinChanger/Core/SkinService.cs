@@ -6609,8 +6609,9 @@ internal static partial class SkinService
         // 全部压在这次重建上（本机 22 个提供者约 3.9 s），是"窗口出来了但主菜单很久不响应"
         // 的主要来源。有了真实场景范围之后不再拆分：可见提供者必须同步就位。
         // STS2SC_NO_DEFER=1 关掉拆分（复活老行为，用于排查"是不是延后初始化引起的"）。
-        var deferNonFirstScreen = _runtimeProviderBehaviorScope == null &&
-                                  !string.Equals(
+        // 有真实场景范围时也要拆分：只把"该范围内可见/已选中"的 provider 同步激活，
+        // 其余延后，避免续档直达场景那一次把 29 个包全压在启动帧里（实测 4.2 s）。
+        var deferNonFirstScreen = !string.Equals(
                                       System.Environment.GetEnvironmentVariable("STS2SC_NO_DEFER"),
                                       "1",
                                       StringComparison.Ordinal);
@@ -6622,7 +6623,14 @@ internal static partial class SkinService
             providerId => firstScreenProviders?.Contains(providerId) ?? true,
             deferNonFirstScreen);
         ManagedSkinModLoader.ActivateSelectedProviders(activationSchedule.Immediate);
-        DeferredProviderActivator.Schedule(activationSchedule.Deferred);
+        // 大包排到最后：未被任何选择引用的放队尾，保证主菜单先出来。
+        static int ActivationCostHint(string providerId) =>
+            providerId.Contains("AncientWaifus", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+
+        var deferredOrdered = activationSchedule.Deferred
+            .OrderBy(ActivationCostHint)
+            .ToList();
+        DeferredProviderActivator.Schedule(deferredOrdered);
         Mark(activationSchedule.HasDeferred
             ? $"激活行为补丁（同步 {activationSchedule.Immediate.Count}，" +
               $"延后 {activationSchedule.Deferred.Count}）"
@@ -9590,3 +9598,6 @@ internal sealed record CardSkinSourceState(
     bool Enabled,
     int ColorIndex,
     bool IsCurrent);
+
+
+
