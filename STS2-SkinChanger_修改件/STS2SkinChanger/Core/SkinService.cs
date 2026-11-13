@@ -7503,12 +7503,59 @@ internal static partial class SkinService
         foreach (var pair in files.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
         {
             AppendSignaturePart(hash, pair.Key);
-            AppendSignaturePart(hash, pair.Value.ArchivePath);
+            AppendSignaturePart(hash, StableArchiveToken(pair.Value));
             AppendSignaturePart(hash, pair.Value.Path);
         }
 
         return Convert.ToHexString(hash.GetHashAndReset());
     }
+
+    /// <summary>
+    /// 覆盖包签名用的稳定归档标识。运行期生成的缓存包路径里带每会话目录名和递增编号，
+    /// 直接拿它参与签名会让同一个覆盖包每次启动都算成"新内容"，实测每次重写 588 MB。
+    /// 这里只保留文件名的非数字骨架与文件字节数：不同来源仍可区分，会话号变化不再影响。
+    /// </summary>
+    private static string StableArchiveToken(ResourceFile file)
+    {
+        if (file.IsInline)
+        {
+            return file.ArchivePath;
+        }
+
+        var archive = file.Archive;
+        var name = System.IO.Path.GetFileName(archive.Path);
+        var shape = string.Concat(name.Select(ch => char.IsDigit(ch) ? '#' : ch));
+        long archiveBytes;
+        if (!ArchiveBytesCache.TryGetValue(archive.Path, out archiveBytes))
+        {
+            try
+            {
+                archiveBytes = new System.IO.FileInfo(archive.Path).Length;
+            }
+            catch
+            {
+                archiveBytes = -1;
+            }
+
+            ArchiveBytesCache[archive.Path] = archiveBytes;
+        }
+
+        long size;
+        try
+        {
+            size = (long)archive.GetFileSize(file.Path);
+        }
+        catch
+        {
+            size = -1;
+        }
+
+        return shape + ":" + archiveBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+            ":" + size.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long>
+        ArchiveBytesCache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// 外观覆盖文件表的复用签名。必须包含**所有**能改变产物的输入：
