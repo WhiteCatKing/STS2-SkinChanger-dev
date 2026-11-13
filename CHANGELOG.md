@@ -1,3 +1,11 @@
+### 1.0.31.37 —— 奥斯提预览框与骨妹强绑定（作者要求）
+
+1.0.31.36 的标记只在 `PopulateOsty` 里写，切到别的角色时那条路径不一定重跑，所以选过骨妹后再切别的角色，框又回来了。
+
+这一版把判定挪到 `RebuildCharacterDisplay(screen, character, groupId)` 开头：每次重建角色展示时都按**当前选中的分组**
+重写 `sts2_skin_companion_hidden`——只有 `groupId` 等于随从主人（骨妹）时才为 false。
+`OstyModelPreviewControls.Refresh` 继续读这个标记，非骨妹页面直接 `Hide` 且不再 `ShowOsty`。
+只作用于选人界面，局内不碰（局内其他角色仍可取到奥斯提）。
 ### 1.0.31.36 —— 随从预览框按页面归属彻底隐藏（作者要求）
 
 1.0.31.35 只收了一次面板，但 `OstyModelPreviewControls.Refresh` 会无条件 `ShowOsty()`，
@@ -411,6 +419,7 @@ git checkout v1.0.30.200              # 回到某个标签看代码（只读，�
 
 回退代码之后必须：重建 → `LogicTests` 通过 → 复制到 4 处部署目录 → 重启游戏确认 `godot.log` 里的 `内测版本` 与提交相符。
 2026-11-12 之前的版本没有 git 标签，只有本文件与交接文档的记录；那几天要"回退"只能改代码或改用 `D:\工作2026.11.10`、`D:\工作2026.11.11` 里的历史安装包。
+
 
 
 

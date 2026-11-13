@@ -1979,6 +1979,13 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
+        // 作者要求：随从（奥斯提）与骨妹强绑定——只有当前选中的是骨妹时，预览框才允许出现；
+        // 选其他角色时相当于"指向空"，直接收起。只作用于选人界面，局内不碰。
+        var companionOwner = SkinService.Catalog?.CompanionOwnerGroup("osty");
+        screen.SetMeta(
+            CompanionHiddenMeta,
+            companionOwner != null &&
+            !string.Equals(groupId, companionOwner, StringComparison.OrdinalIgnoreCase));
         // F29 取证：卡死复现停在选角预览重建时，godot.log 以此行与挂载日志分界。
         ModLog.Info($"开始重建选角预览：{groupId}。");
         CharacterModelPreviewControls.Hide(screen);
@@ -4159,6 +4166,7 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
 
 
 
