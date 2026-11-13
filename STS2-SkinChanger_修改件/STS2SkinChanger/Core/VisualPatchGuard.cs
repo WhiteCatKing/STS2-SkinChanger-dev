@@ -11,6 +11,14 @@ namespace STS2SkinChanger.Core;
 
 internal static class VisualPatchGuard
 {
+    /// <summary>补丁自身或其所在程序集是否面向商人场景（MerchantButton / MerchantCharacter / NMerchantRoom 等）。</summary>
+    private static bool IsMerchantFacingPatch(HarmonyLib.Patch patch)
+    {
+        var declaring = patch.PatchMethod?.DeclaringType;
+        var text = (declaring?.FullName ?? string.Empty) + "|" +
+                   (declaring?.Assembly.GetName().Name ?? string.Empty);
+        return text.Contains("Merchant", StringComparison.OrdinalIgnoreCase);
+    }
     private static readonly Harmony Harmony = new(Entry.ModId);
     private static readonly string[] VisualNameTokens =
     [
@@ -56,8 +64,12 @@ internal static class VisualPatchGuard
                 .Select(entry => (entry.Patch, entry.Kind, Root: GetProviderRoot(entry.Patch, roots, preservedRoots)))
                 .Where(entry =>
                     entry.Root != null &&
-                    ManagedSkinModLoader.IsManagedProviderAssembly(
-                        entry.Patch.PatchMethod.Module.Assembly) &&
+                    // 1.0.31.31 起只摘「本 Mod 接管过」的包，避免误摘游戏原生提前加载的包。
+                    // 但商人包（Merchant2CuteII 等）由我们挂载资源、它自己的补丁同时在改骨骼动画，
+                    // 两套打架会让商人回原版 —— 这类补丁无论是否受管都要摘。
+                    (ManagedSkinModLoader.IsManagedProviderAssembly(
+                         entry.Patch.PatchMethod.Module.Assembly) ||
+                     IsMerchantFacingPatch(entry.Patch)) &&
                     !ManagedSkinModLoader.IsProviderAssemblyActive(
                         entry.Patch.PatchMethod.Module.Assembly))
                 .DistinctBy(entry => (entry.Patch.PatchMethod, entry.Kind))
@@ -306,3 +318,4 @@ internal static class VisualPatchGuard
     }
 
 }
+
