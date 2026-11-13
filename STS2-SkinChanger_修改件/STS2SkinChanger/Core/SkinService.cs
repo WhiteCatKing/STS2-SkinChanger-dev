@@ -6617,13 +6617,9 @@ internal static partial class SkinService
         var firstScreenProviders = deferNonFirstScreen
             ? catalog.GetFirstScreenRuntimeProviders()
             : null;
-        // 启动期只同步激活"屏幕上马上要出现的"与"玩家当前已选中的"provider；其余延后到选中时再激活。
-        var selectedProviders = deferNonFirstScreen
-            ? catalog.GetSelectedRuntimeProviders(GetVisualSelections())
-            : null;
         var activationSchedule = ProviderActivationSchedulePolicy.Plan(
             activeRuntimeProviders,
-            providerId => (firstScreenProviders?.Contains(providerId) ?? true) || (selectedProviders?.Contains(providerId) ?? false),
+            providerId => firstScreenProviders?.Contains(providerId) ?? true,
             deferNonFirstScreen);
         ManagedSkinModLoader.ActivateSelectedProviders(activationSchedule.Immediate);
         DeferredProviderActivator.Schedule(activationSchedule.Deferred);
@@ -9594,4 +9590,3 @@ internal sealed record CardSkinSourceState(
     bool Enabled,
     int ColorIndex,
     bool IsCurrent);
-
