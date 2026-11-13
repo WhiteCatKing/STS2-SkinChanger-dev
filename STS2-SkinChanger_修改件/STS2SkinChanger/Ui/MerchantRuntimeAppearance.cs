@@ -882,12 +882,13 @@ internal static class MerchantRuntimeAppearance
             }
 
             var scale = visual.Scale.X;
+            var providerId = SkinService.GetSelectedRuntimeProvider(GroupId) ?? string.Empty;
+            ModLog.Info($"[商人] 本次选择={providerId} 缩放={scale:0.0000} 位置=({visual.Position.X:0.0}, {visual.Position.Y:0.0}) 节点={visual.Name}");
             if (scale <= 0f || scale >= 0.1f)
             {
                 return;
             }
 
-            var providerId = SkinService.GetSelectedRuntimeProvider(GroupId) ?? string.Empty;
             var isAta = providerId.Contains("ATA", StringComparison.OrdinalIgnoreCase);
             visual.Scale = isAta ? new Vector2(0.1500f, 0.1500f) : new Vector2(0.1800f, 0.1800f);
             visual.Position = isAta ? new Vector2(125.0f, 280.0f) : new Vector2(137.3f, 223.3f);
