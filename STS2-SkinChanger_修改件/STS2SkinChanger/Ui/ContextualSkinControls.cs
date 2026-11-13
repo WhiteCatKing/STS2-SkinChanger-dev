@@ -2008,18 +2008,16 @@ internal static partial class ContextualSkinControls
             resources =>
             {
                 var scene = resources[characterSelectPath] as PackedScene;
-                // 覆盖包里没有这个路径时，资源解析会退回游戏本体同名场景，所以 scene 一定不为 null。
-                // 是否替换必须看「这个包自己带不带」，否则原版场景会把包自己画的背景冲掉。
-                var shipsCanonicalBackground = ProviderShipsCanonicalBackground(groupId, characterId);
-                if (scene == null && shipsCanonicalBackground)
+                if (scene == null && ProviderShipsCanonicalBackground(groupId, characterId))
                 {
                     throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
                 }
 
-                if (!shipsCanonicalBackground)
+                if (scene == null)
                 {
                     // 这个包没有规范背景场景（例如 DefectSkinMod 用自己的 DefectAnimatedBg，魅魔战士只有
-                    // char_select_ironclad.png）——保留皮肤包自己的背景，不用原版顶掉它。
+                    // char_select_ironclad.png）。资源解析这时会退回游戏原版场景，拿它替换只会把包自己
+                    // 画的那套背景冲掉，所以什么都不换。
                     ModLog.Info($"[选角背景] 分组={groupId} 没有规范背景场景，保留皮肤包自己的背景。");
                 }
                 else

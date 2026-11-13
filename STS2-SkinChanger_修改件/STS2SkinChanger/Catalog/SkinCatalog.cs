@@ -2673,10 +2673,9 @@ internal sealed partial class SkinCatalog : IDisposable
                         continue;
                     }
 
-                    var archivePathOnDisk = (file.Archive.Path ?? string.Empty).Replace('\\', '/');
+                    var archivePathOnDisk = file.Archive.Path ?? string.Empty;
                     if (archivePathOnDisk.EndsWith("SlayTheSpire2.pck", StringComparison.OrdinalIgnoreCase) ||
-                        archivePathOnDisk.Contains("/cache/", StringComparison.OrdinalIgnoreCase) ||
-                        archivePathOnDisk.Contains("/Gurio.SkinChanger/", StringComparison.OrdinalIgnoreCase))
+                        archivePathOnDisk.Contains("\\cache\\", StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
