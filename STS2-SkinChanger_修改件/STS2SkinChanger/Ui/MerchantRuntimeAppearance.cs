@@ -853,6 +853,63 @@ internal static class MerchantRuntimeAppearance
         return player;
     }
 
+    // A save reload rebuilds the shop room long after the selection was stored, and the room's
+    // own _Ready may run before the pack's resources are mounted. Watch the live room from the
+    // always-running tick instead of trusting one event: refresh each new room instance once,
+    // retrying for a few seconds because the mount lands a frame or two later.
+    private static ulong _watchedRoomId;
+    private static int _watchedRoomAttempts;
+    private static bool _watchedRoomDone;
+    private static string? _watchedRoomSelection;
+
+    internal static void TickRefreshAfterLoad()
+    {
+        var room = NMerchantRoom.Instance;
+        if (room == null || !GodotObject.IsInstanceValid(room))
+        {
+            _watchedRoomId = 0;
+            _watchedRoomAttempts = 0;
+            _watchedRoomDone = false;
+            _watchedRoomSelection = null;
+            return;
+        }
+
+        var roomId = room.GetInstanceId();
+        var selection = SkinService.GetSelectedRuntimeProvider("merchant");
+        if (roomId != _watchedRoomId || !string.Equals(selection, _watchedRoomSelection, StringComparison.Ordinal))
+        {
+            _watchedRoomId = roomId;
+            _watchedRoomAttempts = 0;
+            _watchedRoomDone = false;
+            _watchedRoomSelection = selection;
+        }
+
+        if (_watchedRoomDone || _watchedRoomAttempts > 240)
+        {
+            return;
+        }
+
+        _watchedRoomAttempts++;
+        try
+        {
+            ScopePartTakeover(room);
+            if (TryRefreshMerchant(out var error))
+            {
+                _watchedRoomDone = true;
+                ModLog.Info($"[商人] 房间就绪后已套用当前选择：{selection}。");
+            }
+            else if (_watchedRoomAttempts == 240)
+            {
+                _watchedRoomDone = true;
+                ModLog.Warn($"[商人] 房间就绪后重试商人外观失败：{error}");
+            }
+        }
+        catch (Exception exception)
+        {
+            _watchedRoomDone = true;
+            ModLog.Warn("[商人] 房间就绪后刷新商人外观异常：" + exception.GetBaseException().Message);
+        }
+    }
     internal static bool TryRefreshMerchant(out string? error)
     {
         error = null;

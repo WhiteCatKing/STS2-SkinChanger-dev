@@ -1039,6 +1039,8 @@ internal static class MultiplayerSkinSync
         // The pack's own appearance hotkey has to be driven from here when the pack cannot receive
         // it (or its assembly lost the identity race to the other Joan pack).
         VariantHotkeyPoller.Tick(delta);
+        // Save reload rebuilds the shop room after the selection was stored; keep it in sync.
+        MerchantRuntimeAppearance.TickRefreshAfterLoad();
 
         // A selection made from the Appearance screen can be queued while the game is busy; drive
         // the queue from this always-running tick so "apply on self" cannot silently never happen.
