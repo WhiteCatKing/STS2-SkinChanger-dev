@@ -106,6 +106,44 @@ internal static class FakeMerchantEventFrame
                 return;
             }
 
+            // 坐标校正只服务于 NSFW-Event（工坊 3765802910）那张帐篷美术的构图：
+            // 没装这个包时保持原版构图，其余逻辑（美术归属判定等）不受影响。
+            static bool HasNsfwEventPack()
+            {
+                string[] roots =
+                [
+                    @"D:\steam\steamapps\workshop\content\2868840",
+                    System.IO.Path.Combine(AppContext.BaseDirectory, "mods"),
+                    @"D:\steam\steamapps\common\Slay the Spire 2\mods",
+                ];
+
+                foreach (var root in roots)
+                {
+                    if (!System.IO.Directory.Exists(root))
+                    {
+                        continue;
+                    }
+
+                    if (System.IO.Directory.Exists(System.IO.Path.Combine(root, "3765802910")))
+                    {
+                        return true;
+                    }
+
+                    if (System.IO.Directory.EnumerateFileSystemEntries(root, "*3765802910*").Any())
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            if (!HasNsfwEventPack())
+            {
+                ModLog.Info("假商人帐篷坐标校正仅对 NSFW-Event（3765802910）启用，当前未检测到该包，保持原构图。");
+                return;
+            }
+
             // Fit to the screen's own rect instead of the viewport: the same scene is also
             // instantiated as a small compendium preview, and that one must fill its own box.
             var screenScale = screen.GetGlobalTransform().Scale;
