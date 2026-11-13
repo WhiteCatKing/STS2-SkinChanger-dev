@@ -32,11 +32,21 @@ internal static class VariantHotkeyBridge
 {
     private const double PollInterval = 0.25;
 
+    /// <summary>
+    /// 战士（Joan 系）变体热键桥。作者要求先停用所有战士专属逻辑，代码保留待恢复。
+    /// </summary>
+    private const bool IroncladCompatEnabled = false;
+
     private static double _elapsed;
     private static readonly Dictionary<string, int> AdoptedLogKeys = new(StringComparer.OrdinalIgnoreCase);
 
     internal static void Tick(double delta)
     {
+        if (!IroncladCompatEnabled)
+        {
+            return;
+        }
+
         _elapsed += delta;
         if (_elapsed < PollInterval)
         {

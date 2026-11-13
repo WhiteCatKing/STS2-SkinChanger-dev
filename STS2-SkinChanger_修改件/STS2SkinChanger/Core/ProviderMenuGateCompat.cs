@@ -27,9 +27,20 @@ internal static class ProviderMenuGateCompat
     private static readonly HashSet<string> Patched = new(StringComparer.OrdinalIgnoreCase);
     private static double _nextScan;
 
+    /// <summary>
+    /// 战士（Joan 系）专属的选人门控兼容。作者要求先把所有「只针对战士」的逻辑停用，让铁甲战士
+    /// 和其他角色走完全同一条路径；代码保留，确认背景问题根源后再决定是否恢复。
+    /// </summary>
+    private const bool IroncladCompatEnabled = false;
+
     /// <summary>Installs the gate patch for every loaded package that exposes a variant contract.</summary>
     internal static void Tick(double delta)
     {
+        if (!IroncladCompatEnabled)
+        {
+            return;
+        }
+
         _nextScan -= delta;
         if (_nextScan > 0)
         {
