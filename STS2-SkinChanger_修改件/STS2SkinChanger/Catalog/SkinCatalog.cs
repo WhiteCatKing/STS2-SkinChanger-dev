@@ -23,6 +23,13 @@ internal sealed partial class SkinCatalog : IDisposable
         CompanionGroups.Select(pair => pair.Companion).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     /// <summary>是否是随从分组（奥斯提等）。随从的选择与主人完全独立，不参与全量提供者的原子联动。</summary>
+    /// <summary>随从分组对应的主人分组 id（osty → necrobinder）。</summary>
+    public string? CompanionOwnerGroup(string companionGroupId) =>
+        CompanionGroups
+            .Where(pair => pair.Companion.Equals(companionGroupId, StringComparison.OrdinalIgnoreCase))
+            .Select(pair => pair.Owner)
+            .FirstOrDefault();
+
     public bool IsCompanionGroup(string groupId) =>
         CompanionGroups.Any(pair => pair.Companion.Equals(groupId, StringComparison.OrdinalIgnoreCase));
     /// <summary>
@@ -9907,4 +9914,5 @@ internal static class DisplayTextExtensions
             .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
     }
 }
+
 

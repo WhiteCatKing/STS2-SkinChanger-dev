@@ -4,7 +4,7 @@
   "title": "Skin Changer",
   "statementHeading": "Statement",
   "version": "1.0.31",
-  "internalTestVersion": "1.0.31.33",
+  "internalTestVersion": "1.0.31.34",
   "featureUpdate": "",
   "cardPriorityUpdate": "",
   "multiplayerUpdate": "",
@@ -30,6 +30,7 @@
   "changeNote": "1.0.26: New combat background switching. The pause menu gains a Background entry that switches the battle background of a whole act: the list offers every background the mod can actually draw - the game's own act and encounter scenes, plus each skin pack's layered battlefields - so one act can also borrow another act's look. Keep \"follow category\" and every encounter and monster pack keeps its own background, choose \"game default\" to restore vanilla, or pick one background to replace every battle in that act. Scenes with no visible layers are never offered, and a switch applies immediately in the current battle without restarting the run. The Appearance and Background entries can now be hidden from two checkboxes in the pause menu's bottom-left corner that only appear while the mouse is over them; the old right-click hide gesture is gone. Multiplayer skins now use a single exclusive choice - teammates show no skins, only skins both sides own, or your own skins for every character - and a skin you picked for a teammate from the Appearance panel now survives a save and reload. Fixed Shiv animation routing for managed skins, restored provider singletons so card-play and room hooks work again (Crusader and others), removed the load-order loop when Mod Launch Manager is installed, and fixed CZN enemy models always rendering as vanilla.\n / 1.0.26：新增战斗背景切换。暂停菜单新增“背景”入口，可切换一整层的战斗背景：列表里是该 Mod 能找到、且真的画得出画面的全部背景——游戏自己的地区与遭遇场景，以及各皮肤包的分层战场，所以一层也能借用另一层的背景；选“跟随分类”则由每个遭遇和怪物皮肤包使用各自的背景，选“游戏默认”还原原版，选某个具体背景则替换这一层的所有战斗。没有可见图层的空壳不会列出，切换在当前战斗里立即生效，不用重开对局。暂停菜单的“外观”“背景”按钮改为左下角两个勾选框控制，鼠标移上去才显示，原来的右键隐藏已删除。联机皮肤改为三选一：队友不显示皮肤 / 队友显示双方都有的皮肤 / 队友显示我用的皮肤；在“外观”里给某个队友单独换的皮肤，保存重载后不再被还原。修复受管皮肤的 Shiv 与普通攻击共用同一动画、皮肤提供者的单例未注册导致出牌与房间钩子失效（十字军等）、安装 Mod Launch Manager 时加载顺序死循环、CZN 敌人美化包的怪物模型始终显示原版。",
   "localizationsFile": "localizations.json"
 }
+
 
 
 

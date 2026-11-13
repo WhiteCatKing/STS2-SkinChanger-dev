@@ -1,3 +1,11 @@
+### 1.0.31.34 —— 随从下拉只在骨妹页面显示（作者要求）
+
+作者要求：除骨妹（死灵之缚）之外的所有角色都不显示随从/手部下拉。
+
+`Catalog\SkinCatalog.cs` 新增 `public string? CompanionOwnerGroup(string companionGroupId)`
+（随从分组 → 主人分组，`CompanionGroups` 里 osty → necrobinder）。
+`Ui\ContextualSkinControls.cs` 的 `PopulateOsty` 增加归属判定：选择器所在分组（`GroupMeta`）
+不等于随从主人的分组时，直接把下拉隐藏并清空 `OstyGroupMeta`。
 ### 1.0.31.33 —— 主人页面不再列出随从专用皮肤（玩家反馈修复）
 
 玩家在战士页选中「随从分组 osty」条目后整局卡死（1.0.31.32 已加兜底，这一版治因）。
@@ -391,6 +399,7 @@ git checkout v1.0.30.200              # 回到某个标签看代码（只读，�
 
 回退代码之后必须：重建 → `LogicTests` 通过 → 复制到 4 处部署目录 → 重启游戏确认 `godot.log` 里的 `内测版本` 与提交相符。
 2026-11-12 之前的版本没有 git 标签，只有本文件与交接文档的记录；那几天要"回退"只能改代码或改用 `D:\工作2026.11.10`、`D:\工作2026.11.11` 里的历史安装包。
+
 
 
 

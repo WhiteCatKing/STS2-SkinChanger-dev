@@ -969,6 +969,16 @@ internal static partial class ContextualSkinControls
             osty.Visible = false;
             return;
         }
+        // 随从下拉只在它主人（骨妹）的页面显示。作者要求：除骨妹外所有角色都不显示。
+        var ownerGroup = selector.GetMeta(GroupMeta, string.Empty).AsString();
+        var companionOwner = SkinService.Catalog?.CompanionOwnerGroup("osty");
+        if (companionOwner != null &&
+            !string.Equals(ownerGroup, companionOwner, StringComparison.OrdinalIgnoreCase))
+        {
+            osty.Visible = false;
+            selector.SetMeta(OstyGroupMeta, string.Empty);
+            return;
+        }
 
         var groupIds = SkinService.CompanionGroupIds;
         var groupId = groupIds.FirstOrDefault();
@@ -4135,5 +4145,6 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
 
 
