@@ -1,3 +1,12 @@
+### 1.0.31.46 —— 奥斯提预览框改为面板内部判定（按日志定位）
+
+日志证据（1.0.31.45）：
+- `ShowCharacter 进入：角色=IRONCLAD` 时 `隐藏标记=False`，紧接着 `Refresh 面板存在=True 面板可见=False`，
+  然后 `RebuildCharacterDisplay 分组=ironclad 隐藏标记=True` —— 标记是**画完之后**才设的，所以当帧已经显示了。
+- 面板自身 `_Process` 每帧 `Visible = area != null && IsEnabled`，外部 `Visible=false` 下一帧就被改回去。
+
+改法：`OstyModelPreviewControls.AllowedForCurrentCharacter` 静态开关，`ShowCharacter` 里按
+"当前角色是否等于随从主人"直接写；面板的 `ShowOsty()` 与 `_Process` 都读它，不是骨妹就不显示。
 ### 1.0.31.45 —— 奥斯提预览框三处诊断日志（不改行为）
 
 1.0.37~1.0.43 连续几版都没能让预览框稳定隐藏，先取证：在 `ShowCharacter`、
@@ -468,6 +477,7 @@ git checkout v1.0.30.200              # 回到某个标签看代码（只读，�
 
 回退代码之后必须：重建 → `LogicTests` 通过 → 复制到 4 处部署目录 → 重启游戏确认 `godot.log` 里的 `内测版本` 与提交相符。
 2026-11-12 之前的版本没有 git 标签，只有本文件与交接文档的记录；那几天要"回退"只能改代码或改用 `D:\工作2026.11.10`、`D:\工作2026.11.11` 里的历史安装包。
+
 
 
 

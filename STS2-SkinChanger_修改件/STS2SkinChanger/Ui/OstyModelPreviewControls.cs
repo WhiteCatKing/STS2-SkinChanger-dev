@@ -27,6 +27,9 @@ internal static class OstyModelPreviewControls
 
     internal static bool IsEnabled => CharacterModelPreviewControls.IsEnabled;
 
+    // 作者要求：预览框只跟随骨妹；面板自身每帧会把 Visible 置回 true，所以判定必须在面板内部。
+    internal static bool AllowedForCurrentCharacter = true;
+
     public static void Refresh(NCharacterSelectScreen screen)
     {
         var diagnostic = screen.GetNodeOrNull<Control>($"InfoPanel/{PanelName}");
@@ -375,6 +378,11 @@ internal partial class OstyModelPreviewPanel : Control
 
     internal void ShowOsty()
     {
+        if (!OstyModelPreviewControls.AllowedForCurrentCharacter)
+        {
+            Visible = false;
+            return;
+        }
         QueueLayout();
         QueueRefresh();
     }
@@ -556,7 +564,7 @@ internal partial class OstyModelPreviewPanel : Control
         }
 
         var area = GetDefaultLayout();
-        Visible = area != null && OstyModelPreviewControls.IsEnabled;
+        Visible = area != null && OstyModelPreviewControls.IsEnabled && OstyModelPreviewControls.AllowedForCurrentCharacter;
         RefreshDockHint();
         if (area is not { } rect || !Visible)
         {
@@ -1104,6 +1112,7 @@ internal partial class OstyModelPreviewPanel : Control
 
     private bool Alive() => GodotObject.IsInstanceValid(this) && IsInsideTree() && !IsQueuedForDeletion();
 }
+
 
 
 

@@ -195,7 +195,14 @@ internal static partial class ContextualSkinControls
 
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
-        ModLog.Info($"[奥斯提诊断] ShowCharacter 进入：角色={character.Id.Entry} 隐藏标记={screen.GetMeta(CompanionHiddenMeta, false).AsBool()}");
+        var ownerGroup = SkinService.Catalog?.CompanionOwnerGroup("osty");
+        OstyModelPreviewControls.AllowedForCurrentCharacter = ownerGroup != null &&
+            string.Equals(character.Id.Entry, ownerGroup, StringComparison.OrdinalIgnoreCase);
+        if (!OstyModelPreviewControls.AllowedForCurrentCharacter)
+        {
+            OstyModelPreviewControls.Hide(screen);
+            screen.GetNodeOrNull<Control>($"InfoPanel/{OstyModelPreviewControls.PanelName}")?.Set("visible", false);
+        }
         CharacterModelPreviewControls.Hide(screen);
         CaptureCharacterBackgroundHostLayout(screen);
         CancelCharacterDropdownSelection(screen);
@@ -4161,6 +4168,7 @@ internal static class SkinPopupBackgroundMutePatch
     private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
         !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
+
 
 
 
