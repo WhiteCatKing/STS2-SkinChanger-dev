@@ -2695,6 +2695,54 @@ internal sealed partial class SkinCatalog : IDisposable
     /// the per-variant portrait folders (<c>portrait_palettes/&lt;variant&gt;/s&lt;stage&gt;_*_icon.png</c>)
     /// that the pack itself would have used.
     /// </summary>
+    /// <summary>
+    /// Returns the character-select background scene the selected option actually ships.
+    /// The canonical <c>char_select_bg_&lt;character&gt;.tscn</c> name is preferred but not required:
+    /// packs authored before v0.113.0 (or by authors who never followed the convention) may store
+    /// their background under their own name, for example <c>res://Scenes/DefectSelectBg.tscn</c>.
+    /// Without this fallback those packs silently kept the game's original background.
+    /// </summary>
+    public string? FindCharacterSelectBackgroundScene(string groupId, string optionId, string characterId)
+    {
+        var group = Groups.FirstOrDefault(candidate =>
+            candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+        var option = group?.Options.FirstOrDefault(candidate =>
+            candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+        if (option == null || option.Assets.Count == 0)
+        {
+            return null;
+        }
+
+        var canonical = $"res://scenes/screens/char_select/char_select_bg_{characterId}.tscn";
+        if (option.Assets.ContainsKey(canonical))
+        {
+            return canonical;
+        }
+
+        string? best = null;
+        foreach (var path in option.Assets.Keys)
+        {
+            if (!path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var fileName = Path.GetFileNameWithoutExtension(path);
+            if (!fileName.Contains("selectbg", StringComparison.OrdinalIgnoreCase) &&
+                !fileName.StartsWith("char_select_bg_", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (best == null || path.Length < best.Length)
+            {
+                best = path;
+            }
+        }
+
+        return best;
+    }
+
     public string? GetAssetRootDirectory(string groupId, string optionId)
     {
         var option = Groups.FirstOrDefault(group =>

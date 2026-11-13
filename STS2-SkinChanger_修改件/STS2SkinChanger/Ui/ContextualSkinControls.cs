@@ -1970,6 +1970,16 @@ internal static partial class ContextualSkinControls
 
         var characterId = character.Id.Entry.ToLowerInvariant();
         var characterSelectPath = CanonicalScenePath("screens/char_select/char_select_bg_" + characterId);
+        // 有些皮肤包（例如 DefectSkinMod 的 res://Scenes/DefectSelectBg.tscn）把选人背景放在自己的
+        // 命名下，只认标准路径会让它们永远退回原版背景。
+        var shippedCharacterSelectPath = SkinService.Catalog?.FindCharacterSelectBackgroundScene(
+            groupId,
+            SkinService.GetCharacterSelectionOptionId(groupId),
+            characterId);
+        if (!string.IsNullOrWhiteSpace(shippedCharacterSelectPath))
+        {
+            characterSelectPath = shippedCharacterSelectPath;
+        }
         var characterSelectTextures = new[]
         {
             CanonicalImagePath("packed/character_select/char_select_" + characterId + ".png"),

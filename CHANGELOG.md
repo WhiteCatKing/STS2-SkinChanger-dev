@@ -10,6 +10,14 @@
 
 ---
 ## 2026-11-13
+### 1.0.31.4 —— 选人界面背景识别放宽（支持包自己的场景命名）
+
+v0.113.0 之后，故障机器人（DefectSkinMod）这类把选人背景放在自己命名下（es://Scenes/DefectSelectBg.tscn）的皮肤包，选人界面一直被换回原版背景：我们只认游戏的规范路径 es://scenes/screens/char_select/char_select_bg_<角色>.tscn。
+
+- Catalog\SkinCatalog.cs：新增 FindCharacterSelectBackgroundScene(groupId, optionId, characterId)，优先用规范名，找不到时在该选项自己的资源里挑 *selectbg* / char_select_bg_* 的 .tscn（同名多份时取路径最短的一个）。
+- Ui\ContextualSkinControls.cs：RebuildCharacterDisplay 里背景路径先问上面这个方法，取不到再退回规范路径；后续的资源收集、整包快照重建都沿用同一个路径。
+
+贞德（JoanOfArcIroncladHpwear）两份资源本来就在规范路径上，走的是第一个分支，行为不变，可作回归基准。魅魔战士（succubusIroncladHpWear）包里根本没有选人背景场景，这一版不会让它凭空多出背景。
 ### 1.0.31.3 —— 修「商人皮肤刷新报『独立皮肤资源不是场景』」
 根因：v0.113.0 把商店房间场景从 `res://scenes/rooms/merchant_room.tscn` 拆成 `res://scenes/rooms/standard_merchant_room.tscn` 与 `res://scenes/rooms/blitz_merchant_room.tscn`，旧路径在新版游戏包里已不存在。本 Mod 的 `MerchantRoomScenePath` 仍是旧路径，运行时 overlay 里取不到 PackedScene，于是在 `SkinService.InstantiateRuntimeScene` 抛 `InvalidOperationException: 独立皮肤资源不是场景：res://scenes/rooms/merchant_room.tscn`，面板里切换商人皮肤一律失败。
 - `Ui\MerchantRuntimeAppearance.cs`：新增 `StandardMerchantRoomScenePath` / `BlitzMerchantRoomScenePath` 与 `ResolveMerchantRoomScenePath(NMerchantRoom?)`（按活体房间类型名选场景，`NBlitzMerchantRoom` 走 blitz，其余走 standard）；`MerchantRoomScenePath` 保留为 standard 默认值，供预览预热与无房间实例的场景使用。
