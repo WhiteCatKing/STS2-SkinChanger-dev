@@ -17,7 +17,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.31.80";
+    public const string InternalTestVersion = "1.0.31.81";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -31,14 +31,18 @@ public static class Entry
             $"内测版本 {InternalTestVersion}；程序集={assembly.GetName().Name} " +
             $"{assembly.GetName().Version}；路径={assembly.Location}");
         ModPrivateDependencyResolver.Install(ModLog.Info);
+        StartupWatchdog.Begin();
         SkinChangerPaths.Initialize();
+        StartupWatchdog.Stage("路径与依赖就绪");
         FrameworkCompatibilityLayer.Initialize();
         ManagedSkinModLoader.Initialize();
         // 与框架类 Mod（RitsuLib、BaseLib 等）共存时，单个补丁类的目标类型可能因加载
         // 竞争解析失败。PatchAll 一处失败即中断且只能整体回滚，会把单类问题放大成整个
         // Mod 停用；改为逐类安装，失败的类跳过并单独撤销，其余补丁照常生效。
         var harmony = new Harmony(ModId);
+        StartupWatchdog.Stage("补丁类安装");
         var failedPatchClasses = InstallPatchClasses(harmony, GetLoadableTypes(assembly));
+        StartupWatchdog.Stage("补丁类安装完成");
         // Bundled 白猫 EmperorCrabSkinFix: combat background creation, bestiary background
         // rebuild, half-HP skeleton swap and the RitsuLib async guard. Installed manually because
         // those patches target runtime types discovered by reflection rather than [HarmonyPatch]
@@ -153,8 +157,10 @@ internal static class EssentialInitializationPatch
                 ManagedSkinModLoader.ProviderRoots,
                 ManagedSkinModLoader.GetPreservedRuntimeRoots(ModManager.Mods));
             SkinService.InitializeCardGroupsAfterModels();
+            StartupWatchdog.Stage("外观预热与选角预载");
             SkinService.PrepareSelectedCharacterPreviews();
             ExternalCardVisualBridge.WarmUp();
+            StartupWatchdog.Complete();
             SkinWorkshopService.StartCommunityRefresh();
         }
         catch (Exception exception)
