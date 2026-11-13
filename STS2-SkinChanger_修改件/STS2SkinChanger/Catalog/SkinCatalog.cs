@@ -2638,6 +2638,60 @@ internal sealed partial class SkinCatalog : IDisposable
     /// example <c>portrait_palettes/1/s1_run_icon.png</c>). Used for per-variant portraits, which are
     /// raw PNGs inside the pack and may not exist under the mounted <c>res://</c> namespace.
     /// </summary>
+    /// <summary>
+    /// True only when the selected provider's own pack ships <paramref name="relativePath"/>.
+    /// Unlike <see cref="ReadProviderFile"/> this ignores the game's own archives and our cached
+    /// overlay packs: those contain the canonical <c>char_select_bg_&lt;character&gt;.tscn</c> for every
+    /// character, so using them as evidence would make every skin look like it ships a background.
+    /// </summary>
+    public bool ProviderShipsFile(string groupId, string optionId, string relativePath)
+    {
+        try
+        {
+            var option = Groups.FirstOrDefault(group =>
+                    group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+                .Options.FirstOrDefault(candidate =>
+                    candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+            var root = GetAssetRootDirectory(groupId, optionId);
+            if (option == null || string.IsNullOrWhiteSpace(root))
+            {
+                return false;
+            }
+
+            var archivePath = root.TrimEnd('/') + "/" + relativePath.TrimStart('/');
+            if (archivePath.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+            {
+                archivePath = archivePath["res://".Length..];
+            }
+
+            foreach (var asset in option.Assets.Values)
+            {
+                foreach (var file in asset.Files)
+                {
+                    if (file.IsInline || !file.Archive.Contains(archivePath))
+                    {
+                        continue;
+                    }
+
+                    var archivePathOnDisk = file.Archive.Path ?? string.Empty;
+                    if (archivePathOnDisk.EndsWith("SlayTheSpire2.pck", StringComparison.OrdinalIgnoreCase) ||
+                        archivePathOnDisk.Contains("\\cache\\", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public byte[]? ReadProviderFile(string groupId, string optionId, string relativePath)
     {
         try

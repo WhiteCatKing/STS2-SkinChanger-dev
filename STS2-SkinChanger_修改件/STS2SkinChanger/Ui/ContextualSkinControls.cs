@@ -2060,10 +2060,10 @@ internal static partial class ContextualSkinControls
                 return true;
             }
 
-            return catalog.ReadProviderFile(
+            return catalog.ProviderShipsFile(
                 groupId,
                 selection!,
-                $"scenes/screens/char_select/char_select_bg_{characterId}.tscn") != null;
+                $"scenes/screens/char_select/char_select_bg_{characterId}.tscn");
         }
         catch (Exception exception)
         {

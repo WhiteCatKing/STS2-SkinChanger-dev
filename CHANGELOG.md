@@ -1,3 +1,11 @@
+### 1.0.31.16 —— 「这个包带不带规范背景」改用包自身 PCK 判定
+
+1.0.31.15 的检查用 `ReadProviderFile`，而它会在「包没有该文件」时命中游戏本体和我方缓存覆盖包里的
+同名文件 —— 而 `res://scenes/screens/char_select/char_select_bg_defect.tscn` 这类规范场景在游戏本体里
+**每个角色都有**，于是判定恒为真，仍然去替换背景，鸡煲背景依旧退回原版。
+
+新增 `SkinCatalog.ProviderShipsFile(groupId, optionId, relativePath)`：只在「不是游戏本体
+`SlayTheSpire2.pck`、也不是 `cache\` 下的覆盖包」的档案里找到该路径时才算「包自带」。背景守卫改用它。
 ### 1.0.31.15 —— 不自带选人背景场景的皮肤包，不再用原版背景覆盖
 
 `DefectSkinMod`（鸡煲娘化）、`succubusIroncladHpWear`（魅魔战士）这类包没有
