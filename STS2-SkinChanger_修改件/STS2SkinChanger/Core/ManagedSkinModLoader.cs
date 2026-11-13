@@ -1037,6 +1037,19 @@ internal static class ManagedSkinModLoader
     /// Unpatching by callback method instead of Harmony owner is important because third-party mods
     /// sometimes reuse the same owner string; only the selected provider's assembly is touched.
     /// </summary>
+    public static void EnsureProviderPatchesInstalled(string providerId)
+    {
+        var assembly = ProviderIdsByAssembly
+            .FirstOrDefault(pair => pair.Value.Contains(providerId))
+            .Key;
+        if (assembly == null || CaptureProviderPatches(assembly).Count > 0)
+        {
+            return;
+        }
+
+        PatchAllTolerant(new Harmony($"{Entry.ModId}.merchant.{NormalizeHarmonyId(providerId)}"), assembly, providerId);
+        ModLog.Info($"[商人注册] 已为 {providerId} 补装补丁（重放前发现不在位）。");
+    }
     private static bool IsMerchantSkinProvider(string providerId, string? merchantSelection)
     {
         if (!string.IsNullOrWhiteSpace(merchantSelection) &&

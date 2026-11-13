@@ -1503,6 +1503,9 @@ internal static class MerchantRuntimeAppearance
             }
 
             EnsureSelectedMerchantProviderActive(groupId, providerId);
+            // 第一次切到某个商人皮肤时，它的补丁可能还没装上（激活发生在重放之后），
+            // 此时重放拿不到任何步骤 → 位姿退回基础值。先确保补丁在位再重放。
+            ManagedSkinModLoader.EnsureProviderPatchesInstalled(providerId);
             ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(
                 ManagedSkinModLoader.ResolveBehaviorProviderId(providerId),
                 node);
