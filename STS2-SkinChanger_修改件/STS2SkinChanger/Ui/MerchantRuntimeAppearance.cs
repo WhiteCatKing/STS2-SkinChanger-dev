@@ -868,6 +868,36 @@ internal static class MerchantRuntimeAppearance
     /// </summary>
     internal const bool EnhancedMerchantRefreshEnabled = false;
 
+    // a/b 的缩放是乘性叠加（0.18 × 0.18 = 0.0324）：进门那次若包自己的 _Ready 修饰还在位，
+    // 我们的重放会把位姿套两遍，表现为模型缩成小点并跑到右下角。检测到这个数量级就还原成单次。
+    internal static void CorrectDoubleAppliedPose(Node? room)
+    {
+        try
+        {
+            var visual = room?.FindChild("MerchantVisual", recursive: true, owned: false) as Node2D
+                         ?? room?.GetNodeOrNull<Node2D>("%MerchantVisual");
+            if (visual == null)
+            {
+                return;
+            }
+
+            var scale = visual.Scale.X;
+            if (scale <= 0f || scale >= 0.1f)
+            {
+                return;
+            }
+
+            var providerId = SkinService.GetSelectedRuntimeProvider(GroupId) ?? string.Empty;
+            var isAta = providerId.Contains("ATA", StringComparison.OrdinalIgnoreCase);
+            visual.Scale = isAta ? new Vector2(0.1500f, 0.1500f) : new Vector2(0.1800f, 0.1800f);
+            visual.Position = isAta ? new Vector2(125.0f, 280.0f) : new Vector2(137.3f, 223.3f);
+            ModLog.Warn($"[商人] 检测到位姿被重复套用（缩放={scale:0.0000}），已还原为单次：{providerId}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"[商人] 位姿还原失败：{exception.GetBaseException().Message}");
+        }
+    }
     internal static void TickRefreshAfterLoad()
     {
         if (!EnhancedMerchantRefreshEnabled)
@@ -1822,7 +1852,8 @@ internal static class MerchantRoomConcreteReadyPatch
             return;
         }
 
-        MerchantRuntimeAppearance.ScopePartTakeover(__instance);
+            MerchantRuntimeAppearance.ScopePartTakeover(__instance);
+            MerchantRuntimeAppearance.CorrectDoubleAppliedPose(__instance);
     }
 }
 
