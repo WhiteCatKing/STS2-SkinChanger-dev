@@ -3091,14 +3091,9 @@ internal static partial class ContextualSkinControls
         var group = FindGroup(modelId, modelTypeName);
         if (group != null)
         {
-            // 变体选项（id 以 ::variant:<suffix> 结尾）自带场景，且提供者的后置补丁会把它改回
-            // 提供者默认场景；此时保留变体场景，跳过提供者后置，动画补丁本身不受影响。
+            // 变体选项：提供者后置照常运行（它负责填充模型/动画），最后再把场景写回变体，
+            // 否则会出现 EmptyNCreatureVisuals（预览小人空白）。
             var variantSuffix = SelectedVariantSuffix(group.Id);
-            if (variantSuffix != null &&
-                !string.Equals(variantSuffix, "default", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
 
             // A provider's replayed CreateVisuals postfix may instantiate an auxiliary scene or
             // resolve a private attachment after the main visual has been created.  For a remote
@@ -3129,6 +3124,23 @@ internal static partial class ContextualSkinControls
             finally
             {
                 resourceScope?.Dispose();
+            }
+
+            // 变体选项最后写入：提供者已经填充过模型，这一步只把场景换回选项自带的变体场景。
+            if (variantSuffix != null &&
+                !string.Equals(variantSuffix, "default", StringComparison.OrdinalIgnoreCase) &&
+                model is CharacterModel character)
+            {
+                var variantPath = ResolveVariantCombatPath(character);
+                if (variantPath != null)
+                {
+                    ReplaceCreatedVisuals(
+                        group.Id,
+                        modelTypeName ?? character.GetType().Name,
+                        variantPath,
+                        ref visuals);
+                    ModLog.Info($"[十字军变体] 已把场景写回变体：{variantPath}（分组={group.Id}）。");
+                }
             }
         }
     }
