@@ -5,3 +5,6 @@ STS2_Work/商人n版_停用备份_*/
 STS2_Work/merchant_backup_*/
 STS2_Work/patches/*.bundle
 STS2_Work/patches/*.zip
+tools/Sts2CrashWatch/bin/
+tools/Sts2CrashWatch/obj/
+tools/Sts2CrashWatch/dist/

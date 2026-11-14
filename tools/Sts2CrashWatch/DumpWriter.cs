@@ -56,8 +56,10 @@ internal static class DumpWriter
     }
 
     // 进程已退出时，找本次会话期间新出现的崩溃转储（WER / dotnet）
-    public static string? FindFreshDump(DateTime since, string directory)
+    public static string? FindFreshDump(DateTime since)
     {
+        var directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sts2CrashWatch");
         var candidates = new List<string>();
         candidates.AddRange(SafeEnumerate(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CrashDumps")));
@@ -117,3 +119,4 @@ internal static class DumpWriter
         startInfo.Environment["DOTNET_DbgMiniDumpName"] = Path.Combine(directory, "dotnet_crash_%p.dmp");
     }
 }
+

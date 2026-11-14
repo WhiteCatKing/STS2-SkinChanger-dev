@@ -1,49 +1,47 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 
-// StS2 崩溃监视器
-// 与游戏同时启动，游戏退出后再退出。检测：启动崩溃 / 运行中崩溃或卡死 / 退出崩溃。
-// 报告写到桌面 StS2崩溃报告\crash_yyyyMMdd_HHmmss_类型.md
+// StS2 崩溃监视器（可分发版）
+// 与游戏同时启动、晚于游戏退出；只把「确认无法恢复」的情况记为崩溃：
+//   · 启动/运行崩溃：进程异常退出（退出码非 0）或日志出现致命标记
+//   · 卡死：窗口连续无响应 ≥ 阈值，且同一时间段内 godot.log 完全没有增长（加载慢不算）
+// 报告输出：桌面\杀戮尖塔2崩溃报告\<yyyy.MM.dd_HH：mm>崩溃报告\
+//   其中含该次会话的 godot.log 副本 + 崩溃报告.md
 
 internal static class Program
 {
     private const string GameProcess = "SlayTheSpire2";
     private const string SteamUrl = "steam://rungameid/2868840";
+    private const string AppId = "2868840";
 
     private static readonly string Desktop =
         Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
 
-    private static readonly string ReportDir = Path.Combine(Desktop, "StS2崩溃报告");
+    private static readonly string ReportRoot = Path.Combine(Desktop, "杀戮尖塔2崩溃报告");
 
     private static readonly string UserData = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SlayTheSpire2");
 
-    private static readonly string GameDir = ResolveGameDir();
-
-    private static string ResolveGameDir()
-    {
-        foreach (var drive in new[] { "D", "C", "E", "F" })
-        {
-            var candidate = $@"{drive}:\steam\steamapps\common\Slay the Spire 2";
-            if (Directory.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return @"D:\steam\steamapps\common\Slay the Spire 2";
-    }
+    private static readonly string LogPath = Path.Combine(UserData, "logs", "godot.log");
 
     private static int Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
+
         var launchGame = !args.Contains("--no-launch");
+        var hangSeconds = ReadIntArg(args, "--hang-seconds", 180);
+
+        var gameDir = ResolveGameDir();
         Console.WriteLine("StS2 崩溃监视器");
-        Console.WriteLine("  游戏目录: " + GameDir);
-        Console.WriteLine("  报告目录: " + ReportDir);
-        Console.WriteLine("  日志目录: " + Path.Combine(UserData, "logs"));
+        Console.WriteLine("  游戏目录: " + (gameDir ?? "未找到（不影响监视，只影响版本信息）"));
+        Console.WriteLine("  日志文件: " + LogPath);
+        Console.WriteLine("  报告位置: " + ReportRoot);
+        Console.WriteLine($"  卡死阈值: 窗口无响应且日志停滞 ≥ {hangSeconds} 秒");
+        Console.WriteLine();
 
         var everLaunched = false;
+
         while (true)
         {
             var process = FindGame();
@@ -51,7 +49,7 @@ internal static class Program
             {
                 if (launchGame && !everLaunched)
                 {
-                    Console.WriteLine("[监视] 启动游戏…");
+                    Console.WriteLine("[监视] 正在启动游戏…");
                     try
                     {
                         Process.Start(new ProcessStartInfo(SteamUrl) { UseShellExecute = true });
@@ -59,7 +57,7 @@ internal static class Program
                     }
                     catch (Exception exception)
                     {
-                        Console.WriteLine("[监视] 启动失败: " + exception.Message);
+                        Console.WriteLine("[监视] 启动失败: " + exception.Message + "（请手动打开游戏）");
                     }
                 }
 
@@ -67,17 +65,27 @@ internal static class Program
                 continue;
             }
 
-            Watch(process);
+            Watch(process, hangSeconds, gameDir);
             Thread.Sleep(1500);
         }
+    }
+
+    private static int ReadIntArg(string[] args, string name, int fallback)
+    {
+        var index = Array.IndexOf(args, name);
+        if (index >= 0 && index + 1 < args.Length && int.TryParse(args[index + 1], out var value) && value > 0)
+        {
+            return value;
+        }
+
+        return fallback;
     }
 
     private static Process? FindGame()
     {
         try
         {
-            var processes = Process.GetProcessesByName(GameProcess);
-            return processes.FirstOrDefault(p =>
+            return Process.GetProcessesByName(GameProcess).FirstOrDefault(p =>
             {
                 try
                 {
@@ -96,12 +104,14 @@ internal static class Program
         }
     }
 
-    private static void Watch(Process process)
+    private static void Watch(Process process, int hangSeconds, string? gameDir)
     {
-        var started = DateTime.Now;
+        var sessionStart = DateTime.Now;
         long peakMemory = 0;
         var unresponsiveSince = DateTime.MinValue;
-        var hung = false;
+        long lastLogLength = SafeLogLength();
+        var lastLogChange = DateTime.Now;
+        var hangConfirmed = false;
         string? dumpPath = null;
 
         Console.WriteLine($"[监视] 已连接 PID={process.Id}，开始监视。");
@@ -116,10 +126,18 @@ internal static class Program
                 }
 
                 process.Refresh();
-                var memory = process.WorkingSet64;
-                if (memory > peakMemory)
+
+                if (process.WorkingSet64 > peakMemory)
                 {
-                    peakMemory = memory;
+                    peakMemory = process.WorkingSet64;
+                }
+
+                var length = SafeLogLength();
+                if (length != lastLogLength)
+                {
+                    lastLogLength = length;
+                    lastLogChange = DateTime.Now;
+                    unresponsiveSince = DateTime.MinValue;
                 }
 
                 if (!process.Responding)
@@ -128,10 +146,17 @@ internal static class Program
                     {
                         unresponsiveSince = DateTime.Now;
                     }
-                    else if (!hung && (DateTime.Now - unresponsiveSince).TotalSeconds >= 30)
+
+                    var silentFor = (DateTime.Now - lastLogChange).TotalSeconds;
+                    var stuckFor = (DateTime.Now - unresponsiveSince).TotalSeconds;
+
+                    if (!hangConfirmed && stuckFor >= hangSeconds && silentFor >= hangSeconds)
                     {
-                        hung = true;
-                        Console.WriteLine("[监视] 检测到窗口无响应超过 30 秒。");
+                        hangConfirmed = true;
+                        Console.WriteLine($"[监视] 已确认卡死：窗口无响应 {stuckFor:0} 秒，日志停滞 {silentFor:0} 秒。");
+                        dumpPath = DumpWriter.WriteForHungProcess(process, Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                            "Sts2CrashWatch"));
                     }
                 }
                 else
@@ -155,12 +180,11 @@ internal static class Program
         }
         catch
         {
-            // 拿不到退出码时按异常处理
+            // 取不到按异常处理
         }
 
-        var uptime = exitedAt - started;
-        var analysis = Analyze(uptime, exitCode, hung);
-        if (analysis != null) { dumpPath ??= DumpWriter.FindFreshDump(started, ReportDir); }
+        var uptime = exitedAt - sessionStart;
+        var analysis = Analyze(uptime, exitCode, sessionStart);
 
         try
         {
@@ -171,99 +195,113 @@ internal static class Program
             // ignore
         }
 
-        if (analysis == null)
+        if (analysis == null && !hangConfirmed)
         {
-            Console.WriteLine($"[监视] 正常退出（退出码={exitCode?.ToString() ?? "未知"}，时长={uptime.TotalMinutes:0.0} 分钟），不生成报告。");
+            Console.WriteLine($"[监视] 正常退出（退出码={exitCode?.ToString() ?? "未知"}，时长 {uptime.TotalMinutes:0.0} 分钟），不生成报告。");
             return;
         }
 
-        var path = WriteReport(analysis, started, exitedAt, uptime, exitCode, peakMemory, hung, dumpPath);
-        Console.WriteLine("[监视] 已生成报告: " + path);
+        var kind = hangConfirmed ? "卡死" : analysis!.Kind;
+        var reason = hangConfirmed
+            ? $"窗口连续无响应且日志完全停滞（阈值 {hangSeconds} 秒），无法自行恢复。"
+            : analysis!.Reason;
+
+        if (dumpPath == null)
+        {
+            dumpPath = DumpWriter.FindFreshDump(sessionStart);
+        }
+
+        var folder = WriteReport(kind, reason, sessionStart, exitedAt, uptime, exitCode, peakMemory, hangConfirmed, dumpPath, gameDir);
+        Console.WriteLine("[监视] 已生成报告: " + folder);
     }
 
     private sealed record Analysis(string Kind, string Reason);
 
-    private static Analysis? Analyze(TimeSpan uptime, int? exitCode, bool hung)
+    private static Analysis? Analyze(TimeSpan uptime, int? exitCode, DateTime sessionStart)
     {
-        var crashMarkers = ScanLogForCrashMarkers();
-
-        if (hung)
+        if (exitCode is not null and not 0)
         {
-            return new Analysis("卡死", "窗口连续 30 秒无响应，进程未退出。");
+            return new Analysis(uptime.TotalSeconds < 90 ? "启动崩溃" : "运行崩溃",
+                $"进程以非 0 退出码结束（{exitCode}）。");
         }
 
-        var abnormalExit = exitCode is not null and not 0;
-
-        if (abnormalExit)
+        var (fatal, marker) = ScanLogForFatal(sessionStart);
+        if (fatal)
         {
-            var kind = uptime.TotalSeconds < 60 ? "启动崩溃" : "运行崩溃";
-            return new Analysis(kind, $"退出码 {exitCode}（非 0 表示异常终止）。");
-        }
-
-        if (crashMarkers.Count > 0)
-        {
-            var kind = uptime.TotalSeconds < 60 ? "启动崩溃" : "运行崩溃";
-            return new Analysis(kind, "日志中出现崩溃标记：" + string.Join(" / ", crashMarkers.Take(4)));
-        }
-
-        // 退出崩：正常退出码但日志没有收尾标志
-        var tail = ReadLogTail(40);
-        var sawShutdown = tail.Any(line =>
-            line.Contains("FMOD Sound System: System released", StringComparison.OrdinalIgnoreCase) ||
-            line.Contains("Steamworks shutdown succeeded", StringComparison.OrdinalIgnoreCase));
-
-        if (!sawShutdown && uptime.TotalSeconds > 30)
-        {
-            return new Analysis("退出异常", "进程已退出但日志缺少正常关停标志（FMOD/Steamworks shutdown）。");
+            return new Analysis(uptime.TotalSeconds < 90 ? "启动崩溃" : "运行崩溃",
+                "日志出现致命标记：" + marker);
         }
 
         return null;
     }
 
-    private static readonly string[] Markers =
+    private static readonly string[] FatalMarkers =
     [
         "Unhandled exception",
-        "Access violation",
         "EXCEPTION_ACCESS_VIOLATION",
+        "Access violation",
         "0xC0000005",
-        "Fatal",
-        "CRASH",
-        "System.TypeLoadException",
-        "TargetInvocationException",
         "Stack overflow",
         "Out of memory",
-        "ERROR: Parameter \"mem\" is null",
+        "System.TypeLoadException",
+        "Fatal error",
         "core/object/worker_thread_pool.cpp"
     ];
 
-    private static List<string> ScanLogForCrashMarkers()
+    private static (bool Fatal, string Marker) ScanLogForFatal(DateTime sessionStart)
     {
-        var found = new List<string>();
-        foreach (var line in ReadLogTail(4000))
+        if (!File.Exists(LogPath))
         {
-            foreach (var marker in Markers)
+            return (false, string.Empty);
+        }
+
+        try
+        {
+            var info = new FileInfo(LogPath);
+            if (info.LastWriteTime < sessionStart.AddMinutes(-2))
             {
-                if (line.Contains(marker, StringComparison.OrdinalIgnoreCase) && !found.Contains(marker))
+                return (false, string.Empty);
+            }
+
+            var tail = ReadLogTail(6000);
+            foreach (var marker in FatalMarkers)
+            {
+                if (tail.Any(line => line.Contains(marker, StringComparison.OrdinalIgnoreCase)))
                 {
-                    found.Add(marker);
+                    return (true, marker);
                 }
             }
         }
+        catch
+        {
+            // ignore
+        }
 
-        return found;
+        return (false, string.Empty);
+    }
+
+    private static long SafeLogLength()
+    {
+        try
+        {
+            return File.Exists(LogPath) ? new FileInfo(LogPath).Length : 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private static List<string> ReadLogTail(int lines)
     {
-        var path = Path.Combine(UserData, "logs", "godot.log");
-        if (!File.Exists(path))
+        if (!File.Exists(LogPath))
         {
             return [];
         }
 
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var stream = new FileStream(LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream, Encoding.UTF8);
             var all = new List<string>();
             string? line;
@@ -281,49 +319,58 @@ internal static class Program
     }
 
     private static string WriteReport(
-        Analysis analysis,
+        string kind,
+        string reason,
         DateTime started,
         DateTime exitedAt,
         TimeSpan uptime,
         int? exitCode,
         long peakMemory,
-        bool hung,
-        string? dumpPath)
+        bool hang,
+        string? dumpPath,
+        string? gameDir)
     {
-        Directory.CreateDirectory(ReportDir);
+        Directory.CreateDirectory(ReportRoot);
 
-        var stamp = exitedAt.ToString("yyyyMMdd_HHmmss");
-        var path = Path.Combine(ReportDir, $"crash_{stamp}_{Sanitize(analysis.Kind)}.md");
+        var folderName = $"{exitedAt:yyyy.MM.dd_HH：mm}崩溃报告";
+        var folder = Path.Combine(ReportRoot, folderName);
+        Directory.CreateDirectory(folder);
 
-        var logPath = Path.Combine(UserData, "logs", "godot.log");
-        var tail = ReadLogTail(200);
-        var errorLines = ReadLogTail(4000)
-            .Where(l => l.Contains("[ERROR]", StringComparison.OrdinalIgnoreCase) ||
-                        l.Contains("[WARN] [SkinChanger]", StringComparison.OrdinalIgnoreCase))
-            .TakeLast(40)
-            .ToList();
+        // 1) 复制该次会话的 godot.log
+        try
+        {
+            if (File.Exists(LogPath))
+            {
+                File.Copy(LogPath, Path.Combine(folder, "godot.log"), overwrite: true);
+            }
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine("[报告] 复制日志失败: " + exception.Message);
+        }
 
+        // 2) 写崩溃报告.md
         var body = new StringBuilder();
-        body.AppendLine($"# 崩溃报告 · {analysis.Kind}");
+        body.AppendLine("# 杀戮尖塔 2 崩溃报告");
         body.AppendLine();
         body.AppendLine("| 项 | 值 |");
         body.AppendLine("| --- | --- |");
-        body.AppendLine($"| 检测时间 | {exitedAt:yyyy-MM-dd HH:mm:ss} |");
-        body.AppendLine($"| 类型 | {analysis.Kind} |");
-        body.AppendLine($"| 判定依据 | {analysis.Reason} |");
+        body.AppendLine($"| 类型 | {kind} |");
+        body.AppendLine($"| 判定依据 | {reason} |");
+        body.AppendLine($"| 发生时间 | {exitedAt:yyyy-MM-dd HH:mm:ss} |");
         body.AppendLine($"| 启动时间 | {started:yyyy-MM-dd HH:mm:ss} |");
         body.AppendLine($"| 运行时长 | {uptime.TotalMinutes:0.0} 分钟 |");
         body.AppendLine($"| 退出码 | {(exitCode?.ToString() ?? "未知")} |");
-        body.AppendLine($"| 无响应 | {(hung ? "是（≥30 秒）" : "否")} |");
+        body.AppendLine($"| 无响应 | {(hang ? "是" : "否")} |");
         body.AppendLine($"| 内存峰值 | {peakMemory / 1024 / 1024} MB |");
-        body.AppendLine($"| 游戏版本 | {ReadGameVersion()} |");
-        body.AppendLine($"| 日志 | `{logPath}` |");
-        body.AppendLine("| 转储文件 | " + (dumpPath == null ? "无" : "`" + dumpPath + "`") + " |");
+        body.AppendLine($"| 游戏版本 | {ReadGameVersion(gameDir)} |");
+        body.AppendLine($"| 转储文件 | {(dumpPath == null ? "无" : dumpPath)} |");
+        body.AppendLine($"| 日志副本 | 同目录 `godot.log` |");
         body.AppendLine();
 
-        body.AppendLine("## 崩溃前日志（末尾 200 行）");
+        body.AppendLine("## 崩溃前日志（末尾 120 行）");
         body.AppendLine("```");
-        foreach (var line in tail)
+        foreach (var line in ReadLogTail(120))
         {
             body.AppendLine(line);
         }
@@ -331,11 +378,17 @@ internal static class Program
         body.AppendLine("```");
         body.AppendLine();
 
-        if (errorLines.Count > 0)
+        var errors = ReadLogTail(8000)
+            .Where(l => l.Contains("[ERROR]", StringComparison.OrdinalIgnoreCase) ||
+                        l.Contains("[SkinChanger] [WARN]", StringComparison.OrdinalIgnoreCase))
+            .TakeLast(30)
+            .ToList();
+
+        if (errors.Count > 0)
         {
-            body.AppendLine("## 错误与告警行（末尾 40 条）");
+            body.AppendLine("## 错误与告警（末尾 30 条）");
             body.AppendLine("```");
-            foreach (var line in errorLines)
+            foreach (var line in errors)
             {
                 body.AppendLine(line);
             }
@@ -344,14 +397,14 @@ internal static class Program
             body.AppendLine();
         }
 
-        var hang = Path.Combine(UserData, "Gurio.SkinChanger", "startup_hang.txt");
-        if (File.Exists(hang))
+        var hangFile = Path.Combine(UserData, "Gurio.SkinChanger", "startup_hang.txt");
+        if (File.Exists(hangFile))
         {
-            body.AppendLine("## SkinChanger 启动卡死记录（startup_hang.txt）");
+            body.AppendLine("## 皮肤切换器启动卡死记录");
             body.AppendLine("```");
             try
             {
-                body.AppendLine(File.ReadAllText(hang));
+                body.AppendLine(File.ReadAllText(hangFile));
             }
             catch
             {
@@ -365,7 +418,7 @@ internal static class Program
         var selections = Path.Combine(UserData, "Gurio.SkinChanger", "skin_changer.json");
         if (File.Exists(selections))
         {
-            body.AppendLine("## 当前皮肤选择（skin_changer.json 摘要）");
+            body.AppendLine("## 当前皮肤选择（摘要）");
             body.AppendLine("```json");
             try
             {
@@ -382,19 +435,33 @@ internal static class Program
 
         body.AppendLine("## 环境");
         body.AppendLine("```");
-        body.AppendLine("OS    : " + Environment.OSVersion);
-        body.AppendLine("CPU   : " + Environment.ProcessorCount + " 逻辑核心");
-        body.AppendLine("游戏  : " + GameDir);
-        body.AppendLine("监视器: " + typeof(Program).Assembly.GetName().Version);
+        body.AppendLine("OS     : " + Environment.OSVersion);
+        body.AppendLine("CPU    : " + Environment.ProcessorCount + " 逻辑核心");
+        body.AppendLine("游戏   : " + (gameDir ?? "未检测到"));
+        body.AppendLine("监视器 : " + typeof(Program).Assembly.GetName().Version);
         body.AppendLine("```");
 
-        File.WriteAllText(path, body.ToString(), new UTF8Encoding(false));
-        return path;
+        File.WriteAllText(Path.Combine(folder, "崩溃报告.md"), body.ToString(), new UTF8Encoding(false));
+        return folder;
     }
 
-    private static string ReadGameVersion()
+    private static string SummarizeSelections(string path)
     {
-        var info = Path.Combine(GameDir, "release_info.json");
+        var keys = new[] { "\"ironclad\"", "\"silent\"", "\"defect\"", "\"necrobinder\"", "\"regent\"", "\"merchant\"" };
+        return string.Join(Environment.NewLine, File.ReadAllLines(path)
+            .Select(l => l.Trim())
+            .Where(l => keys.Any(k => l.StartsWith(k, StringComparison.OrdinalIgnoreCase)))
+            .Take(12));
+    }
+
+    private static string ReadGameVersion(string? gameDir)
+    {
+        if (gameDir == null)
+        {
+            return "未知";
+        }
+
+        var info = Path.Combine(gameDir, "release_info.json");
         if (!File.Exists(info))
         {
             return "未知";
@@ -402,7 +469,7 @@ internal static class Program
 
         try
         {
-            return File.ReadAllText(info).Replace("\n", " ").Trim();
+            return Regex.Replace(File.ReadAllText(info).Trim(), @"\s+", " ");
         }
         catch
         {
@@ -410,24 +477,92 @@ internal static class Program
         }
     }
 
-    private static string SummarizeSelections(string path)
+    // ---- 游戏目录定位：注册表 SteamPath → libraryfolders.vdf → 常见盘符 ----
+
+    private static string? ResolveGameDir()
     {
-        var lines = File.ReadAllLines(path);
-        var picked = lines
-            .Select(l => l.Trim())
-            .Where(l => l.StartsWith("\"ironclad\"", StringComparison.OrdinalIgnoreCase) ||
-                        l.StartsWith("\"silent\"", StringComparison.OrdinalIgnoreCase) ||
-                        l.StartsWith("\"defect\"", StringComparison.OrdinalIgnoreCase) ||
-                        l.StartsWith("\"necrobinder\"", StringComparison.OrdinalIgnoreCase) ||
-                        l.StartsWith("\"regent\"", StringComparison.OrdinalIgnoreCase) ||
-                        l.StartsWith("\"merchant\"", StringComparison.OrdinalIgnoreCase))
-            .Take(12);
-        return string.Join(Environment.NewLine, picked);
+        foreach (var library in EnumerateSteamLibraries())
+        {
+            var candidate = Path.Combine(library, "steamapps", "common", "Slay the Spire 2");
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        foreach (var drive in new[] { "C", "D", "E", "F", "G" })
+        {
+            var candidate = $@"{drive}:\steam\steamapps\common\Slay the Spire 2";
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
-    private static string Sanitize(string value) =>
-        string.Concat(value.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+    private static IEnumerable<string> EnumerateSteamLibraries()
+    {
+        var steamRoot = ReadRegistryString(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath")
+                        ?? ReadRegistryString(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath");
+
+        if (string.IsNullOrWhiteSpace(steamRoot))
+        {
+            yield break;
+        }
+
+        steamRoot = steamRoot.Replace('/', '\\');
+        yield return steamRoot;
+
+        var vdf = Path.Combine(steamRoot, "steamapps", "libraryfolders.vdf");
+        if (!File.Exists(vdf))
+        {
+            yield break;
+        }
+
+        string text;
+        try
+        {
+            text = File.ReadAllText(vdf);
+        }
+        catch
+        {
+            yield break;
+        }
+
+        foreach (Match match in Regex.Matches(text, "\"path\"\\s+\"(?<p>[^\"]+)\""))
+        {
+            var path = match.Groups["p"].Value.Replace("\\\\", "\\");
+            if (Directory.Exists(path))
+            {
+                yield return path;
+            }
+        }
+    }
+
+    private static string? ReadRegistryString(string key, string name)
+    {
+        try
+        {
+            using var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(
+                key.StartsWith("HKEY_CURRENT_USER", StringComparison.OrdinalIgnoreCase)
+                    ? Microsoft.Win32.RegistryHive.CurrentUser
+                    : Microsoft.Win32.RegistryHive.LocalMachine,
+                Microsoft.Win32.RegistryView.Default);
+            using var sub = baseKey.OpenSubKey(StripRoot(key));
+            return sub?.GetValue(name) as string;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string StripRoot(string key)
+    {
+        var parts = key.Split('\\', 2);
+        return parts.Length > 1 ? parts[1] : key;
+    }
 }
-
-
 
