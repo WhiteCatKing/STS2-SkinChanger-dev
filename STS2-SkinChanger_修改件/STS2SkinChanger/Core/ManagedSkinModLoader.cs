@@ -1066,9 +1066,27 @@ internal static class ManagedSkinModLoader
 
         return providerId.Contains("Merchant", StringComparison.OrdinalIgnoreCase);
     }
+    /// <summary>
+    /// 选择项 id 可能带 <c>::variant:&lt;key&gt;</c> 或 <c>::source:&lt;tag&gt;</c> 后缀（十字军变体、
+    /// 工坊来源标记）。补丁的归属对象始终是提供者本体，比较前必须把后缀剥掉，否则切换变体时
+    /// 会把该提供者当成“未选中”并停用它的动画补丁（表现为“变体换了、动画少一半”）。
+    /// </summary>
+    private static string NormalizeProviderIdentity(string providerId)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+        {
+            return providerId;
+        }
+
+        var cutoff = providerId.IndexOf("::", StringComparison.Ordinal);
+        return cutoff <= 0 ? providerId : providerId[..cutoff];
+    }
+
     public static void DeactivateProvidersExcept(IEnumerable<string> selectedProviderIds)
     {
-        var selected = selectedProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selected = selectedProviderIds
+            .Select(NormalizeProviderIdentity)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var merchantSelection = SkinService.GetSelectedRuntimeProvider("merchant");
         foreach (var providerId in ActiveProviderRuntimes.Keys
                      .Where(providerId => !selected.Contains(providerId))
