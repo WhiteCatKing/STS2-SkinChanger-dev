@@ -4529,18 +4529,6 @@ internal static partial class SkinService
                 beforeInstantiate?.Invoke();
                 var scene = resources.GetValueOrDefault(scenePath) as PackedScene ??
                             throw new InvalidOperationException($"独立皮肤资源不是场景：{scenePath}");
-                try
-                {
-                    var state = scene.GetState();
-                    ModLog.Info(
-                        $"[变体诊断] 场景对象：{scenePath} 存在={ResourceLoader.Exists(scenePath)} " +
-                        $"类型={scene.GetType().Name} 节点数={state.GetNodeCount()} " +
-                        $"根类型={state.GetNodeType(0)}");
-                }
-                catch (Exception diagnosticError)
-                {
-                    ModLog.Warn($"[变体诊断] 无法读取场景信息：{diagnosticError.GetBaseException().Message}");
-                }
                 return scene.Instantiate<T>(PackedScene.GenEditState.Disabled);
             },
             includeProviderDependencies: true);

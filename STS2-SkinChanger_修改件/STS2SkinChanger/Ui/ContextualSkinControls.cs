@@ -3119,9 +3119,7 @@ internal static partial class ContextualSkinControls
 
             try
             {
-                ModLog.Info($"[变体诊断] 提供者后置前：分组={group.Id} 变体={variantSuffix ?? "<无>"} 类型={visuals?.GetType().Name ?? "<null>"} 子节点={visuals?.GetChildCount() ?? -1}");
                 SkinService.ApplySelectedVisualPostfix(group.Id, model, ref visuals);
-                ModLog.Info($"[变体诊断] 提供者后置后：分组={group.Id} 类型={visuals?.GetType().Name ?? "<null>"} 子节点={visuals?.GetChildCount() ?? -1}");
             }
             finally
             {
