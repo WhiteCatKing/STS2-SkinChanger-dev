@@ -69,6 +69,8 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Assembly> LoadedProviderAssemblies =
         new(StringComparer.OrdinalIgnoreCase);
+    // 由游戏自己加载、并由包自己的初始化器打过补丁的程序集（我们只是复用它）。
+    private static readonly HashSet<Assembly> AdoptedGameAssemblies = [];
     private static readonly Dictionary<string, Assembly> LoadedProviderAssembliesByFingerprint =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, LoadedProviderAssemblyIdentity>
@@ -1638,10 +1640,14 @@ internal static class ManagedSkinModLoader
     }
 
     private static IReadOnlyList<ProviderPatch> CaptureProviderPatches(Assembly assembly) =>
-        Harmony.GetAllPatchedMethods()
-            .SelectMany(target => EnumerateProviderPatches(target, Harmony.GetPatchInfo(target), assembly))
-            .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind))
-            .ToArray();
+        // 游戏自己加载并自己打过补丁的程序集：这些补丁不归我们管，既不算“我们的补丁”，
+        // 也绝不在切换皮肤时被 UnpatchProviderCallbacks 卸掉。
+        AdoptedGameAssemblies.Contains(assembly)
+            ? Array.Empty<ProviderPatch>()
+            : Harmony.GetAllPatchedMethods()
+                .SelectMany(target => EnumerateProviderPatches(target, Harmony.GetPatchInfo(target), assembly))
+                .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind))
+                .ToArray();
 
     private static IEnumerable<ProviderPatch> EnumerateProviderPatches(
         MethodBase target,
@@ -3822,6 +3828,10 @@ internal static class ManagedSkinModLoader
                     }
 
                     ModLog.Info($"复用游戏已加载的 {provider.Name} 程序集（{existing.GetName().Name}），不再重复加载。");
+                    // 这份程序集的补丁是游戏启动时它自己的初始化器装的，不是我们装的。
+                    // 记下来：既不重复装，也绝不能在切走时把它卸掉——卸了它的动画补丁就没人再装回来
+                    // （十字军「换过一次皮肤后动作全丢」就是这样来的）。
+                    AdoptedGameAssemblies.Add(existing);
                     assembly = existing;
                 }
             }

@@ -1,3 +1,7 @@
+### 1.0.31.98 —— 游戏自己加载的程序集，切走时不再卸它的补丁
+
+- `ManagedSkinModLoader` 新增 `AdoptedGameAssemblies`：走「复用游戏已加载程序集」这条路的包（十字军、狐猎等），其补丁是包自己的初始化器在游戏启动时装上的，不归我们管。
+- `CaptureProviderPatches` 对这类程序集直接返回空集合，于是切换皮肤时的 `UnpatchProviderCallbacks` 不会再把它们卸掉——修十字军「换过一次皮肤后动作全丢」。
 ### 1.0.31.97 —— 修贞德点击换装失效与退出卡死兜底
 
 - 程序集已被游戏加载过时不再重复加载：`ManagedSkinModLoader.GetOrLoadProviderAssembly` 在 `LoadFromAssemblyPath` 抛 `FileLoadException`（Assembly with same name is already loaded）时，按文件名复用 AppDomain 里已有的那一份；复用不到才退回纯资源模式。贞德「点击换装」失效就是因为它整包被回滚成资源皮肤。
