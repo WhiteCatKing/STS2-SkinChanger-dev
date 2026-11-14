@@ -56,9 +56,7 @@ internal static class ProviderVariantOptions
                     {
                         Id = option.Id + "::variant:" + suffix,
                         Name = option.Name + "_" + Label(suffix),
-                        // 变体是独立皮肤，不再继承提供者身份：否则“选中的运行时提供者”仍是
-                        // 原提供者，预览与局内热切换会走提供者默认场景重建，永远回到默认变体。
-                        ProviderId = null,
+                        ProviderId = option.EffectiveProviderId,
                         Assets = assets
                     });
                 }
