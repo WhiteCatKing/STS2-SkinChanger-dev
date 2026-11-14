@@ -883,7 +883,6 @@ internal static class MerchantRuntimeAppearance
 
             var scale = visual.Scale.X;
             var providerId = SkinService.GetSelectedRuntimeProvider(GroupId) ?? string.Empty;
-            ModLog.Info($"[商人] 本次选择={providerId} 缩放={scale:0.0000} 位置=({visual.Position.X:0.0}, {visual.Position.Y:0.0}) 节点={visual.Name}");
             if (scale <= 0f || scale >= 0.1f)
             {
                 return;
@@ -1151,7 +1150,6 @@ internal static class MerchantRuntimeAppearance
             swapped = true;
 
             var providerId = SkinService.GetSelectedFullRuntimeProvider(FakeMerchantGroupId);
-            ModLog.Info($"[商人] 假商人诊断 选择={providerId ?? "<null>"} 手节点={(FindMerchantHand(fakeMerchant) != null ? "有" : "无")} 视觉节点={fakeMerchant.GetNodeOrNull<Node>("%MerchantVisual")?.Name ?? "<无>"}");
             var behaviorProviderId = providerId == null
                 ? null
                 : ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
