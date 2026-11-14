@@ -1,4 +1,6 @@
 using Godot;
+using HarmonyLib;
+using MegaCrit.Sts2.Core.Assets;
 using STS2SkinChanger.Catalog;
 
 namespace STS2SkinChanger.Core;
@@ -16,21 +18,53 @@ namespace STS2SkinChanger.Core;
 ///   * 只预加载**当前选择**的场景/资源表（最多 <see cref="MaxQueuedPaths"/> 个），不遍历整个皮肤目录；
 ///   * 路径按"覆盖包里真实存在"过滤，避免对不存在的路径刷错误日志；
 ///   * 任何异常只记一次警告并停止本次预加载，绝不影响换肤本身。
+///
+/// 防死锁约束（2026-11-15 启动黑屏排查结论）：
+///   * Godot 的后台加载以"低优先级任务"投进 WorkerThreadPool，同时最多只跑
+///     <c>线程数 × low_priority_thread_ratio(默认 0.3)</c> 个——8 线程 CPU 上只有 2 个。
+///     Spine 骨骼→图集→贴图的嵌套加载在某些情况下会以非协作方式长时间占住名额，名额被占满后
+///     游戏自己的 IntroLogo/MainMenuEssentials/Common 预加载只能排队，表现为黑屏或后台加载永不完成。
+///   * 因此：同一时间只在途 <see cref="MaxInFlight"/> 个请求、不使用 sub-threads
+///     （与游戏 <c>AssetLoadingSession</c> 一致，官方 VFX 也是逐个加载），
+///     并且等游戏 <c>Common</c> 预加载完成后才开始派发（带超时兜底）。
 /// </summary>
 internal static class SkinPreloader
 {
     private const int MaxQueuedPaths = 48;
     private const double TickSeconds = 0.15;
-    private const int RequestsPerTick = 2;
+
+    // 同一时间最多只有 1 个后台加载在途（原实现每 tick 发 2 个且不限在途，最多 48 个并发）。
+    private const int MaxInFlight = 1;
+
+    // 游戏 Common 预加载迟迟不完成时的兜底：从首次排队算起，最多等这么久就放行派发。
+    private const double StartupGateTimeoutSeconds = 60;
 
     private static readonly Queue<string> Pending = new();
     private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> InFlight = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly System.Diagnostics.Stopwatch StartupGateWatch = new();
     private static bool _timerRunning;
     private static bool _reportedFailure;
+    private static bool _gamePreloadSettled;
+    private static bool _cancelled;
     private static int _loaded;
     private static int _failed;
     private static double _scheduledTotalMs;
+
+    /// <summary>游戏自己的 Common 预加载是否已经完成（或超时兜底放行）。</summary>
+    internal static bool GamePreloadSettled => _gamePreloadSettled;
+
+    /// <summary>放行皮肤预加载派发。由 <see cref="GameCommonPreloadCompletePatch"/> 或超时兜底调用。</summary>
+    internal static void MarkGamePreloadSettled(string reason)
+    {
+        if (_gamePreloadSettled)
+        {
+            return;
+        }
+
+        _gamePreloadSettled = true;
+        ModLog.Info($"[性能] 游戏预加载已结束（{reason}），开始派发皮肤预加载（队列 {Pending.Count} 个）。");
+    }
 
     /// <summary>
     /// 暂停派发。选人界面重建外观时会同步 <c>ResourceLoader.Load</c>（还会反射触发皮肤包自己的
@@ -39,21 +73,25 @@ internal static class SkinPreloader
     /// </summary>
     internal static bool Paused { get; set; }
 
-    /// <summary>退出前调用：丢掉还没派发的任务，别让引擎在关停时等后台加载。</summary>
+    /// <summary>
+    /// 退出前调用：停止派发并丢掉还没派发的任务。
+    /// 注意：Godot 没有取消后台加载的接口，已发出的请求无法撤回；这里刻意不清 <c>InFlight</c>，
+    /// 让定时器继续把它们 <c>LoadThreadedGet</c> 取回，而不是丢掉 token 让引擎在关停时干等。
+    /// 因为在途最多 <see cref="MaxInFlight"/> 个，关停等待时间是有界的。
+    /// </summary>
     internal static void CancelAll()
     {
+        _cancelled = true;
         if (Pending.Count == 0 && InFlight.Count == 0)
         {
             return;
         }
 
-        ModLog.Info($"[性能] 退出前取消 {Pending.Count} 个未派发、{InFlight.Count} 个在途的预加载任务。");
+        ModLog.Info(
+            $"[性能] 退出前停止派发：丢弃 {Pending.Count} 个未派发任务；" +
+            $"{InFlight.Count} 个在途任务无法取消，交给引擎收尾。");
         Pending.Clear();
-        InFlight.Clear();
         Known.Clear();
-        _loaded = 0;
-        _failed = 0;
-        _scheduledTotalMs = 0;
     }
 
     /// <summary>
@@ -64,6 +102,11 @@ internal static class SkinPreloader
         IReadOnlyDictionary<string, string> selections,
         IEnumerable<string> groupIds)
     {
+        if (_cancelled)
+        {
+            return;
+        }
+
         try
         {
             var added = 0;
@@ -115,7 +158,14 @@ internal static class SkinPreloader
 
             if (added > 0)
             {
-                ModLog.Info($"[性能] 预加载排队 {added} 个皮肤场景（队列上限 {MaxQueuedPaths}）。");
+                if (!_gamePreloadSettled && !StartupGateWatch.IsRunning)
+                {
+                    StartupGateWatch.Start();
+                }
+
+                ModLog.Info(
+                    $"[性能] 预加载排队 {added} 个皮肤场景（队列上限 {MaxQueuedPaths}）" +
+                    (_gamePreloadSettled ? "。" : "，等游戏 Common 预加载完成后再派发。"));
                 EnsureTimer();
             }
         }
@@ -165,12 +215,28 @@ internal static class SkinPreloader
             return;
         }
 
+        if (!_gamePreloadSettled)
+        {
+            // 启动阶段先让游戏自己的 IntroLogo/MainMenuEssentials/Common 预加载跑完，
+            // 否则两边同时抢 WorkerThreadPool 的低优先级名额（8 线程 CPU 上只有 2 个）。
+            if (StartupGateWatch.Elapsed.TotalSeconds >= StartupGateTimeoutSeconds)
+            {
+                MarkGamePreloadSettled($"等待超过 {StartupGateTimeoutSeconds:F0} 秒，兜底放行");
+            }
+            else
+            {
+                EnsureTimer();
+                return;
+            }
+        }
+
         var tickWatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             CompleteFinishedRequests();
 
-            for (var i = 0; i < RequestsPerTick && Pending.Count > 0; i++)
+            // 串行：上一个请求取回之前不发下一个。缓存命中的路径不占名额，可以在同一 tick 连续跳过。
+            while (!_cancelled && InFlight.Count < MaxInFlight && Pending.Count > 0)
             {
                 var path = Pending.Dequeue();
                 if (InFlight.Contains(path))
@@ -184,7 +250,8 @@ internal static class SkinPreloader
                     continue;
                 }
 
-                var error = ResourceLoader.LoadThreadedRequest(path, "", useSubThreads: true);
+                // useSubThreads: false —— 不把外部依赖再拆成子任务投进线程池（与游戏 AssetLoadingSession 一致）。
+                var error = ResourceLoader.LoadThreadedRequest(path, "", useSubThreads: false);
                 if (error != Error.Ok)
                 {
                     // 路径不存在/类型不支持：不重试，避免每 0.15 秒刷一次错误。
@@ -246,6 +313,63 @@ internal static class SkinPreloader
                     break;
                 }
             }
+        }
+    }
+}
+
+/// <summary>
+/// 游戏自己的 <c>Common</c> 预加载会话完成时放行 <see cref="SkinPreloader"/>。
+/// <c>PreloadManager.LoadCommonAndMainMenuAssets</c> 内部不等待会话完成，对它做 Postfix 只能拿到"开始"，
+/// 所以挂在每帧推进会话的 <c>AssetLoadingSession.Process</c> 上，看到 Common 完成即放行。
+/// 放行后每次调用只做一次布尔判断就返回；任何异常都吞掉并直接放行，绝不把异常抛进游戏的加载循环。
+/// </summary>
+[HarmonyPatch(typeof(AssetLoadingSession), nameof(AssetLoadingSession.Process))]
+internal static class GameCommonPreloadCompletePatch
+{
+    private static AccessTools.FieldRef<AssetLoadingSession, string>? _sessionName;
+    private static bool _sessionNameResolved;
+
+    private static void Postfix(AssetLoadingSession __instance)
+    {
+        if (SkinPreloader.GamePreloadSettled)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!__instance.IsCompleted)
+            {
+                return;
+            }
+
+            if (!_sessionNameResolved)
+            {
+                _sessionNameResolved = true;
+                try
+                {
+                    _sessionName = AccessTools.FieldRefAccess<AssetLoadingSession, string>("_name");
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn("[性能] 读不到预加载会话名（将直接放行皮肤预加载）：" + exception.GetBaseException().Message);
+                }
+            }
+
+            if (_sessionName == null)
+            {
+                SkinPreloader.MarkGamePreloadSettled("无法识别会话名，直接放行");
+                return;
+            }
+
+            if (string.Equals(_sessionName(__instance), "Common", StringComparison.Ordinal))
+            {
+                SkinPreloader.MarkGamePreloadSettled("Common 完成");
+            }
+        }
+        catch (Exception exception)
+        {
+            SkinPreloader.MarkGamePreloadSettled("识别出错，直接放行：" + exception.GetBaseException().Message);
         }
     }
 }
