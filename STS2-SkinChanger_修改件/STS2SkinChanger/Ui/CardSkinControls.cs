@@ -2284,8 +2284,19 @@ screen.SetMeta(PreviewIgnoreFocusMeta, 1);
         }
 
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
-        selector.SetMeta(UpdatingMeta, true);
-        selector.RemoveMeta(OptionsCardMeta);
+        selector.SetMeta(UpdatingMeta, true);        // 引擎每次刷新卡面都会调用这里。列表已经是这张卡的完整列表时，只更新
+        // 选中项外观与提示，绝不 Clear 重建 —— 重建会把选择压回第 0 行，
+        // 于是面板一打开、引擎一刷新，卡面就跳回「游戏默认」。
+        if (selector.GetMeta(OptionsCardMeta, string.Empty).AsString().Equals(
+                card.Id.ToString(),
+                StringComparison.OrdinalIgnoreCase) &&
+            dropdown.ItemCount > 1)
+        {
+            SkinWorkshopEntry.RefreshSelectionColor(dropdown);
+            selector.Visible = true;
+            return;
+        }
+selector.RemoveMeta(OptionsCardMeta);
         dropdown.Clear();
         dropdown.TooltipText = string.Empty;
         var selected = SkinService.GetCardOverrideSelection(card);
