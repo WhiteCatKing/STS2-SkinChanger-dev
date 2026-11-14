@@ -2036,6 +2036,7 @@ internal static class CardInspectSkinControls
     private const string PreviewJustOpenedMeta = "sts2_card_preview_just_opened";
     private const string PreviewOptionMeta = "sts2_individual_card_skin_preview_option";
     private const string PreviewIgnoreFocusMeta = "sts2_card_preview_ignore_focus";
+    private const string PopupOpenMeta = "sts2_card_popup_open";
 
     public static void Attach(NInspectCardScreen screen)
     {
@@ -2102,6 +2103,7 @@ internal static class CardInspectSkinControls
             // 打开面板时引擎会把焦点自动放到第 1 行；那一次聚焦不代表用户意图，
             // 记下来在焦点回调里吞掉，否则一打开就软显示成「游戏默认」。
 screen.SetMeta(PreviewIgnoreFocusMeta, 1);
+screen.SetMeta(PopupOpenMeta, true);
 
             // 引擎会在面板弹出时自己再刷新一次卡面（那一次会画成基础外观）；
             // 这里等它刷完（下一帧）再按下拉当前选择压回去，保证只有一个真源。
@@ -2132,7 +2134,11 @@ screen.SetMeta(PreviewIgnoreFocusMeta, 1);
 
             PreviewSelection(screen, dropdown, popup.GetItemIndex(checked((int)id)));
         };
-        popup.PopupHide += () => RestorePreview(screen);
+        popup.PopupHide += () =>
+        {
+            screen.SetMeta(PopupOpenMeta, false);
+            RestorePreview(screen);
+        };
         dropdown.ItemSelected += index => ApplySelection(
             screen,
             selector,
@@ -2283,6 +2289,19 @@ screen.SetMeta(PreviewIgnoreFocusMeta, 1);
             return;
         }
 
+        // 面板打开期间引擎仍会刷新卡面；此时绝不动列表与选中，只同步颜色，
+// 否则会把用户正在浏览的那一行压回「已提交项」。
+        if (screen.GetMeta(PopupOpenMeta, false).AsBool())
+        {
+            var openDropdown = selector.GetNodeOrNull<OptionButton>(DropdownName);
+            if (openDropdown != null)
+            {
+                SkinWorkshopEntry.RefreshSelectionColor(openDropdown);
+            }
+
+            selector.Visible = true;
+            return;
+        }
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
         var cardId = card.Id.ToString();
         // 列表内容只在「换了一张卡」时重建；选中位置也只在建表时定一次。
