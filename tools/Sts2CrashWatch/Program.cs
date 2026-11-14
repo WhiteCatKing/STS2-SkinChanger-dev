@@ -102,6 +102,7 @@ internal static class Program
         long peakMemory = 0;
         var unresponsiveSince = DateTime.MinValue;
         var hung = false;
+        string? dumpPath = null;
 
         Console.WriteLine($"[监视] 已连接 PID={process.Id}，开始监视。");
 
@@ -159,6 +160,7 @@ internal static class Program
 
         var uptime = exitedAt - started;
         var analysis = Analyze(uptime, exitCode, hung);
+        if (analysis != null) { dumpPath ??= DumpWriter.FindFreshDump(started, ReportDir); }
 
         try
         {
@@ -175,7 +177,7 @@ internal static class Program
             return;
         }
 
-        var path = WriteReport(analysis, started, exitedAt, uptime, exitCode, peakMemory, hung);
+        var path = WriteReport(analysis, started, exitedAt, uptime, exitCode, peakMemory, hung, dumpPath);
         Console.WriteLine("[监视] 已生成报告: " + path);
     }
 
@@ -285,7 +287,8 @@ internal static class Program
         TimeSpan uptime,
         int? exitCode,
         long peakMemory,
-        bool hung)
+        bool hung,
+        string? dumpPath)
     {
         Directory.CreateDirectory(ReportDir);
 
@@ -315,6 +318,7 @@ internal static class Program
         body.AppendLine($"| 内存峰值 | {peakMemory / 1024 / 1024} MB |");
         body.AppendLine($"| 游戏版本 | {ReadGameVersion()} |");
         body.AppendLine($"| 日志 | `{logPath}` |");
+        body.AppendLine("| 转储文件 | " + (dumpPath == null ? "无" : "`" + dumpPath + "`") + " |");
         body.AppendLine();
 
         body.AppendLine("## 崩溃前日志（末尾 200 行）");
@@ -424,4 +428,6 @@ internal static class Program
     private static string Sanitize(string value) =>
         string.Concat(value.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
 }
+
+
 
