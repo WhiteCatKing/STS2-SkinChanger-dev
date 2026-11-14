@@ -116,7 +116,7 @@ internal static class StatefulDamageCosmeticPatch
 {
     private static void Postfix(AbstractModel __instance, Creature target, CardModel? cardSource)
     {
-        if (__instance is not MultiplayerScalingModel || cardSource == null) return;
+        if (__instance.GetType().Name != "MultiplayerScalingModel" || cardSource == null) return;
         var runtime = StatefulCardArtRuntime.For(cardSource);
         if (runtime is not { Enabled: true, Simple: false }) return;
         try
@@ -138,6 +138,6 @@ internal static class StatefulSideTurnCosmeticPatch
 {
     private static void Postfix(AbstractModel __instance)
     {
-        if (__instance is MultiplayerScalingModel) StatefulCombatEffects.ClearCurrent();
+        if (__instance.GetType().Name == "MultiplayerScalingModel") StatefulCombatEffects.ClearCurrent();
     }
 }

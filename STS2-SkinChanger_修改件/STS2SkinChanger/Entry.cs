@@ -17,7 +17,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.31.82";
+    public const string InternalTestVersion = "1.0.31.83";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -41,7 +41,19 @@ public static class Entry
         // Mod 停用；改为逐类安装，失败的类跳过并单独撤销，其余补丁照常生效。
         var harmony = new Harmony(ModId);
         StartupWatchdog.Stage("补丁类安装");
-        var failedPatchClasses = InstallPatchClasses(harmony, GetLoadableTypes(assembly));
+        // 旧版游戏（正式版分支）里，部分补丁类的目标类型并不存在。类型加载期抛出
+        // TypeLoadException 会让整个 Initialize 中断，后果是「所有皮肤都检测不到」。
+        // 所以这里先兜住：失败也只是少了那些类，扫描与界面照常。
+        var failedPatchClasses = new System.Collections.Generic.List<string>();
+        try
+        {
+            failedPatchClasses = InstallPatchClasses(harmony, GetLoadableTypes(assembly));
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("[启动] 补丁类枚举失败（已跳过补丁安装，其余流程继续）：" +
+                exception.GetBaseException().GetType().Name + " / " + exception.GetBaseException().Message);
+        }
         StartupWatchdog.Stage("补丁类安装完成");
         // Bundled 白猫 EmperorCrabSkinFix: combat background creation, bestiary background
         // rebuild, half-HP skeleton swap and the RitsuLib async guard. Installed manually because
@@ -57,6 +69,7 @@ public static class Entry
         // v0.113.0 renamed NCreature.OstyScaleToSize; the Osty skin pack still patches the old
         // name, and one unresolved target makes it unpatch all of itself.
         OstyDefectImpostorCompat.Install(harmony);
+        Ui.MerchantRoomConcreteReadyPatch.Install(harmony);
         ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
         ModLog.Info(failedPatchClasses.Count == 0
             ? "代码补丁已加载。等待游戏资源初始化。"

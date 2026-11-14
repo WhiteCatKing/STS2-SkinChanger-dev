@@ -1841,12 +1841,40 @@ internal static class MerchantRoomCreateAppearancePatch
 // _Ready() and call base._Ready() as their very first statement. A patch on the abstract base
 // therefore runs before the concrete room has built its own %MerchantButton / %Inventory, so the
 // part takeover is repeated once the concrete room finished its own initialisation.
-[HarmonyPatch(typeof(NStandardMerchantRoom), nameof(NStandardMerchantRoom._Ready))]
-[HarmonyPatch(typeof(NBlitzMerchantRoom), nameof(NBlitzMerchantRoom._Ready))]
+// v0.113.0 splits the shop into NStandardMerchantRoom / NBlitzMerchantRoom, and both
+// override _Ready() calling base first, so the base patch runs before the concrete room
+// built its own %MerchantButton / %Inventory. Repeat part takeover once they finish.
+//
+// 注意：这两个类型只存在于 v0.113.0。正式版 v0.107.x 里没有，写死类型会让我方程序集
+// 在旧版上加载失败（玩家表现为「所有皮肤都检测不到」）。所以不挂 [HarmonyPatch] 特性，
+// 改为运行时按名字探测：找不到就跳过，旧版仍由基类 NMerchantRoom._Ready 的补丁兜着。
 internal static class MerchantRoomConcreteReadyPatch
 {
-    [HarmonyPostfix]
-    [HarmonyPriority(Priority.Last)]
+    public const string StandardTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NStandardMerchantRoom";
+    public const string BlitzTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NBlitzMerchantRoom";
+
+    public static void Install(Harmony harmony)
+    {
+        var patched = 0;
+        foreach (var typeName in new[] { StandardTypeName, BlitzTypeName })
+        {
+            var type = AccessTools.TypeByName(typeName);
+            var ready = type == null ? null : AccessTools.Method(type, "_Ready");
+            if (ready == null)
+            {
+                continue;
+            }
+
+            harmony.Patch(ready, postfix: new HarmonyMethod(typeof(MerchantRoomConcreteReadyPatch)
+                .GetMethod(nameof(Postfix), System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)));
+            patched++;
+        }
+
+        ModLog.Info(patched == 0
+            ? "[商人] 当前游戏版本没有拆分后的商店房间类型，沿用基类 _Ready 补丁。"
+            : $"[商人] 已为 {patched} 个具体商店房间挂上 _Ready 补丁。");
+    }
+
     private static void Postfix(NMerchantRoom __instance)
     {
         if (!GodotObject.IsInstanceValid(__instance))
