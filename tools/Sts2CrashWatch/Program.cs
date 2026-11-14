@@ -294,6 +294,14 @@ internal static class Program
 
     private static Analysis? Analyze(TimeSpan uptime, int? exitCode, DateTime sessionStart)
     {
+        // 只要日志里有完整的关停记录，即使退出码非 0 也算正常退出（Godot 偶发返回 1）。
+        var tail = string.Join("\n", ReadLogTail(6000));
+        if (tail.Contains("Steamworks shutdown succeeded", StringComparison.OrdinalIgnoreCase) ||
+            tail.Contains("退出诊断] NGame.Quit 返回", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
         if (exitCode is not null and not 0)
         {
             return new Analysis(uptime.TotalSeconds < 90 ? "启动崩溃" : "运行崩溃",
@@ -657,6 +665,8 @@ internal static class Program
         return parts.Length > 1 ? parts[1] : key;
     }
 }
+
+
 
 
 
