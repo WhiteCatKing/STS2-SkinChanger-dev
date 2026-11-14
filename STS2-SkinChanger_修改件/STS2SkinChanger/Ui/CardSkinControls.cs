@@ -2087,16 +2087,6 @@ internal static class CardInspectSkinControls
         popup.AboutToPopup += () =>
         {
             PopulateOptions(screen, selector, dropdown);
-
-            // 重建列表会把卡面刷回基础外观（列表项与选中态都被重置），
-            // 这里按下拉当前的选择把预览重新贴一次，避免「点开就变游戏默认」。
-            screen.RemoveMeta(PreviewCardMeta);
-            screen.RemoveMeta(PreviewOptionMeta);
-            screen.SetMeta(PreviewJustOpenedMeta, 2);
-// 先把弹出列表的焦点对到下拉当前选择上，否则引擎会把焦点放在第 1 行，
-            // 一打开就预览「游戏默认」，看起来就像卡面被改写。
-            if (dropdown.Selected >= 0 && dropdown.Selected < popup.ItemCount) popup.SetFocusedItem(dropdown.Selected);
-            PreviewSelection(screen, dropdown, dropdown.Selected);
         };
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
         // Do not also poll PopupMenu.GetFocusedItem: its hidden rows have different geometry
@@ -2463,8 +2453,6 @@ internal static class CardInspectSkinControls
         }
         catch (Exception exception)
         {
-            screen.RemoveMeta(PreviewCardMeta);
-            screen.RemoveMeta(PreviewOptionMeta);
             ModLog.Error("预览单卡皮肤失败：" + exception);
         }
     }
@@ -2477,8 +2465,6 @@ internal static class CardInspectSkinControls
         }
 
         var previewCardId = screen.GetMeta(PreviewCardMeta, string.Empty).AsString();
-        screen.RemoveMeta(PreviewCardMeta);
-        screen.RemoveMeta(PreviewOptionMeta);
 
         var cardNode = screen.GetNodeOrNull<NCard>("Card");
         if (cardNode?.Model?.Id.ToString().Equals(
