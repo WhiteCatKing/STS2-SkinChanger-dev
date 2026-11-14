@@ -62,6 +62,13 @@ internal static class Program
             {
                 if (launchGame && !everLaunched)
                 {
+                    Console.WriteLine("[监视] 正在确认游戏是否已经启动…");
+                    if (WaitForGame(TimeSpan.FromSeconds(8)) != null)
+                    {
+                        Console.WriteLine("[监视] 游戏已在启动/运行，只监视，不再重复拉起。");
+                        continue;
+                    }
+
                     Console.WriteLine("[监视] 正在启动游戏…");
                     try
                     {
@@ -98,6 +105,23 @@ internal static class Program
         }
 
         return fallback;
+    }
+
+    private static Process? WaitForGame(TimeSpan timeout)
+    {
+        var deadline = DateTime.Now + timeout;
+        while (DateTime.Now < deadline)
+        {
+            var found = FindGame();
+            if (found != null)
+            {
+                return found;
+            }
+
+            Thread.Sleep(500);
+        }
+
+        return null;
     }
 
     private static Process? FindGame()
@@ -601,6 +625,7 @@ internal static class Program
         return parts.Length > 1 ? parts[1] : key;
     }
 }
+
 
 
 
