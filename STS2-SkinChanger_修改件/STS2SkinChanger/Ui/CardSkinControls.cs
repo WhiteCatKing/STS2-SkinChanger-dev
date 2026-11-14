@@ -2098,10 +2098,10 @@ internal static class CardInspectSkinControls
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
         // Do not also poll PopupMenu.GetFocusedItem: its hidden rows have different geometry
         // and a deferred mouse callback can overwrite the visible row's preview.
-        popup.IdFocused += id => PreviewSelection(
-            screen,
-            dropdown,
-            ResolvePreviewIndex(screen, dropdown, popup, checked((int)id)));
+        // 卡面只跟下拉的当前选择保持一致：不再跟随弹出列表的行焦点。
+        // 行焦点会在面板打开时被引擎自动置到第 1 行，也会在滚动时来回跳，
+        // 跟着它走就必然出现「点开变默认、划动乱跳」。
+        dropdown.ItemSelected += index => PreviewSelection(screen, dropdown, (int)index);
         popup.PopupHide += () => RestorePreview(screen);
         dropdown.ItemSelected += index => ApplySelection(
             screen,
