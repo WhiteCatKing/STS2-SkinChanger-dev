@@ -2036,6 +2036,9 @@ internal static class CardInspectSkinControls
     private const string PreviewJustOpenedMeta = "sts2_card_preview_just_opened";
     private const string PreviewOptionMeta = "sts2_individual_card_skin_preview_option";
     private const string PreviewIgnoreFocusMeta = "sts2_card_preview_ignore_focus";
+    private static int LastPointerX = int.MinValue;
+    private static int LastPointerY = int.MinValue;
+
     private const string PopupOpenMeta = "sts2_card_popup_open";
 
     public static void Attach(NInspectCardScreen screen)
@@ -2129,7 +2132,7 @@ screen.SetMeta(PopupOpenMeta, true);
 // 软显示 = 鼠标真的悬停在某一行上。列表弹出时引擎会把焦点在若干行之间
             // 来回搬（0→1→2→3…），那不是用户意图；若照单全收，最后一站是第 1 行
             // 「游戏默认」，于是面板一打开卡面就变默认。
-            if (!new Rect2(new Vector2(popup.Position.X, popup.Position.Y), new Vector2(popup.Size.X, popup.Size.Y)).HasPoint(new Vector2(DisplayServer.MouseGetPosition().X, DisplayServer.MouseGetPosition().Y)))
+            var __mouse = DisplayServer.MouseGetPosition(); var __moved = __mouse.X != LastPointerX || __mouse.Y != LastPointerY; LastPointerX = __mouse.X; LastPointerY = __mouse.Y; if (!__moved && !Input.IsMouseButtonPressed(MouseButton.Left))
             {
                 return;
             }
