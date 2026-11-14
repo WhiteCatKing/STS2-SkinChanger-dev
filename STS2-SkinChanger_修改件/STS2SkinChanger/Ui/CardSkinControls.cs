@@ -2284,17 +2284,36 @@ screen.SetMeta(PreviewIgnoreFocusMeta, 1);
         }
 
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
+        var cardId = card.Id.ToString();
+        // 列表内容只在「换了一张卡」时重建；选中位置也只在建表时定一次。
+        // 引擎每次刷新卡面都会调用这里，若每次都 Clear+Select(0)，
+        // 面板一打开就会把当前选择压回「已提交项」，卡面随之跳回默认。
+        var alreadyBuilt = selector.GetMeta(OptionsCardMeta, string.Empty).AsString().Equals(
+            cardId,
+            StringComparison.OrdinalIgnoreCase);
+
         selector.SetMeta(UpdatingMeta, true);
-        selector.RemoveMeta(OptionsCardMeta);
-        dropdown.Clear();
-        dropdown.TooltipText = string.Empty;
-        var selected = SkinService.GetCardOverrideSelection(card);
-        dropdown.AddItem(SelectionDisplayName(selected, card));
-        dropdown.SetItemMetadata(0, selected);
-        dropdown.Select(0);
-        SkinWorkshopEntry.RefreshSelectionColor(dropdown);
-        selector.SetMeta(UpdatingMeta, false);
-        selector.Visible = true;
+        try
+        {
+            if (!alreadyBuilt)
+            {
+                selector.RemoveMeta(OptionsCardMeta);
+                dropdown.Clear();
+                dropdown.TooltipText = string.Empty;
+                var selected = SkinService.GetCardOverrideSelection(card);
+                dropdown.AddItem(SelectionDisplayName(selected, card));
+                dropdown.SetItemMetadata(0, selected);
+                dropdown.Select(0);
+            }
+
+            SkinWorkshopEntry.RefreshSelectionColor(dropdown);
+        }
+        finally
+        {
+            selector.SetMeta(UpdatingMeta, false);
+        }
+
+        selector.Visible = true;selector.Visible = true;
     }
 
     private static void PopulateOptions(
