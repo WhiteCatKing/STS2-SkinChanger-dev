@@ -5950,7 +5950,11 @@ internal static partial class SkinService
                     ResourceLoader.CacheMode.IgnoreDeep);
                 if (resource == null)
                 {
-                    throw new InvalidOperationException($"无法加载独立皮肤资源：{pair.Value}");
+                    // 单个资源缺失不能把整次重建拖进原生层：Spine/Godot 在半加载的 .ctex 上
+                    // 会以 "Parameter "mem" is null." 崩掉整个进程，所以这里只跳过并记日志；
+                    // 真正缺到场景/骨架时后续查找会抛托管异常，由调用方回滚到旧模型。
+                    ModLog.Warn($"[实战外观] 跳过缺失的独立皮肤资源：{pair.Value}（分组={groupId}）");
+                    continue;
                 }
 
                 resources[pair.Key] = resource;
