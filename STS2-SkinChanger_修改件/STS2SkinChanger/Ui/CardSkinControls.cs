@@ -2093,6 +2093,9 @@ internal static class CardInspectSkinControls
             screen.RemoveMeta(PreviewCardMeta);
             screen.RemoveMeta(PreviewOptionMeta);
             screen.SetMeta(PreviewJustOpenedMeta, 2);
+// 先把弹出列表的焦点对到下拉当前选择上，否则引擎会把焦点放在第 1 行，
+            // 一打开就预览「游戏默认」，看起来就像卡面被改写。
+            if (dropdown.Selected >= 0 && dropdown.Selected < popup.ItemCount) popup.SetFocusedItem(dropdown.Selected);
             PreviewSelection(screen, dropdown, dropdown.Selected);
         };
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
@@ -2102,6 +2105,9 @@ internal static class CardInspectSkinControls
         // 行焦点会在面板打开时被引擎自动置到第 1 行，也会在滚动时来回跳，
         // 跟着它走就必然出现「点开变默认、划动乱跳」。
         dropdown.ItemSelected += index => PreviewSelection(screen, dropdown, (int)index);
+
+        // 软显示（划动预览）：焦点行本身就是预览的目标行，映射已在日志里验证过是一致的。
+        popup.IdFocused += id => PreviewSelection(screen, dropdown, popup.GetItemIndex(checked((int)id)));
         popup.PopupHide += () => RestorePreview(screen);
         dropdown.ItemSelected += index => ApplySelection(
             screen,
