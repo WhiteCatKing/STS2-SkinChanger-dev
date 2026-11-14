@@ -1,40 +1,7 @@
-# ---- 二进制与构建产物（不进版本库） ----
-*.dll
-*.pdb
-*.exe
-*.nupkg
-*.pck
-*.zip
-*.7z
-*.rar
-**/bin/
-**/obj/
-**/.vs/
-**/.idea/
-
-# ---- 历史快照 / 手工备份（文件名以 .bak_ 结尾） ----
-*.bak_*
-*.bak
-
-# ---- 截图与录屏（体积大，证据另行归档） ----
-*.png
-*.jpg
-*.jpeg
-*.webp
-*.gif
-*.mp4
-
-# ---- 部署包目录是二进制快照，源码才是事实来源 ----
-STS2皮肤切换器_mod测试版安装包/
-STS2皮肤切换器_mod测试版安装包.disabled_*/
-STS2皮肤切换器_mod测试版安装包.1.0.30.176备份件/
-STS2皮肤切换器_mod正式版安装包/
-
-# ---- 运行期缓存 ----
-*.cache
-*.log
-
-# ---- 系统文件 ----
-Thumbs.db
-desktop.ini
-.DS_Store
+# 大体积备份与禁用的模组包，不进仓库
+_mods_disabled_*/
+STS2-SkinChanger_备份_*/
+STS2_Work/商人n版_停用备份_*/
+STS2_Work/merchant_backup_*/
+STS2_Work/patches/*.bundle
+STS2_Work/patches/*.zip

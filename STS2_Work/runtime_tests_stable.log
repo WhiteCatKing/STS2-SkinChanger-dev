@@ -1,0 +1,91 @@
+Baseline part takeover passed: non-skin packages keep loading, only their overridden parts are selectable, and the game original is restorable.
+Merchant figure scope passed: the package's merchant steps aside only for a figure it really drew, and the game's own figure and layout return for every other selection.
+Storage lifecycle passed: migration, backup conflicts, run records, cleanup boundaries, live sessions and late writes.
+Quit cleanup passed: native ordering, failure paths, and locked cache files left for the next start.
+Quit boundary passed: the gate opens once, from the finalizer, and survives a start-up failure.
+Creature visual parent bridge passed: narrow call sites and wrapper/owner identity.
+Provider toolbar passed: character strip clipping, authored layout and repeated promotion.
+Manual character variants passed: slot alpha and persisted shader palette, no debug switches.
+Appearance boundaries passed: cold button icons, model-scoped card tree reentry and standalone relic ownership.
+Creature intent layout passed: stance anchors, provider guards and reversible visual depth protection.
+Managed portrait mappings passed: string/type keys, negative cases and scoped overlay intent.
+Random lobby transaction: 开始应用皮肤选择：silent → __base__。
+Random lobby transaction: 选角随机皮肤已恢复原皮：silent，上一局来源=skin:a；独立对局记录保持不变。
+Random lobby transaction: 开始应用皮肤选择：silent → skin:a。
+Random lobby transaction: 开始应用皮肤选择：silent → __base__。
+Random lobby transaction: 选角随机皮肤已恢复原皮：silent，上一局来源=skin:a；独立对局记录保持不变。
+Random character skins passed: deferred intent, visible candidates, independent RNG and saved-run choice.
+Presentation node ownership passed: native meshes excluded, provider actors/accessories retained.
+Appearance revival passed: live, dying, waiting, revived and canceled/faulted death tasks.
+Random exclusion passed: per-character persistence, normalization, toggle and candidate filtering.
+Rendered preview framing passed: content-driven fit, clipping, empty frames, finite reads, cancellation and isolation.
+Framework selector cycle passed: shared SC order, packs, compositions, pending choices and wraparound.
+Framework model preview passed: managed-before-cache, selected finishing, runtime fallback and animation names.
+Intrinsic preview policy passed: deferred visual setup, owner isolation and gameplay/UI exclusion.
+Animator patch discovery passed: overloads, generic helpers, inherited entries and real Harmony installation.
+Multiplayer appearance identity passed: preview isolation, random resolution, deferred receive and phase snapshots.
+Multiplayer source identity passed: Workshop ownership, variants, duplicate counts and ambiguity.
+Optional character VFX passed: absent/freed head, native particle/event lifecycle retained.
+Combat HUD lifecycle passed: rebind, rollback, disabled HUD, failed detach, failed exit cleanup.
+Drag handle hover passed: shared selectors, pointer/drag lifetime and stable layout.
+Standalone model preview passed: drag-only dock hint, saved docking, load suppression, hover grip and shared renderer.
+Scoped skin behavior passed: contract, author settings, live selection, player nesting and exception cleanup.
+Provider settings IL passed: real static initialization, late calls, unrelated code and idempotence.
+Provider settings passed: late console registration, collisions, debug policy and per-target ownership.
+Slot visibility passed: scene mapping, provider isolation, persistence and animation alpha.
+Tracked animation adapter behavior passed (arguments, track identity, null result).
+Provider compatibility passed: type relocation, value-type animation calls, unresolved references and source preservation.
+Provider runtime audit passed: runnable DLLs accepted, unresolved members rejected by JIT.
+Mod private dependency resolution passed: the game's own loader fails on a bundled dependency, Skin Changer resolves it plus its native probe.
+Provider minimum version policy passed: evidence-based takeover only.
+Provider version takeover passed: verified beta-declared skins taken over, unverifiable ones refused.
+Manifest compatibility: 已核验 Voice 的旧依赖清单等价迁移：BaseLib；依赖检查保留，原清单未修改；迁移提醒已处理。
+Manifest compatibility: Voice 的工坊版本声明不含当前分支；本次已接管其皮肤资源并核验静态游戏接口（转换 0 项），不再把原声明作为加载错误显示。工坊声明与原文件未修改；反射及实际游戏行为仍需运行验证。
+Package compatibility passed: matched manifests, paired resources, ambiguity, dependency migration and source preservation.
+Submission integrity passed: nameless codes, ID checks, complete groups, SCM2 compatibility and source diagnostics.
+Legacy codec and submission infrastructure passed: bounded decoding, built-in precedence, complete pagination and cache rollback.
+Appearance control contracts passed: right-click entry, persistence, 15 languages.
+Drag handle hover passed: shared selectors, pointer/drag lifetime and stable layout.
+Theme edit baselines passed: selected presets, independent saves, restart fallback and popup-close color wiring.
+Theme preset codes passed: 159 characters, all-field round trips, validation and numbered imports.
+Theme preset panel passed: right-bottom docking, dragging, viewport bounds and retained-list wiring.
+Theme presets passed: approved default, CRUD, persistence, recovery, failed writes and transient save feedback.
+Theme interaction states passed: selected hover, clipped list bounds, themed folds and native button shadows.
+Live theme passed: white defaults, normalization, preview, persistence, rollback and recovery.
+Appearance selection hints passed: live target types, stable order, empty state, 15 languages and shared hit testing.
+Provider lookup passed: shared folders, independent positive/negative evidence and display.
+Character catalog ownership passed: complete discovery, private paths, icon-only and multi-model packs.
+Other compendium UI passed: event regions, full-height text and hover drawer policy/lifecycle.
+Event priorities passed: fallback, disabled providers, persistence, manual override and runtime wiring.
+Event skin ownership passed: independent images, VFX, text-only, options, pages and fallback.
+Duplicate provider loading passed: managed coexistence, disabled/dependency guards, snapshot isolation.
+Creature visual lifecycle passed: selected Creature postfixes and native Ready parent.
+Shared monster groups passed: cultists/decimillipede/kaiser_crab/bowlbug aliasing with exact identity first.
+Bundle presets passed: ownership, vanilla defaults, names, persistence and transaction isolation.
+Bundle content modes passed: persistence, independent modes, priority projection, legacy presets and isolation.
+Card preset migration passed: scoped data, no fallback filling, conservative archive and idempotence.
+Card option order passed: ticked skins first in manual order, unticked below, single-category Ancient order.
+Ancient card priorities passed: character-first, fallback, explicit choices, exclusions and catalog membership.
+Skin bundle contracts passed: immediate character apply, run-scoped presets, yellow list text, restore cleanup, 15 languages.
+Bundle source editing passed: missing sources, re-enable, draft isolation, save/reload, aliases, presets and character scope.
+Bundle run resume passed: persistent run identity, card/monster restoration, global isolation and repeated continue.
+Character skin popup contracts passed: current option names, bundle overlay refresh, no hover loading.
+Scroll list rebuild contracts passed: priorities, compositions, presets and bundles.
+Card skin refresh contracts passed: library, presets, single-card selection, hover and pooled upgrade context.
+Card provider bridge contracts passed: verified identity, both layers, immutable sources and atlas geometry.
+Scene appearance lifecycle passed: shop ownership and health-aware idle.
+Load order safety passed: dependency order, library preservation, failure rollback and stable insertion.
+Entry 补丁逐类安装隔离测试 passed: 坏类跳过、好类保留、失败按类报告。
+Card presentation lifecycle passed: pooled text/type reset, same-model preservation and foreign UI ownership.
+Card priority performance passed: warm dependency scans, reusable archive slices and changed-card-only refresh.
+Exported surface lifecycle passed: repeat update, disable, model reuse, tiny banner, foreign ownership, native hook installation.
+Exported card surface metadata passed: explicit crop/color operands and native negative control.
+Stateful card art localization res://test/localization/zhs/artists.json: 'b' is an invalid start of a property name. Expected a '"'. Path: $ | LineNumber: 0 | BytePositionInLine: 1.; skipping this optional text table only, card visuals remain enabled.
+GitHub folder swap passed: hide-and-replace, real locked files, sweep guards and legacy recovery.
+Skin Changer runtime patch target tests passed.
+Workshop carousel passed: two-second cadence, one-ahead preload, slow/failing images and cancellation.
+Workshop reply sorting passed: source floor, cache compatibility, both directions and stable unknown/tied values.
+Workshop metadata, sorting and hover tests passed.
+Workshop entry and skin-choice styling tests passed.
+Workshop subscription filters passed: defaults, live membership, pending downloads and offline recovery.
+Workshop policy tests passed.

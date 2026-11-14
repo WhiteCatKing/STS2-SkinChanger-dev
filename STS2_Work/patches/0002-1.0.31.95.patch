@@ -1,0 +1,93 @@
+From fa2590c9ecf17fd2927c6ce02267c5669c40321f Mon Sep 17 00:00:00 2001
+From: Gurio <gurio@localhost>
+Date: Sat, 14 Nov 2026 17:14:26 +0800
+Subject: [PATCH] =?UTF-8?q?1.0.31.95=20=E6=94=B6=E7=AA=84=E6=AF=94?=
+ =?UTF-8?q?=E8=BE=83=E4=B8=A4=E4=BE=A7=E9=83=BD=E5=BD=92=E4=B8=80=EF=BC=88?=
+ =?UTF-8?q?=E4=BF=AE=E6=88=98=E6=8D=9F=E7=88=86=E8=A1=A3=E5=A4=B1=E6=95=88?=
+ =?UTF-8?q?=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../STS2SkinChanger/Core/ManagedSkinModLoader.cs          | 2 +-
+ STS2-SkinChanger_修改件/STS2SkinChanger/Entry.cs          | 2 +-
+ .../STS2SkinChanger/STS2SkinChanger.csproj                | 8 ++++----
+ STS2-SkinChanger_修改件/STS2SkinChanger/SkinChanger.json  | 2 +-
+ STS2-SkinChanger_修改件/workshop/workshop.json            | 2 +-
+ 5 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/STS2-SkinChanger_修改件/STS2SkinChanger/Core/ManagedSkinModLoader.cs b/STS2-SkinChanger_修改件/STS2SkinChanger/Core/ManagedSkinModLoader.cs
+index 4b8d460..682a687 100644
+--- a/STS2-SkinChanger_修改件/STS2SkinChanger/Core/ManagedSkinModLoader.cs
++++ b/STS2-SkinChanger_修改件/STS2SkinChanger/Core/ManagedSkinModLoader.cs
+@@ -1089,7 +1089,7 @@ internal static class ManagedSkinModLoader
+             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+         var merchantSelection = SkinService.GetSelectedRuntimeProvider("merchant");
+         foreach (var providerId in ActiveProviderRuntimes.Keys
+-                     .Where(providerId => !selected.Contains(providerId))
++                     .Where(providerId => !selected.Contains(NormalizeProviderIdentity(providerId)))
+                      // 商人皮肤是独立一块：一旦选中并激活，就保持它的补丁在位。
+                      // 场景收窄若把它卸掉，局内重挂节点时它已没有可执行的位姿逻辑，
+                      // 于是退回原版商人（c）或基础变换（a/b）。这里只做“不卸”，
+diff --git a/STS2-SkinChanger_修改件/STS2SkinChanger/Entry.cs b/STS2-SkinChanger_修改件/STS2SkinChanger/Entry.cs
+index c102915..a2c2a60 100644
+--- a/STS2-SkinChanger_修改件/STS2SkinChanger/Entry.cs
++++ b/STS2-SkinChanger_修改件/STS2SkinChanger/Entry.cs
+@@ -17,7 +17,7 @@ public static class Entry
+     // Four-part versions are kept out of the game's manifest version field because older
+     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
+     // assembly and printed at startup so an internal deployment can be identified unambiguously.
+-    public const string InternalTestVersion = "1.0.31.94";
++    public const string InternalTestVersion = "1.0.31.95";
+ 
+     public static bool IsSelfModId(string? modId) =>
+         modId != null &&
+diff --git a/STS2-SkinChanger_修改件/STS2SkinChanger/STS2SkinChanger.csproj b/STS2-SkinChanger_修改件/STS2SkinChanger/STS2SkinChanger.csproj
+index 04cb116..c975c1c 100644
+--- a/STS2-SkinChanger_修改件/STS2SkinChanger/STS2SkinChanger.csproj
++++ b/STS2-SkinChanger_修改件/STS2SkinChanger/STS2SkinChanger.csproj
+@@ -7,10 +7,10 @@
+     <RootNamespace>STS2SkinChanger</RootNamespace>
+     <!-- Internal test marker. Keep SkinChanger.json's three-part public version for the game's
+          SemanticVersion parser; the four-part marker is emitted by Entry at startup. -->
+-    <Version>1.0.31.94</Version>
+-    <AssemblyVersion>1.0.31.94</AssemblyVersion>
+-    <FileVersion>1.0.31.94</FileVersion>
+-    <InformationalVersion>1.0.31.94</InformationalVersion>
++    <Version>1.0.31.95</Version>
++    <AssemblyVersion>1.0.31.95</AssemblyVersion>
++    <FileVersion>1.0.31.95</FileVersion>
++    <InformationalVersion>1.0.31.95</InformationalVersion>
+     <!-- Keep the managed Mod architecture-neutral so the same Workshop DLL loads in both
+          Windows x64 and macOS Apple Silicon game processes. -->
+     <PlatformTarget>AnyCPU</PlatformTarget>
+diff --git a/STS2-SkinChanger_修改件/STS2SkinChanger/SkinChanger.json b/STS2-SkinChanger_修改件/STS2SkinChanger/SkinChanger.json
+index 2173cf8..ad7bdca 100644
+--- a/STS2-SkinChanger_修改件/STS2SkinChanger/SkinChanger.json
++++ b/STS2-SkinChanger_修改件/STS2SkinChanger/SkinChanger.json
+@@ -4,7 +4,7 @@
+   "author": "Gurio",
+   "description": "自由切换角色、卡牌、怪物、先古、商人、生物和事件皮肤。支持优先级、预设、皮肤组合和游戏内创意工坊。界面支持15种语言。 Switch character, card, monster, Ancient, merchant, creature and event skins. Includes priorities, presets, skin combinations and an in-game Workshop. Available in 15 languages.",
+   "version": "1.0.31",
+-  "internal_test_version": "1.0.31.94",
++  "internal_test_version": "1.0.31.95",
+   "has_pck": false,
+   "has_dll": true,
+   "dependencies": [],
+diff --git a/STS2-SkinChanger_修改件/workshop/workshop.json b/STS2-SkinChanger_修改件/workshop/workshop.json
+index 53f9bcd..78506d9 100644
+--- a/STS2-SkinChanger_修改件/workshop/workshop.json
++++ b/STS2-SkinChanger_修改件/workshop/workshop.json
+@@ -4,7 +4,7 @@
+   "title": "Skin Changer",
+   "statementHeading": "Statement",
+   "version": "1.0.31",
+-  "internalTestVersion": "1.0.31.94",
++  "internalTestVersion": "1.0.31.95",
+   "featureUpdate": "",
+   "cardPriorityUpdate": "",
+   "multiplayerUpdate": "",
+-- 
+2.56.0.windows.4
+

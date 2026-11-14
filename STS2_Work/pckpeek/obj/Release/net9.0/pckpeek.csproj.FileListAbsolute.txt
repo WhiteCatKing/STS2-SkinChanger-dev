@@ -1,0 +1,14 @@
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\obj\Release\net9.0\pckpeek.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\obj\Release\net9.0\pckpeek.AssemblyInfoInputs.cache
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\obj\Release\net9.0\pckpeek.AssemblyInfo.cs
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\obj\Release\net9.0\pckpeek.csproj.CoreCompileInputs.cache
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\bin\Release\net9.0\pckpeek.exe
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\bin\Release\net9.0\pckpeek.deps.json
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\bin\Release\net9.0\pckpeek.runtimeconfig.json
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\bin\Release\net9.0\pckpeek.dll
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\bin\Release\net9.0\pckpeek.pdb
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\obj\Release\net9.0\pckpeek.dll
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\obj\Release\net9.0\refint\pckpeek.dll
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\obj\Release\net9.0\pckpeek.pdb
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\obj\Release\net9.0\pckpeek.genruntimeconfig.cache
+C:\Users\Administrator\Desktop\工作2\STS2_Work\pckpeek\obj\Release\net9.0\ref\pckpeek.dll

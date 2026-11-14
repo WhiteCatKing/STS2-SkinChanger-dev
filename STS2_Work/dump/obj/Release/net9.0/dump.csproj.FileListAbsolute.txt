@@ -1,0 +1,14 @@
+D:\STS2_Work\dump\bin\Release\net9.0\dump.exe
+D:\STS2_Work\dump\bin\Release\net9.0\dump.deps.json
+D:\STS2_Work\dump\bin\Release\net9.0\dump.runtimeconfig.json
+D:\STS2_Work\dump\bin\Release\net9.0\dump.dll
+D:\STS2_Work\dump\bin\Release\net9.0\dump.pdb
+D:\STS2_Work\dump\obj\Release\net9.0\dump.GeneratedMSBuildEditorConfig.editorconfig
+D:\STS2_Work\dump\obj\Release\net9.0\dump.AssemblyInfoInputs.cache
+D:\STS2_Work\dump\obj\Release\net9.0\dump.AssemblyInfo.cs
+D:\STS2_Work\dump\obj\Release\net9.0\dump.csproj.CoreCompileInputs.cache
+D:\STS2_Work\dump\obj\Release\net9.0\dump.dll
+D:\STS2_Work\dump\obj\Release\net9.0\refint\dump.dll
+D:\STS2_Work\dump\obj\Release\net9.0\dump.pdb
+D:\STS2_Work\dump\obj\Release\net9.0\dump.genruntimeconfig.cache
+D:\STS2_Work\dump\obj\Release\net9.0\ref\dump.dll

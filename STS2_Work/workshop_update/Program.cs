@@ -6,7 +6,7 @@ const uint AppId = 2868840;
 const ulong PublishedFileId = 3787302680;
 const string WorkshopRoot = @"C:\Users\Administrator\Desktop\工作2\STS2-SkinChanger_修改件\workshop";
 const string ContentFolder = @"C:\Users\Administrator\Desktop\工作2\STS2_Work\workshop_content_1.0.20";
-const string ChangeNote = "";
+const string ChangeNote = "1.0.31.29";
 
 // "english-only": refresh files, gallery and the default (English) text only. Used to isolate
 // whether localized text is what Steam is rejecting; a second run without the flag applies all.
@@ -259,3 +259,4 @@ int Submit(UGCUpdateHandle_t update, string label, string? changeNote = null)
     Console.WriteLine($"LEGAL_AGREEMENT_REQUIRED={legalAgreementRequired}");
     return result == EResult.k_EResultOK ? 0 : 8;
 }
+
