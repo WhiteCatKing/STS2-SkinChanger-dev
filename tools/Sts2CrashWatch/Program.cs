@@ -29,6 +29,14 @@ internal static class Program
     {
         Console.OutputEncoding = Encoding.UTF8;
 
+        using var mutex = new Mutex(true, "Sts2CrashWatch.SingleInstance", out var createdNew);
+        if (!createdNew)
+        {
+            Console.WriteLine("[监视] 已经有一个监视器在运行，本窗口将退出。");
+            Thread.Sleep(2500);
+            return 0;
+        }
+
         var launchGame = !args.Contains("--no-launch");
         var hangSeconds = ReadIntArg(args, "--hang-seconds", 30);
 
@@ -45,6 +53,7 @@ internal static class Program
         Console.CancelKeyPress += (_, _) => WerDumpConfig.Disable();
 
         var everLaunched = false;
+        var idleBeat = DateTime.Now;
 
         while (true)
         {
@@ -63,6 +72,12 @@ internal static class Program
                     {
                         Console.WriteLine("[监视] 启动失败: " + exception.Message + "（请手动打开游戏）");
                     }
+                }
+
+                if (DateTime.Now - idleBeat >= TimeSpan.FromSeconds(30))
+                {
+                    idleBeat = DateTime.Now;
+                    Console.WriteLine($"[监视] 等待游戏启动…（每 30 秒提示一次，双击桌面快捷方式或手动开游戏）");
                 }
 
                 Thread.Sleep(2000);
@@ -115,6 +130,7 @@ internal static class Program
         var unresponsiveSince = DateTime.MinValue;
         long lastLogLength = SafeLogLength();
         var lastLogChange = DateTime.Now;
+        var lastBeat = DateTime.Now;
         var hangConfirmed = false;
         string? dumpPath = null;
 
@@ -142,6 +158,12 @@ internal static class Program
                     lastLogLength = length;
                     lastLogChange = DateTime.Now;
                     unresponsiveSince = DateTime.MinValue;
+                }
+
+                if (DateTime.Now - lastBeat >= TimeSpan.FromSeconds(30))
+                {
+                    lastBeat = DateTime.Now;
+                    Console.WriteLine($"[监视] 运行中 {uptimeSoFar(process, sessionStart):0.0} 分钟 | 内存 {process.WorkingSet64 / 1024 / 1024} MB | 日志 {length / 1024 / 1024} MB | 无响应={(process.Responding ? "否" : "是")}");
                 }
 
                 if (!process.Responding)
@@ -218,6 +240,9 @@ internal static class Program
         var folder = WriteReport(kind, reason, sessionStart, exitedAt, uptime, exitCode, peakMemory, hangConfirmed, dumpPath, gameDir);
         Console.WriteLine("[监视] 已生成报告: " + folder);
     }
+
+    private static double uptimeSoFar(Process process, DateTime sessionStart) =>
+        (DateTime.Now - sessionStart).TotalMinutes;
 
     private sealed record Analysis(string Kind, string Reason);
 
@@ -576,6 +601,8 @@ internal static class Program
         return parts.Length > 1 ? parts[1] : key;
     }
 }
+
+
 
 
 
