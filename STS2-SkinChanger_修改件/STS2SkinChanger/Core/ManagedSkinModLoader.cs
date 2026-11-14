@@ -3785,9 +3785,46 @@ internal static class ManagedSkinModLoader
         using (var source = File.OpenRead(provider.AssemblyPath))
         using (var settingsAssembly = RewriteProviderSettings(source, provider.Name, provider.AssemblyPath))
         {
-            assembly = settingsAssembly != null
-                ? loadContext?.LoadFromStream(settingsAssembly) ?? Assembly.Load(settingsAssembly.ToArray())
-                : loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ?? Assembly.LoadFrom(provider.AssemblyPath);
+            if (settingsAssembly != null)
+            {
+                assembly = loadContext?.LoadFromStream(settingsAssembly) ?? Assembly.Load(settingsAssembly.ToArray());
+            }
+            else
+            {
+                try
+                {
+                    assembly = loadContext?.LoadFromAssemblyPath(provider.AssemblyPath)
+                               ?? Assembly.LoadFrom(provider.AssemblyPath);
+                }
+                catch (FileLoadException)
+                {
+                    // 游戏自己已经按同一文件名加载过这个包了（"Assembly with same name is already
+                    // loaded"）。再加载一份会让它的补丁装到另一个副本上、行为补丁等于没装（贞德的
+                    // 点击换装就是这样炸的）。能复用游戏那份就复用，复不了的退回纯资源模式。
+                    var existing = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(candidate =>
+                    {
+                        try
+                        {
+                            return !candidate.IsDynamic &&
+                                   string.Equals(
+                                       candidate.GetName().Name,
+                                       Path.GetFileNameWithoutExtension(provider.AssemblyPath),
+                                       StringComparison.OrdinalIgnoreCase);
+                        }
+                        catch
+                        {
+                            return false;
+                        }
+                    });
+                    if (existing == null)
+                    {
+                        throw;
+                    }
+
+                    ModLog.Info($"复用游戏已加载的 {provider.Name} 程序集（{existing.GetName().Name}），不再重复加载。");
+                    assembly = existing;
+                }
+            }
         }
         CacheLoadedProviderAssembly(
             provider.AssemblyPath,

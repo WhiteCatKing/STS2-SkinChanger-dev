@@ -1,3 +1,7 @@
+### 1.0.31.97 —— 修贞德点击换装失效与退出卡死兜底
+
+- 程序集已被游戏加载过时不再重复加载：`ManagedSkinModLoader.GetOrLoadProviderAssembly` 在 `LoadFromAssemblyPath` 抛 `FileLoadException`（Assembly with same name is already loaded）时，按文件名复用 AppDomain 里已有的那一份；复用不到才退回纯资源模式。贞德「点击换装」失效就是因为它整包被回滚成资源皮肤。
+- 退出兜底：`QuitCacheCleanup` 在 Quit 前缀启动看门狗，12 秒后进程仍未退出则记一条 `[退出诊断]` 并强制结束（存档在此之前已写完）。
 ### 1.0.31.96 —— 减少「切皮肤死锁 / 退出卡死 / 选角图标刷错误」
 
 - 重建选人界面外观期间暂停皮肤场景预加载派发（`SkinPreloader.Paused`，由 `ContextualSkinControls.RunRefresh` 包裹）：主线程同步读资源时不再与后台线程加载并发，避免 Godot 资源加载器互等。

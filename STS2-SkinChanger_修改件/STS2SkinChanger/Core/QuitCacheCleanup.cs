@@ -20,10 +20,35 @@ internal static class QuitCacheCleanup
     // Whether a Quit call currently counts as the player leaving.
     internal static bool AcceptsQuitAsExit => Coordinator.InitializationCompleted;
 
+    private static int _forceExitArmed;
+
+    // 引擎关停偶尔会挂在后台资源加载上（日志停在 "Steamworks shutdown succeeded!"，
+    // 存档早已写完）。这种时候进程永远不会自己退出，只能兜底强杀；12 秒足够正常运行走完关闭。
+    private static void ArmForceExitWatchdog()
+    {
+        if (Interlocked.Exchange(ref _forceExitArmed, 1) != 0)
+        {
+            return;
+        }
+
+        var watchdog = new Thread(() =>
+        {
+            Thread.Sleep(TimeSpan.FromSeconds(12));
+            ModLog.Warn("[退出诊断] 退出 12 秒仍未结束（存档已写完），强制结束进程。");
+            System.Environment.Exit(0);
+        })
+        {
+            IsBackground = true,
+            Name = "SkinChanger.QuitWatchdog",
+        };
+        watchdog.Start();
+    }
+
     private static bool Prefix(NGame __instance) =>
         Coordinator.HandleQuit(
             () =>
             {
+                ArmForceExitWatchdog();
                 // 引擎关停时会等后台加载任务收尾；先把皮肤预加载队列清空，
                 // 避免「点退出后卡在 Steamworks shutdown 之后」的那种死等。
                 SkinPreloader.CancelAll();
