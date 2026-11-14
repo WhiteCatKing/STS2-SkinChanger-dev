@@ -3091,6 +3091,15 @@ internal static partial class ContextualSkinControls
         var group = FindGroup(modelId, modelTypeName);
         if (group != null)
         {
+            // 变体选项（id 以 ::variant:<suffix> 结尾）自带场景，且提供者的后置补丁会把它改回
+            // 提供者默认场景；此时保留变体场景，跳过提供者后置，动画补丁本身不受影响。
+            var variantSuffix = SelectedVariantSuffix(group.Id);
+            if (variantSuffix != null &&
+                !string.Equals(variantSuffix, "default", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
             // A provider's replayed CreateVisuals postfix may instantiate an auxiliary scene or
             // resolve a private attachment after the main visual has been created.  For a remote
             // player that work must see the same canonical overlay as the main scene; otherwise
