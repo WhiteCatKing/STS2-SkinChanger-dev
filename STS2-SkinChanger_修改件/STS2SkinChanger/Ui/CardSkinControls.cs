@@ -2418,6 +2418,7 @@ screen.SetMeta(PopupOpenMeta, true);
         OptionButton dropdown,
         int index)
     {
+        ModLog.Warn("[卡面诊断] Preview index=" + index + " 项=" + (index >= 0 && index < dropdown.ItemCount ? dropdown.GetItemText(index) : "<越界>") + " 来源=" + (new System.Diagnostics.StackTrace(1, false).GetFrame(0)?.GetMethod()?.Name ?? "<无>"));
         if (selector.GetMeta(UpdatingMeta, false).AsBool())
         {
             return;
@@ -2489,6 +2490,7 @@ screen.SetMeta(PopupOpenMeta, true);
         OptionButton dropdown,
         int index)
     {
+        ModLog.Warn("[卡面诊断] Preview index=" + index + " 项=" + (index >= 0 && index < dropdown.ItemCount ? dropdown.GetItemText(index) : "<越界>") + " 来源=" + (new System.Diagnostics.StackTrace(1, false).GetFrame(0)?.GetMethod()?.Name ?? "<无>"));
         if (index < 0 || index >= dropdown.ItemCount)
         {
             RestorePreview(screen);
@@ -2532,6 +2534,7 @@ screen.SetMeta(PopupOpenMeta, true);
 
     private static void RestorePreview(NInspectCardScreen screen)
     {
+        ModLog.Warn("[卡面诊断] RestorePreview 调用 来源=" + (new System.Diagnostics.StackTrace(1, false).GetFrame(0)?.GetMethod()?.Name ?? "<无>"));
         if (!screen.HasMeta(PreviewOptionMeta))
         {
             return;
