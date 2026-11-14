@@ -2035,6 +2035,7 @@ internal static class CardInspectSkinControls
 
     private const string PreviewJustOpenedMeta = "sts2_card_preview_just_opened";
     private const string PreviewOptionMeta = "sts2_individual_card_skin_preview_option";
+    private const string PreviewIgnoreFocusMeta = "sts2_card_preview_ignore_focus";
 
     public static void Attach(NInspectCardScreen screen)
     {
@@ -2097,6 +2098,10 @@ internal static class CardInspectSkinControls
             {
                 dropdown.SetBlockSignals(false);
             }
+
+            // 打开面板时引擎会把焦点自动放到第 1 行；那一次聚焦不代表用户意图，
+            // 记下来在焦点回调里吞掉，否则一打开就软显示成「游戏默认」。
+            screen.SetMeta(PreviewIgnoreFocusMeta, 1);
         };
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
         // Do not also poll PopupMenu.GetFocusedItem: its hidden rows have different geometry
@@ -2107,7 +2112,16 @@ internal static class CardInspectSkinControls
         dropdown.ItemSelected += index => PreviewSelection(screen, dropdown, (int)index);
 
         // 软显示（划动预览）：焦点行本身就是预览的目标行，映射已在日志里验证过是一致的。
-        popup.IdFocused += id => PreviewSelection(screen, dropdown, popup.GetItemIndex(checked((int)id)));
+        popup.IdFocused += id =>
+        {
+            if (screen.GetMeta(PreviewIgnoreFocusMeta, 0).AsInt32() > 0)
+            {
+                screen.SetMeta(PreviewIgnoreFocusMeta, 0);
+                return;
+            }
+
+            PreviewSelection(screen, dropdown, popup.GetItemIndex(checked((int)id)));
+        };
         popup.PopupHide += () => RestorePreview(screen);
         dropdown.ItemSelected += index => ApplySelection(
             screen,
