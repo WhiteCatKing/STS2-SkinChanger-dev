@@ -2082,7 +2082,16 @@ internal static class CardInspectSkinControls
         dropdown.AddThemeFontSizeOverride("font_size", 20);
         var popup = dropdown.GetPopup();
         popup.AddThemeFontSizeOverride("font_size", 20);
-        popup.AboutToPopup += () => PopulateOptions(screen, selector, dropdown);
+        popup.AboutToPopup += () =>
+        {
+            PopulateOptions(screen, selector, dropdown);
+
+            // 重建列表会把卡面刷回基础外观（列表项与选中态都被重置），
+            // 这里按下拉当前的选择把预览重新贴一次，避免「点开就变游戏默认」。
+            screen.RemoveMeta(PreviewCardMeta);
+            screen.RemoveMeta(PreviewOptionMeta);
+            PreviewSelection(screen, dropdown, dropdown.Selected);
+        };
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
         // Do not also poll PopupMenu.GetFocusedItem: its hidden rows have different geometry
         // and a deferred mouse callback can overwrite the visible row's preview.
