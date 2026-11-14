@@ -542,7 +542,17 @@ internal static class Program
 
         try
         {
-            return Regex.Replace(File.ReadAllText(info).Trim(), @"\s+", " ");
+            var raw = File.ReadAllText(info);
+            var version = Regex.Match(raw, "\"version\"\\s*:\\s*\"(?<v>[^\"]+)\"");
+            var branch = Regex.Match(raw, "\"branch\"\\s*:\\s*\"(?<b>[^\"]+)\"");
+            if (version.Success)
+            {
+                return branch.Success
+                    ? version.Groups["v"].Value + "（" + branch.Groups["b"].Value + "）"
+                    : version.Groups["v"].Value;
+            }
+
+            return Regex.Replace(raw.Trim(), @"\s+", " ");
         }
         catch
         {
@@ -638,6 +648,7 @@ internal static class Program
         return parts.Length > 1 ? parts[1] : key;
     }
 }
+
 
 
 
