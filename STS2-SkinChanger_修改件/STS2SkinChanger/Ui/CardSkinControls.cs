@@ -2101,7 +2101,17 @@ internal static class CardInspectSkinControls
 
             // 打开面板时引擎会把焦点自动放到第 1 行；那一次聚焦不代表用户意图，
             // 记下来在焦点回调里吞掉，否则一打开就软显示成「游戏默认」。
-            screen.SetMeta(PreviewIgnoreFocusMeta, 1);
+screen.SetMeta(PreviewIgnoreFocusMeta, 1);
+
+            // 引擎会在面板弹出时自己再刷新一次卡面（那一次会画成基础外观）；
+            // 这里等它刷完（下一帧）再按下拉当前选择压回去，保证只有一个真源。
+            Callable.From(() =>
+            {
+                if (GodotObject.IsInstanceValid(screen) && GodotObject.IsInstanceValid(dropdown))
+                {
+                    PreviewSelection(screen, dropdown, dropdown.Selected);
+                }
+            }).CallDeferred();
         };
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
         // Do not also poll PopupMenu.GetFocusedItem: its hidden rows have different geometry
