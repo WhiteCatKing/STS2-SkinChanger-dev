@@ -1,0 +1,15 @@
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\bin\Release\net9.0\Sts2CrashWatch.exe
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\bin\Release\net9.0\Sts2CrashWatch.deps.json
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\bin\Release\net9.0\Sts2CrashWatch.runtimeconfig.json
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\bin\Release\net9.0\Sts2CrashWatch.dll
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\bin\Release\net9.0\Sts2CrashWatch.pdb
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\Sts2CrashWatch.GeneratedMSBuildEditorConfig.editorconfig
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\Sts2CrashWatch.AssemblyInfoInputs.cache
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\Sts2CrashWatch.AssemblyInfo.cs
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\Sts2CrashWatch.csproj.CoreCompileInputs.cache
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\Sts2CrashWatch.sourcelink.json
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\Sts2CrashWatch.dll
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\refint\Sts2CrashWatch.dll
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\Sts2CrashWatch.pdb
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\Sts2CrashWatch.genruntimeconfig.cache
+D:\Storage\Desktop\工作2\tools\Sts2CrashWatch\obj\Release\net9.0\ref\Sts2CrashWatch.dll
