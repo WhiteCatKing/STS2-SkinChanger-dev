@@ -204,6 +204,24 @@ worker_pool/low_priority_thread_ratio=0.6
 
 ## 5. 修复建议（按优先级）
 
+> **现成补丁**：同目录 `SkinPreloader_串行化与启动门控.patch`，基于 `2ad1534`（远端 `main`），
+> 在仓库根目录执行 `git apply "docs/issues/2026-11-15-startup-deadlock/SkinPreloader_串行化与启动门控.patch"` 即可打上（已用 `git apply --check` 验证可干净应用）。
+>
+> - **范围**：只改 `STS2-SkinChanger_修改件/STS2SkinChanger/Core/SkinPreloader.cs`（+134/−10 行）。实现了下面的 **P1、P2、P4**；**P3 未包含**（涉及分组划分，需作者判断）。
+> - **新增**：Harmony 补丁类 `GameCommonPreloadCompletePatch`（Postfix `AssetLoadingSession.Process`），由 `Entry.InstallPatchClasses` 自动发现安装；读不到 `_name` 或任何异常都会直接放行，不会把异常抛进游戏加载循环。若该补丁类安装失败，60 秒超时兜底仍会放行。
+> - **⚠ 未编译验证**：反馈者机器只有 .NET 运行时、没有 SDK，无法构建。补丁只使用项目里已有的 API 与 `using` 组合（同组合在 `ContextualSkinControls.cs` 中已编译通过），但请作者构建并跑 `LogicTests` 后再发布。
+> - **预期日志**（修复后启动）：
+>   ```text
+>   [SkinChanger] [性能] 预加载排队 N 个皮肤场景（队列上限 48），等游戏 Common 预加载完成后再派发。
+>   Preloading 'IntroLogo' Complete ...
+>   Preloading 'MainMenuEssentials' Complete ...
+>   Preloading 'Common' Complete ...
+>   [SkinChanger] [性能] 游戏预加载已结束（Common 完成），开始派发皮肤预加载（队列 N 个）。
+>   [SkinChanger] [性能] 预加载完成：成功 …
+>   ```
+> - **代价**：皮肤预加载改为 Common 之后串行进行，整体完成时间会比原来晚（48 个约十几秒量级，未实测）；若玩家在此之前就进入选角/开局，首次预览会走同步加载，可能有一次短暂卡顿，但不会死锁。
+> - **验收建议**：打补丁后**删除 `override.cfg`**、在 8 线程机器（或用 `override.cfg` 把名额压回 2，见第 6 节）、预加载排满 48 的配置、冷缓存连续 ≥5 次启动。
+
 ### P1：预加载串行化 + 关闭 sub-threads（改动最小，最关键）
 
 ```csharp
@@ -224,6 +242,8 @@ else if (Pending.Count > 0)
     else _loaded++;
 }
 ```
+
+（以上为示意，完整实现以补丁为准。）
 
 效果：SC 任何时刻最多占用 **1 个**低优先级名额，且不再派生子任务；在 8 线程机器上始终给游戏留至少 1 个名额。与游戏官方 VFX 串行加载的做法一致（3.6）。
 
@@ -273,7 +293,9 @@ else if (Pending.Count > 0)
 
 ---
 
-## 8. 附件索引（均在 `SkinChanger_report_20261114\`）
+## 8. 附件索引（均在 `SkinChanger_report_20261114\`；仓库分支中日志/诊断/配置打包为 `SkinChanger_report_20261114_logs_diagnostics_config.zip`，目录结构相同）
+
+- `SkinPreloader_串行化与启动门控.patch`：第 5 节的现成代码补丁（仅在仓库分支中）
 
 - `logs\21_…`～`logs\33_…`：未加 override 的对照日志（文件名即结论）
 - `logs\34_…`～`logs\46_…`：加 override 的实验日志（文件名注明冷/热缓存与配置）
