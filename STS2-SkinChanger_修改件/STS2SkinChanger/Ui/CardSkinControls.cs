@@ -2086,7 +2086,17 @@ internal static class CardInspectSkinControls
         popup.AddThemeFontSizeOverride("font_size", 20);
         popup.AboutToPopup += () =>
         {
-            PopulateOptions(screen, selector, dropdown);
+            // 重建列表会把 Selected 归位并触发 item_selected；若不屏蔽信号，
+            // 这次「重建」会被当成用户选择，卡面就被刷成重建后的那一行。
+            dropdown.SetBlockSignals(true);
+            try
+            {
+                PopulateOptions(screen, selector, dropdown);
+            }
+            finally
+            {
+                dropdown.SetBlockSignals(false);
+            }
         };
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
         // Do not also poll PopupMenu.GetFocusedItem: its hidden rows have different geometry
