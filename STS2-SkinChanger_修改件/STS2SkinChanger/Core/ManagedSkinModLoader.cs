@@ -146,7 +146,7 @@ internal static class ManagedSkinModLoader
         // Never remove gameplay/framework callbacks, even if stale candidate roots include
         // them. A real resource-backed skin pack may itself have dependents: keep managing its
         // visual callbacks while the original loader preserves its non-visual DLL functions.
-        return mods.Where(mod => mod.manifest != null &&
+        return mods.Where(mod => mod.manifest is not null &&
                                  (Entry.IsSelfModId(mod.manifest.id) ||
                                   ShouldTreatAsGameplayBaseline(mod, mods)))
             .Select(mod => NormalizePath(mod.path))

@@ -1,3 +1,8 @@
+### 1.0.31.99 —— 正式版 v0.107.1 启动即崩（ModManifest 运算符）
+
+- 玩家在工坊反馈：正式版 v0.107.1 上启动直接崩，`Method not found: 'Boolean MegaCrit.Sts2.Core.Modding.ModManifest.op_Inequality(ModManifest, ModManifest)'`，位置 `EssentialInitializationPatch`。
+- 根因：`ManagedSkinModLoader.cs:149` 写的是 `mod.manifest != null`；DLL 编译时以 v0.113 的 `ModManifest`（重载了 `==`/`!=`）为准，绑定到了 `op_Inequality`，而正式版该类型只有普通 class 语义、没有运算符 → 运行时找不到方法。
+- 改为 `mod.manifest is not null`（编译期就是引用判空），两个版本都能跑。
 ### 1.0.31.98 —— 游戏自己加载的程序集，切走时不再卸它的补丁
 
 - `ManagedSkinModLoader` 新增 `AdoptedGameAssemblies`：走「复用游戏已加载程序集」这条路的包（十字军、狐猎等），其补丁是包自己的初始化器在游戏启动时装上的，不归我们管。
