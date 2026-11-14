@@ -2282,6 +2282,7 @@ screen.SetMeta(PopupOpenMeta, true);
 
     public static void Sync(NInspectCardScreen screen)
     {
+        ModLog.Warn("[卡面诊断] Sync 弹窗开=" + screen.GetMeta(PopupOpenMeta, false).AsBool() + " 预览=" + screen.GetMeta(PreviewOptionMeta, string.Empty).AsString() + " 列表卡=" + screen.GetNodeOrNull<HBoxContainer>(SelectorName)?.GetMeta(OptionsCardMeta, string.Empty).AsString() + " 卡=" + screen.GetNodeOrNull<NCard>("Card")?.Model?.Id.ToString() + " 栈=" + string.Join(" <- ", System.Environment.StackTrace.Split('`n').Skip(2).Take(5).Select(x => x.Trim())));
         var selector = screen.GetNodeOrNull<HBoxContainer>(SelectorName);
         var card = screen.GetNodeOrNull<NCard>("Card")?.Model;
         if (selector == null || card == null)
