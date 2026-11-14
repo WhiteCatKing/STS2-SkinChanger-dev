@@ -2089,7 +2089,7 @@ internal static class CardInspectSkinControls
         popup.IdFocused += id => PreviewSelection(
             screen,
             dropdown,
-            popup.GetItemIndex(checked((int)id)));
+            ResolvePreviewIndex(dropdown, popup, checked((int)id)));
         popup.PopupHide += () => RestorePreview(screen);
         dropdown.ItemSelected += index => ApplySelection(
             screen,
@@ -2370,6 +2370,29 @@ internal static class CardInspectSkinControls
         }).CallDeferred();
     }
 
+    /// <summary>
+    /// 把弹出菜单送来的条目 ID 换算成下拉列表的行号；两者对不上时返回 -1 并拒绝本次预览，
+    /// 避免把「另一张卡」的皮肤当成当前行预览出来。
+    /// </summary>
+    private static int ResolvePreviewIndex(OptionButton dropdown, PopupMenu popup, int itemId)
+    {
+        var index = popup.GetItemIndex(itemId);
+        var inRange = index >= 0 && index < popup.ItemCount && index < dropdown.ItemCount;
+        var popupText = inRange ? popup.GetItemText(index) : "<越界>";
+        var dropdownText = inRange ? dropdown.GetItemText(index) : "<越界>";
+        var optionId = inRange ? dropdown.GetItemMetadata(index).AsString() : string.Empty;
+        var selectedText = dropdown.ItemCount > 0 ? dropdown.GetItemText(dropdown.Selected) : "<空>";
+        ModLog.Info(
+            $"[卡面预览] id={itemId} 行号={index} 弹出项={popupText} 下拉项={dropdownText} 选项={optionId} 当前选择={selectedText}");
+        if (!inRange) return -1;
+        if (!string.Equals(popupText, dropdownText, StringComparison.Ordinal))
+        {
+            ModLog.Warn($"[卡面预览] 弹出项与下拉项不是同一行，跳过这次预览（行号={index}）。");
+            return -1;
+        }
+
+        return index;
+    }
     private static void PreviewSelection(
         NInspectCardScreen screen,
         OptionButton dropdown,

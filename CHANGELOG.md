@@ -1,3 +1,8 @@
+### 1.0.32.0 —— 修「打开卡面列表后预览显示的不是所选那一张」
+
+- 现象：普通卡面包（与角色/其他卡面包无关），点开单卡皮肤下拉后，游戏里那张卡显示的是别的皮肤，既不是上方选中的，也不是切换前那张。
+- 原因：`popup.IdFocused` 送来的是弹出菜单条目 ID，代码直接拿去 `popup.GetItemIndex(id)` 再当下拉行号用；弹出菜单与下拉列表在插入分组标题/跳过不可用项时行号与 ID 不是一一对应，取到的就是另一行。
+- 改法：新增 `ResolvePreviewIndex(dropdown, popup, itemId)`，同时校验行号范围与「弹出项文本 == 下拉项文本」，对不上就拒绝这次预览并打 `[卡面预览]` 日志，宁可保持原样也不显示错的那张。
 ### 1.0.31.99 —— 正式版 v0.107.1 启动即崩（ModManifest 运算符）
 
 - 玩家在工坊反馈：正式版 v0.107.1 上启动直接崩，`Method not found: 'Boolean MegaCrit.Sts2.Core.Modding.ModManifest.op_Inequality(ModManifest, ModManifest)'`，位置 `EssentialInitializationPatch`。
