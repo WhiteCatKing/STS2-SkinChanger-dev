@@ -271,7 +271,16 @@ internal static class Program
 
         if (dumpPath == null)
         {
-            dumpPath = DumpWriter.FindFreshDump(sessionStart);
+            // 原生崩溃时 WER 写转储要几秒，先等一会儿再找，再等不到就只交报告。
+            for (var attempt = 0; attempt < 4 && dumpPath == null; attempt++)
+            {
+                if (attempt > 0)
+                {
+                    Thread.Sleep(3000);
+                }
+
+                dumpPath = DumpWriter.FindFreshDump(sessionStart);
+            }
         }
 
         var folder = WriteReport(kind, reason, sessionStart, exitedAt, uptime, exitCode, peakMemory, hangConfirmed, dumpPath, gameDir);
@@ -648,6 +657,7 @@ internal static class Program
         return parts.Length > 1 ? parts[1] : key;
     }
 }
+
 
 
 
