@@ -2032,14 +2032,7 @@ internal static class CardInspectSkinControls
     private const string UpdatingMeta = "sts2_individual_card_skin_updating";
     private const string OptionsCardMeta = "sts2_individual_card_skin_options_card";
     private const string PreviewCardMeta = "sts2_individual_card_skin_preview_card";
-
-    private const string PreviewJustOpenedMeta = "sts2_card_preview_just_opened";
     private const string PreviewOptionMeta = "sts2_individual_card_skin_preview_option";
-    private const string PreviewIgnoreFocusMeta = "sts2_card_preview_ignore_focus";
-    private static int LastPointerX = int.MinValue;
-    private static int LastPointerY = int.MinValue;
-
-    private const string PopupOpenMeta = "sts2_card_popup_open";
 
     public static void Attach(NInspectCardScreen screen)
     {
@@ -2089,61 +2082,15 @@ internal static class CardInspectSkinControls
         dropdown.AddThemeFontSizeOverride("font_size", 20);
         var popup = dropdown.GetPopup();
         popup.AddThemeFontSizeOverride("font_size", 20);
-        popup.AboutToPopup += () =>
-        {
-            // 重建列表会把 Selected 归位并触发 item_selected；若不屏蔽信号，
-            // 这次「重建」会被当成用户选择，卡面就被刷成重建后的那一行。
-            dropdown.SetBlockSignals(true);
-            try
-            {
-                PopulateOptions(screen, selector, dropdown);
-            }
-            finally
-            {
-                dropdown.SetBlockSignals(false);
-            }
-
-            // 打开面板时引擎会把焦点自动放到第 1 行；那一次聚焦不代表用户意图，
-            // 记下来在焦点回调里吞掉，否则一打开就软显示成「游戏默认」。
-screen.SetMeta(PreviewIgnoreFocusMeta, 1);
-screen.SetMeta(PopupOpenMeta, true);
-
-            // 引擎会在面板弹出时自己再刷新一次卡面（那一次会画成基础外观）；
-            // 这里等它刷完（下一帧）再按下拉当前选择压回去，保证只有一个真源。
-            Callable.From(() =>
-            {
-                if (GodotObject.IsInstanceValid(screen) && GodotObject.IsInstanceValid(dropdown))
-                {
-                    PreviewSelection(screen, dropdown, dropdown.Selected);
-                }
-            }).CallDeferred();
-        };
+        popup.AboutToPopup += () => PopulateOptions(screen, selector, dropdown);
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
         // Do not also poll PopupMenu.GetFocusedItem: its hidden rows have different geometry
         // and a deferred mouse callback can overwrite the visible row's preview.
-        // 卡面只跟下拉的当前选择保持一致：不再跟随弹出列表的行焦点。
-        // 行焦点会在面板打开时被引擎自动置到第 1 行，也会在滚动时来回跳，
-        // 跟着它走就必然出现「点开变默认、划动乱跳」。
-        dropdown.ItemSelected += index => PreviewSelection(screen, dropdown, (int)index);
-
-        // 软显示（划动预览）：焦点行本身就是预览的目标行，映射已在日志里验证过是一致的。
-        popup.IdFocused += id =>
-        {
-// 软显示 = 鼠标真的悬停在某一行上。列表弹出时引擎会把焦点在若干行之间
-            // 来回搬（0→1→2→3…），那不是用户意图；若照单全收，最后一站是第 1 行
-            // 「游戏默认」，于是面板一打开卡面就变默认。
-            var __mouse = DisplayServer.MouseGetPosition(); var __moved = __mouse.X != LastPointerX || __mouse.Y != LastPointerY; LastPointerX = __mouse.X; LastPointerY = __mouse.Y; if (!__moved && !Input.IsMouseButtonPressed(MouseButton.Left))
-            {
-                return;
-            }
-
-            PreviewSelection(screen, dropdown, popup.GetItemIndex(checked((int)id)));
-        };
-        popup.PopupHide += () =>
-        {
-            screen.SetMeta(PopupOpenMeta, false);
-            RestorePreview(screen);
-        };
+        popup.IdFocused += id => PreviewSelection(
+            screen,
+            dropdown,
+            popup.GetItemIndex(checked((int)id)));
+        popup.PopupHide += () => RestorePreview(screen);
         dropdown.ItemSelected += index => ApplySelection(
             screen,
             selector,
@@ -2287,7 +2234,6 @@ screen.SetMeta(PopupOpenMeta, true);
 
     public static void Sync(NInspectCardScreen screen)
     {
-        ModLog.Warn("[卡面诊断] Sync 弹窗开=" + screen.GetMeta(PopupOpenMeta, false).AsBool() + " 预览=" + screen.GetMeta(PreviewOptionMeta, string.Empty).AsString() + " 列表卡=" + screen.GetNodeOrNull<HBoxContainer>(SelectorName)?.GetMeta(OptionsCardMeta, string.Empty).AsString() + " 卡=" + screen.GetNodeOrNull<NCard>("Card")?.Model?.Id.ToString());
         var selector = screen.GetNodeOrNull<HBoxContainer>(SelectorName);
         var card = screen.GetNodeOrNull<NCard>("Card")?.Model;
         if (selector == null || card == null)
@@ -2295,50 +2241,18 @@ screen.SetMeta(PopupOpenMeta, true);
             return;
         }
 
-        // 面板打开期间引擎仍会刷新卡面；此时绝不动列表与选中，只同步颜色，
-// 否则会把用户正在浏览的那一行压回「已提交项」。
-        if (screen.GetMeta(PopupOpenMeta, false).AsBool())
-        {
-            var openDropdown = selector.GetNodeOrNull<OptionButton>(DropdownName);
-            if (openDropdown != null)
-            {
-                SkinWorkshopEntry.RefreshSelectionColor(openDropdown);
-            }
-
-            selector.Visible = true;
-            return;
-        }
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
-        var cardId = card.Id.ToString();
-        // 列表内容只在「换了一张卡」时重建；选中位置也只在建表时定一次。
-        // 引擎每次刷新卡面都会调用这里，若每次都 Clear+Select(0)，
-        // 面板一打开就会把当前选择压回「已提交项」，卡面随之跳回默认。
-        var alreadyBuilt = selector.GetMeta(OptionsCardMeta, string.Empty).AsString().Equals(
-            cardId,
-            StringComparison.OrdinalIgnoreCase);
-
         selector.SetMeta(UpdatingMeta, true);
-        try
-        {
-            if (!alreadyBuilt)
-            {
-                selector.RemoveMeta(OptionsCardMeta);
-                dropdown.Clear();
-                dropdown.TooltipText = string.Empty;
-                var selected = SkinService.GetCardOverrideSelection(card);
-                dropdown.AddItem(SelectionDisplayName(selected, card));
-                dropdown.SetItemMetadata(0, selected);
-                dropdown.Select(0);
-            }
-
-            SkinWorkshopEntry.RefreshSelectionColor(dropdown);
-        }
-        finally
-        {
-            selector.SetMeta(UpdatingMeta, false);
-        }
-
-        selector.Visible = true;selector.Visible = true;
+        selector.RemoveMeta(OptionsCardMeta);
+        dropdown.Clear();
+        dropdown.TooltipText = string.Empty;
+        var selected = SkinService.GetCardOverrideSelection(card);
+        dropdown.AddItem(SelectionDisplayName(selected, card));
+        dropdown.SetItemMetadata(0, selected);
+        dropdown.Select(0);
+        SkinWorkshopEntry.RefreshSelectionColor(dropdown);
+        selector.SetMeta(UpdatingMeta, false);
+        selector.Visible = true;
     }
 
     private static void PopulateOptions(
@@ -2423,7 +2337,6 @@ screen.SetMeta(PopupOpenMeta, true);
         OptionButton dropdown,
         int index)
     {
-        ModLog.Warn("[卡面诊断] Preview index=" + index + " 项=" + (index >= 0 && index < dropdown.ItemCount ? dropdown.GetItemText(index) : "<越界>") + " 来源=" + (new System.Diagnostics.StackTrace(1, false).GetFrame(0)?.GetMethod()?.Name ?? "<无>"));
         if (selector.GetMeta(UpdatingMeta, false).AsBool())
         {
             return;
@@ -2457,45 +2370,11 @@ screen.SetMeta(PopupOpenMeta, true);
         }).CallDeferred();
     }
 
-    /// <summary>
-    /// 把弹出菜单送来的条目 ID 换算成下拉列表的行号；两者对不上时返回 -1 并拒绝本次预览，
-    /// 避免把「另一张卡」的皮肤当成当前行预览出来。
-    /// </summary>
-    private static int ResolvePreviewIndex(NInspectCardScreen screen, OptionButton dropdown, PopupMenu popup, int itemId)
-    {
-        // 面板刚打开时 PopupMenu 会自己聚焦某一行（行号与下拉的选中行并不一致），
-        // 这一次聚焦不代表用户选择，直接忽略，否则一打开就把卡面刷成那一行的皮肤。
-        var skipFocus = screen.GetMeta(PreviewJustOpenedMeta, 0).AsInt32();
-        if (skipFocus > 0)
-        {
-            screen.SetMeta(PreviewJustOpenedMeta, skipFocus - 1);
-            ModLog.Info($"[卡面预览] 忽略打开面板时的自动聚焦（剩 {skipFocus - 1} 次）。");
-            return -1;
-        }
-
-        var index = popup.GetItemIndex(itemId);
-        var inRange = index >= 0 && index < popup.ItemCount && index < dropdown.ItemCount;
-        var popupText = inRange ? popup.GetItemText(index) : "<越界>";
-        var dropdownText = inRange ? dropdown.GetItemText(index) : "<越界>";
-        var optionId = inRange ? dropdown.GetItemMetadata(index).AsString() : string.Empty;
-        var selectedText = dropdown.ItemCount > 0 ? dropdown.GetItemText(dropdown.Selected) : "<空>";
-        ModLog.Info(
-            $"[卡面预览] id={itemId} 行号={index} 弹出项={popupText} 下拉项={dropdownText} 选项={optionId} 当前选择={selectedText}");
-        if (!inRange) return -1;
-        if (!string.Equals(popupText, dropdownText, StringComparison.Ordinal))
-        {
-            ModLog.Warn($"[卡面预览] 弹出项与下拉项不是同一行，跳过这次预览（行号={index}）。");
-            return -1;
-        }
-
-        return index;
-    }
     private static void PreviewSelection(
         NInspectCardScreen screen,
         OptionButton dropdown,
         int index)
     {
-        ModLog.Warn("[卡面诊断] Preview index=" + index + " 项=" + (index >= 0 && index < dropdown.ItemCount ? dropdown.GetItemText(index) : "<越界>") + " 来源=" + (new System.Diagnostics.StackTrace(1, false).GetFrame(0)?.GetMethod()?.Name ?? "<无>"));
         if (index < 0 || index >= dropdown.ItemCount)
         {
             RestorePreview(screen);
@@ -2533,19 +2412,22 @@ screen.SetMeta(PopupOpenMeta, true);
         }
         catch (Exception exception)
         {
+            screen.RemoveMeta(PreviewCardMeta);
+            screen.RemoveMeta(PreviewOptionMeta);
             ModLog.Error("预览单卡皮肤失败：" + exception);
         }
     }
 
     private static void RestorePreview(NInspectCardScreen screen)
     {
-        ModLog.Warn("[卡面诊断] RestorePreview 调用 来源=" + (new System.Diagnostics.StackTrace(1, false).GetFrame(0)?.GetMethod()?.Name ?? "<无>"));
         if (!screen.HasMeta(PreviewOptionMeta))
         {
             return;
         }
 
         var previewCardId = screen.GetMeta(PreviewCardMeta, string.Empty).AsString();
+        screen.RemoveMeta(PreviewCardMeta);
+        screen.RemoveMeta(PreviewOptionMeta);
 
         var cardNode = screen.GetNodeOrNull<NCard>("Card");
         if (cardNode?.Model?.Id.ToString().Equals(
