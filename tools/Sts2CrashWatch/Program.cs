@@ -37,6 +37,19 @@ internal static class Program
             return 0;
         }
 
+        if (args.Contains("--simulate-hang"))
+        {
+            var self = Process.GetCurrentProcess();
+            Console.WriteLine("[自测] 触发一次「卡死」报告流程（不涉及游戏进程）。");
+            var dump = DumpWriter.WriteForHungProcess(self, Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sts2CrashWatch", "dumps"));
+            var path = WriteReport("卡死（自测）", "自测：模拟进程无响应且日志停滞。",
+                DateTime.Now.AddMinutes(-3), DateTime.Now, TimeSpan.FromMinutes(3), null,
+                self.WorkingSet64, true, dump, ResolveGameDir());
+            Console.WriteLine("[自测] 已生成报告: " + path);
+            return 0;
+        }
+
         var launchGame = !args.Contains("--no-launch");
         var hangSeconds = ReadIntArg(args, "--hang-seconds", 30);
 
@@ -625,6 +638,8 @@ internal static class Program
         return parts.Length > 1 ? parts[1] : key;
     }
 }
+
+
 
 
 

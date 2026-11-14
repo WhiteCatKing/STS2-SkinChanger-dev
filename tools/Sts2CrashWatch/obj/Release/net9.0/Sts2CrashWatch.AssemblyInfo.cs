@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Sts2CrashWatch")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2fa472196fe489d2237294d1b923b2e217a7a21e")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3a2c26a820e147ff044fe904250d403bbafa68e7")]
 [assembly: System.Reflection.AssemblyProductAttribute("Sts2CrashWatch")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Sts2CrashWatch")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
