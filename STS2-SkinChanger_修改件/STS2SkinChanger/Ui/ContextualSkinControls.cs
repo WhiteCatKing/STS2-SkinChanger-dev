@@ -1962,6 +1962,10 @@ internal static partial class ContextualSkinControls
 
     private static void RunRefresh(Action refresh)
     {
+        // 重建期间要同步读资源（还会反射触发皮肤包的同步加载），后台预加载必须让路，
+        // 否则两条加载路径在 Godot 的资源加载器里互等，表现为切皮肤瞬间死锁。
+        var preloadWasPaused = SkinPreloader.Paused;
+        SkinPreloader.Paused = true;
         try
         {
             refresh();
@@ -1969,6 +1973,10 @@ internal static partial class ContextualSkinControls
         catch (Exception exception)
         {
             ModLog.Error("重建皮肤展示失败：" + exception);
+        }
+        finally
+        {
+            SkinPreloader.Paused = preloadWasPaused;
         }
     }
 

@@ -33,6 +33,30 @@ internal static class SkinPreloader
     private static double _scheduledTotalMs;
 
     /// <summary>
+    /// 暂停派发。选人界面重建外观时会同步 <c>ResourceLoader.Load</c>（还会反射触发皮肤包自己的
+    /// 同步加载），此时若后台仍有线程加载在跑，Godot 的加载器会互相等待，表现为切皮肤瞬间死锁。
+    /// 重建期间把派发停掉，重建结束再继续。
+    /// </summary>
+    internal static bool Paused { get; set; }
+
+    /// <summary>退出前调用：丢掉还没派发的任务，别让引擎在关停时等后台加载。</summary>
+    internal static void CancelAll()
+    {
+        if (Pending.Count == 0 && InFlight.Count == 0)
+        {
+            return;
+        }
+
+        ModLog.Info($"[性能] 退出前取消 {Pending.Count} 个未派发、{InFlight.Count} 个在途的预加载任务。");
+        Pending.Clear();
+        InFlight.Clear();
+        Known.Clear();
+        _loaded = 0;
+        _failed = 0;
+        _scheduledTotalMs = 0;
+    }
+
+    /// <summary>
     /// 为这些分组当前选中的皮肤排队预加载。重复调用是安全的：已在队列/已加载的路径会被跳过。
     /// </summary>
     internal static void Schedule(
@@ -133,6 +157,14 @@ internal static class SkinPreloader
     private static void Tick()
     {
         _timerRunning = false;
+
+        if (Paused)
+        {
+            // 重建外观期间不派发：主线程马上要同步读资源，此时后台再加载会和它互相等待。
+            EnsureTimer();
+            return;
+        }
+
         var tickWatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {

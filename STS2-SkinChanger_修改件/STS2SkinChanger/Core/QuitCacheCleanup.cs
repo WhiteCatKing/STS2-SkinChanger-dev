@@ -22,7 +22,13 @@ internal static class QuitCacheCleanup
 
     private static bool Prefix(NGame __instance) =>
         Coordinator.HandleQuit(
-            () => Task.Run(() => QuitExitCleanup.Clean(SkinChangerPaths.Storage)),
+            () =>
+            {
+                // 引擎关停时会等后台加载任务收尾；先把皮肤预加载队列清空，
+                // 避免「点退出后卡在 Steamworks shutdown 之后」的那种死等。
+                SkinPreloader.CancelAll();
+                return Task.Run(() => QuitExitCleanup.Clean(SkinChangerPaths.Storage));
+            },
             () => { if (GodotObject.IsInstanceValid(__instance)) __instance.Quit(); },
             ModLog.Info);
 }

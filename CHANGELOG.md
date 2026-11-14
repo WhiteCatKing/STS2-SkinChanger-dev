@@ -1,3 +1,8 @@
+### 1.0.31.96 —— 减少「切皮肤死锁 / 退出卡死 / 选角图标刷错误」
+
+- 重建选人界面外观期间暂停皮肤场景预加载派发（`SkinPreloader.Paused`，由 `ContextualSkinControls.RunRefresh` 包裹）：主线程同步读资源时不再与后台线程加载并发，避免 Godot 资源加载器互等。
+- 退出时先取消未派发/在途的预加载任务（`SkinPreloader.CancelAll()`，挂到 `QuitCacheCleanup` 的 Quit 前缀），避免引擎关停时等后台加载。
+- `LoadCharacterSelectIcon` 先用 `ResourceLoader.Exists` 探测：v0.113 已没有 `char_select_random_character.png`，不再每进一次选角就刷十几条 `No loader found`。
 ### 1.0.31.92 —— 定版：十字军变体可用
 
 - 清除临时诊断日志（`[变体诊断] 提供者后置前/后`、`[变体诊断] 场景对象`），保留 `[十字军变体] 已把场景写回变体` 一行便于日后排查。

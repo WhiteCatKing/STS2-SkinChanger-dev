@@ -8357,6 +8357,14 @@ internal static partial class SkinService
 
         var id = characterId.ToLowerInvariant();
         var path = $"res://images/packed/character_select/char_select_{id}{(locked ? "_locked" : "")}.png";
+
+        // v0.113 起「随机」那一格的头像不再走这个路径。先探一下再读，
+        // 否则每进一次选角都会往日志里刷十几条 No loader found。
+        if (!ResourceLoader.Exists(path))
+        {
+            return null;
+        }
+
         return ResourceLoader.Load<Texture2D>(path, null, ResourceLoader.CacheMode.IgnoreDeep);
     }
 
