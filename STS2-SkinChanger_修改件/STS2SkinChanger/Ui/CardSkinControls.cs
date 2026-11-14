@@ -2032,6 +2032,8 @@ internal static class CardInspectSkinControls
     private const string UpdatingMeta = "sts2_individual_card_skin_updating";
     private const string OptionsCardMeta = "sts2_individual_card_skin_options_card";
     private const string PreviewCardMeta = "sts2_individual_card_skin_preview_card";
+
+    private const string PreviewJustOpenedMeta = "sts2_card_preview_just_opened";
     private const string PreviewOptionMeta = "sts2_individual_card_skin_preview_option";
 
     public static void Attach(NInspectCardScreen screen)
@@ -2090,6 +2092,7 @@ internal static class CardInspectSkinControls
             // 这里按下拉当前的选择把预览重新贴一次，避免「点开就变游戏默认」。
             screen.RemoveMeta(PreviewCardMeta);
             screen.RemoveMeta(PreviewOptionMeta);
+            screen.SetMeta(PreviewJustOpenedMeta, true);
             PreviewSelection(screen, dropdown, dropdown.Selected);
         };
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
@@ -2098,7 +2101,7 @@ internal static class CardInspectSkinControls
         popup.IdFocused += id => PreviewSelection(
             screen,
             dropdown,
-            ResolvePreviewIndex(dropdown, popup, checked((int)id)));
+            ResolvePreviewIndex(screen, dropdown, popup, checked((int)id)));
         popup.PopupHide += () => RestorePreview(screen);
         dropdown.ItemSelected += index => ApplySelection(
             screen,
@@ -2383,8 +2386,17 @@ internal static class CardInspectSkinControls
     /// 把弹出菜单送来的条目 ID 换算成下拉列表的行号；两者对不上时返回 -1 并拒绝本次预览，
     /// 避免把「另一张卡」的皮肤当成当前行预览出来。
     /// </summary>
-    private static int ResolvePreviewIndex(OptionButton dropdown, PopupMenu popup, int itemId)
+    private static int ResolvePreviewIndex(NInspectCardScreen screen, OptionButton dropdown, PopupMenu popup, int itemId)
     {
+        // 面板刚打开时 PopupMenu 会自己聚焦某一行（行号与下拉的选中行并不一致），
+        // 这一次聚焦不代表用户选择，直接忽略，否则一打开就把卡面刷成那一行的皮肤。
+        if (screen.GetMeta(PreviewJustOpenedMeta, false).AsBool())
+        {
+            screen.SetMeta(PreviewJustOpenedMeta, false);
+            ModLog.Info("[卡面预览] 忽略打开面板时的自动聚焦。");
+            return -1;
+        }
+
         var index = popup.GetItemIndex(itemId);
         var inRange = index >= 0 && index < popup.ItemCount && index < dropdown.ItemCount;
         var popupText = inRange ? popup.GetItemText(index) : "<越界>";
