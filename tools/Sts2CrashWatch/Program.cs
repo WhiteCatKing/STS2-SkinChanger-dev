@@ -30,7 +30,7 @@ internal static class Program
         Console.OutputEncoding = Encoding.UTF8;
 
         var launchGame = !args.Contains("--no-launch");
-        var hangSeconds = ReadIntArg(args, "--hang-seconds", 180);
+        var hangSeconds = ReadIntArg(args, "--hang-seconds", 30);
 
         var gameDir = ResolveGameDir();
         Console.WriteLine("StS2 崩溃监视器");
@@ -39,6 +39,10 @@ internal static class Program
         Console.WriteLine("  报告位置: " + ReportRoot);
         Console.WriteLine($"  卡死阈值: 窗口无响应且日志停滞 ≥ {hangSeconds} 秒");
         Console.WriteLine();
+
+        WerDumpConfig.Enable();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => WerDumpConfig.Disable();
+        Console.CancelKeyPress += (_, _) => WerDumpConfig.Disable();
 
         var everLaunched = false;
 
@@ -349,6 +353,13 @@ internal static class Program
             Console.WriteLine("[报告] 复制日志失败: " + exception.Message);
         }
 
+        // 1.5) 把转储复制进报告文件夹（玩家只需发这一个文件夹）
+        if (!string.IsNullOrEmpty(dumpPath) && File.Exists(dumpPath))
+        {
+            try { File.Copy(dumpPath, Path.Combine(folder, "crash.dmp"), overwrite: true); }
+            catch { }
+        }
+
         // 2) 写崩溃报告.md
         var body = new StringBuilder();
         body.AppendLine("# 杀戮尖塔 2 崩溃报告");
@@ -565,4 +576,8 @@ internal static class Program
         return parts.Length > 1 ? parts[1] : key;
     }
 }
+
+
+
+
 
