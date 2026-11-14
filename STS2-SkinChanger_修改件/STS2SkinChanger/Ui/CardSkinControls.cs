@@ -2129,7 +2129,7 @@ screen.SetMeta(PopupOpenMeta, true);
 // 软显示 = 鼠标真的悬停在某一行上。列表弹出时引擎会把焦点在若干行之间
             // 来回搬（0→1→2→3…），那不是用户意图；若照单全收，最后一站是第 1 行
             // 「游戏默认」，于是面板一打开卡面就变默认。
-            if (!new Rect2(Vector2.Zero, popup.Size).HasPoint(popup.GetLocalMousePosition()))
+            if (!new Rect2(new Vector2(popup.Position.X, popup.Position.Y), new Vector2(popup.Size.X, popup.Size.Y)).HasPoint(new Vector2(DisplayServer.MouseGetPosition().X, DisplayServer.MouseGetPosition().Y)))
             {
                 return;
             }
