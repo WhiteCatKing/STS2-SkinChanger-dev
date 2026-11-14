@@ -2092,7 +2092,7 @@ internal static class CardInspectSkinControls
             // 这里按下拉当前的选择把预览重新贴一次，避免「点开就变游戏默认」。
             screen.RemoveMeta(PreviewCardMeta);
             screen.RemoveMeta(PreviewOptionMeta);
-            screen.SetMeta(PreviewJustOpenedMeta, true);
+            screen.SetMeta(PreviewJustOpenedMeta, 2);
             PreviewSelection(screen, dropdown, dropdown.Selected);
         };
         // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
@@ -2390,10 +2390,11 @@ internal static class CardInspectSkinControls
     {
         // 面板刚打开时 PopupMenu 会自己聚焦某一行（行号与下拉的选中行并不一致），
         // 这一次聚焦不代表用户选择，直接忽略，否则一打开就把卡面刷成那一行的皮肤。
-        if (screen.GetMeta(PreviewJustOpenedMeta, false).AsBool())
+        var skipFocus = screen.GetMeta(PreviewJustOpenedMeta, 0).AsInt32();
+        if (skipFocus > 0)
         {
-            screen.SetMeta(PreviewJustOpenedMeta, false);
-            ModLog.Info("[卡面预览] 忽略打开面板时的自动聚焦。");
+            screen.SetMeta(PreviewJustOpenedMeta, skipFocus - 1);
+            ModLog.Info($"[卡面预览] 忽略打开面板时的自动聚焦（剩 {skipFocus - 1} 次）。");
             return -1;
         }
 
