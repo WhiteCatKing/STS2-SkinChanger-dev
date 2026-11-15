@@ -17,7 +17,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.32.1";
+    public const string InternalTestVersion = "1.0.32.3";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -47,7 +47,11 @@ public static class Entry
         var failedPatchClasses = new System.Collections.Generic.List<string>();
         try
         {
-            failedPatchClasses = InstallPatchClasses(harmony, GetLoadableTypes(assembly));
+            var loadableTypes = GetLoadableTypes(assembly);
+            // 已分区到模块的补丁先按模块成组装：模块内部失败只回滚该模块，其余模块与常驻
+            // 补丁不受影响；没有模块标记的类照旧走下面的全量安装。
+            Core.Features.FeatureBootstrap.InstallGroups(harmony, loadableTypes);
+            failedPatchClasses = InstallPatchClasses(harmony, loadableTypes);
         }
         catch (Exception exception)
         {
@@ -95,6 +99,12 @@ public static class Entry
         foreach (var type in types)
         {
             if (!type.IsClass || !type.IsDefined(typeof(HarmonyPatch), inherit: false))
+            {
+                continue;
+            }
+
+            // 带模块标记的类由 FeatureBootstrap 成组安装，这里不能重复装。
+            if (Core.Features.FeatureBootstrap.IsManagedByFeature(type))
             {
                 continue;
             }

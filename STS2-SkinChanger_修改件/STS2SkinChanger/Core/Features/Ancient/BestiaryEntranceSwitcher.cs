@@ -10,6 +10,8 @@ using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 /// <summary>
@@ -371,6 +373,7 @@ internal static class BestiaryEntranceSwitcher
     private sealed record LabelSnapshot(Control Node, string OriginalText);
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(NClickableControl), "OnReleaseHandler")]
 internal static class BestiaryEntranceReleasePatch
 {
@@ -378,6 +381,7 @@ internal static class BestiaryEntranceReleasePatch
         BestiaryEntranceSwitcher.RememberReleased(__instance);
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(NClickableControl), nameof(NClickableControl.ForceClick))]
 internal static class BestiaryEntranceForceClickPatch
 {
@@ -385,6 +389,7 @@ internal static class BestiaryEntranceForceClickPatch
         BestiaryEntranceSwitcher.RememberReleased(__instance);
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(NSubmenuStack), nameof(NSubmenuStack.Push))]
 internal static class BestiaryEntrancePushPatch
 {
@@ -393,6 +398,7 @@ internal static class BestiaryEntrancePushPatch
         !BestiaryEntranceSwitcher.TryRedirectBestiaryOpen(__instance, screen);
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(NCompendiumSubmenu), nameof(NCompendiumSubmenu._Ready))]
 internal static class BestiaryEntranceReadyPatch
 {
@@ -401,6 +407,7 @@ internal static class BestiaryEntranceReadyPatch
         BestiaryEntranceSwitcher.ScanCompendium(__instance);
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(NCompendiumSubmenu), nameof(NCompendiumSubmenu.OnSubmenuOpened))]
 internal static class BestiaryEntranceOpenedPatch
 {

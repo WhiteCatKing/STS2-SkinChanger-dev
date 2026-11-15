@@ -6,12 +6,15 @@ using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 // NBestiaryLayoutDecimillipede.Setup appends new segment creatures to _creatures and to
 // _creatureContainer without clearing the previous set. Rebuilding the same entry after a skin
 // change therefore stacks another full set of segments on top of the old skin. Clear both the
 // way the game's Cleanup would if it owned these nodes; the layout rebuild then starts clean.
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(NBestiaryLayoutDecimillipede), "Setup")]
 internal static class DecimillipedeBestiarySetupCleanupPatch
 {

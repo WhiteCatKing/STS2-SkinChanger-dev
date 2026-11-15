@@ -6,6 +6,8 @@ using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.addons.mega_text;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Core;
 
 internal static class EventSkinRuntime
@@ -107,6 +109,7 @@ internal static class EventSkinRuntime
     }
 }
 
+[FeaturePatch(FeatureIds.Event)]
 [HarmonyPatch]
 internal static class EventSkinResourceAvailabilityPatch
 {
@@ -127,6 +130,7 @@ internal static class EventSkinResourceAvailabilityPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Event)]
 [HarmonyPatch(typeof(LocTable), nameof(LocTable.GetRawText))]
 internal static class EventSkinTextPatch
 {
@@ -141,6 +145,7 @@ internal static class EventSkinTextPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Event)]
 [HarmonyPatch(typeof(EventModel), nameof(EventModel.CreateVfx))]
 internal static class EventSkinVfxPatch
 {
@@ -162,6 +167,7 @@ internal static class EventSkinVfxPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Event)]
 [HarmonyPatch(typeof(NEventLayout), nameof(NEventLayout.SetPortrait))]
 internal static class EventSkinPortraitTrackingPatch
 {

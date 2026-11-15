@@ -164,6 +164,9 @@
          exercised here rather than through the game's UI. -->
     <Compile Include="../../STS2SkinChanger/Core/SkinPriorityDisplayPolicy.cs"
              Link="SkinPriorityDisplayPolicy.cs" />
+    <!-- 模块化安装的隔离规则：一个模块装失败只回滚它自己。 -->
+    <Compile Include="../../STS2SkinChanger/Core/Features/FeatureIds.cs" Link="FeatureIds.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/Features/FeatureRegistry.cs" Link="FeatureRegistry.cs" />
   </ItemGroup>
 
   <Target Name="CopyFrameworkCompatibilityFixture" AfterTargets="Build">

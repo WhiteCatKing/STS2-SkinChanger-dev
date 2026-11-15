@@ -33,6 +33,8 @@ using MegaCrit.Sts2.Core.Unlocks;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 internal static class AncientCompendiumEntry
@@ -3246,6 +3248,7 @@ internal static class ManagedAncientStaticBackground
     }
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(NAncientEventLayout), "InitializeVisuals")]
 internal static class ManagedAncientSceneAnimationPatch
 {
@@ -3274,6 +3277,7 @@ internal static class ManagedAncientSceneAnimationPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(NAncientBgContainer), "OnWindowChange")]
 internal static class ManagedAncientStaticBackgroundWindowPatch
 {
@@ -3281,6 +3285,7 @@ internal static class ManagedAncientStaticBackgroundWindowPatch
         ManagedAncientStaticBackground.FitChildren(__instance);
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(EventModel), nameof(EventModel.CreateBackgroundScene))]
 internal static class AncientSceneResultPatch
 {
@@ -3334,6 +3339,7 @@ internal static class AncientSceneResultPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(NAncientEventLayout), nameof(NAncientEventLayout._ExitTree))]
 internal static class AncientRuntimeProviderScopeExitPatch
 {
@@ -3343,6 +3349,7 @@ internal static class AncientRuntimeProviderScopeExitPatch
         CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.MapIcon), MethodType.Getter)]
 internal static class AncientMapIconResultPatch
 {
@@ -3355,6 +3362,7 @@ internal static class AncientMapIconResultPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.MapIconOutline), MethodType.Getter)]
 internal static class AncientMapIconOutlineResultPatch
 {
@@ -3367,6 +3375,7 @@ internal static class AncientMapIconOutlineResultPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.RunHistoryIcon), MethodType.Getter)]
 internal static class AncientRunHistoryIconResultPatch
 {
@@ -3379,6 +3388,7 @@ internal static class AncientRunHistoryIconResultPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Ancient)]
 [HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.RunHistoryIconOutline), MethodType.Getter)]
 internal static class AncientRunHistoryIconOutlineResultPatch
 {

@@ -9,6 +9,8 @@ using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.addons.mega_text;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 // Leases belong to an NCard AND its current model/provider, not a card type or a shared Texture.
@@ -286,6 +288,7 @@ internal partial class StatefulCardArtWatcher : Node
     }
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch(typeof(NCard), nameof(NCard._ExitTree))]
 internal static class StatefulCardTreeExitPatch
 {

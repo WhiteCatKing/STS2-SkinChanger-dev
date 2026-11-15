@@ -9,6 +9,8 @@ using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 // Cosmetics observe the native action; they never join, replace or await its Task chain.
@@ -136,6 +138,7 @@ internal partial class StatefulCardPulse : Node
     public override void _ExitTree() => Undo();
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch(typeof(NExhaustPileButton), nameof(NExhaustPileButton.Initialize))]
 internal static class StatefulExhaustInitializePatch
 {
@@ -146,6 +149,7 @@ internal static class StatefulExhaustInitializePatch
     }
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch(typeof(NCombatCardPile), nameof(NCombatCardPile.AnimOut))]
 internal static class StatefulExhaustHidePatch
 {

@@ -23,6 +23,8 @@ using MegaCrit.sts2.Core.Nodes.TopBar;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 internal enum AppearanceSelectionRequestState
@@ -2582,6 +2584,7 @@ internal partial class CharacterAppearanceRuntimeNode : Node
         CharacterAppearanceRuntime.ClearPendingSelection();
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NRun), nameof(NRun._Ready))]
 internal static class InRunCharacterAppearanceRuntimePatch
 {
@@ -2607,6 +2610,7 @@ internal static class InRunCharacterAppearanceRuntimePatch
     }
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NTopBarRoomIcon), "UpdateIcon")]
 internal static class TopBarRoomIconSkinTexturePatch
 {
@@ -2628,6 +2632,7 @@ internal static class TopBarRoomIconSkinTexturePatch
     }
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NBossMapPoint), nameof(NBossMapPoint._Ready))]
 internal static class BossMapPointSkinPresentationPatch
 {
@@ -2637,6 +2642,7 @@ internal static class BossMapPointSkinPresentationPatch
         CharacterAppearanceRuntime.RefreshBossMapPointPresentation(__instance);
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NCreature), nameof(NCreature._Ready))]
 internal static class CharacterAppearanceCreatureReadyPatch
 {
@@ -2645,6 +2651,7 @@ internal static class CharacterAppearanceCreatureReadyPatch
         CharacterAppearanceRuntime.OnCreatureReady(__instance);
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom.PositionPlayersAndPets))]
 internal static class CharacterAppearancePlayerLayoutPatch
 {
@@ -2653,6 +2660,7 @@ internal static class CharacterAppearancePlayerLayoutPatch
         CharacterAppearanceRuntime.CapturePlayerAndPetLayout(scaling, fullyCenterPlayers);
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom.Create))]
 internal static class CombatRoomRuntimeProviderScopePatch
 {
@@ -2662,6 +2670,7 @@ internal static class CombatRoomRuntimeProviderScopePatch
         CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnCombatRoom(visuals);
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom._ExitTree))]
 internal static class CombatRoomRuntimeProviderScopeExitPatch
 {
@@ -2670,6 +2679,7 @@ internal static class CombatRoomRuntimeProviderScopeExitPatch
     private static void Postfix() => CharacterAppearanceRuntime.ClearCombatRuntimeGroups();
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch]
 internal static class CharacterAppearanceBoundsPatch
 {
@@ -2683,6 +2693,7 @@ internal static class CharacterAppearanceBoundsPatch
         CharacterAppearanceRuntime.CorrectBoundsForVisualTransforms(__instance, boundsContainer);
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch]
 internal static class CharacterAppearanceOrbPositionPatch
 {

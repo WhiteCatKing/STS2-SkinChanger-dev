@@ -5,6 +5,8 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using System.Reflection;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Core;
 
 /// <summary>
@@ -217,6 +219,7 @@ internal static class ManagedCharacterAnimationBridge
     private sealed record AnimationRoute(string[] Candidates, bool QueueIdle);
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NCreature), "_Ready")]
 internal static class ManagedCharacterAnimationReadyPatch
 {
@@ -227,6 +230,7 @@ internal static class ManagedCharacterAnimationReadyPatch
             __instance.Entity?.IsDead == true ? "Dead" : "Idle");
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NCreature), nameof(NCreature.SetAnimationTrigger))]
 internal static class ManagedCharacterAnimationTriggerPatch
 {

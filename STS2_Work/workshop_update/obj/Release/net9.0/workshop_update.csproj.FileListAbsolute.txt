@@ -70,3 +70,4 @@ D:\Storage\Desktop\工作2\STS2_Work\workshop_update\obj\Release\net9.0\refint\w
 D:\Storage\Desktop\工作2\STS2_Work\workshop_update\obj\Release\net9.0\workshop_update.pdb
 D:\Storage\Desktop\工作2\STS2_Work\workshop_update\obj\Release\net9.0\workshop_update.genruntimeconfig.cache
 D:\Storage\Desktop\工作2\STS2_Work\workshop_update\obj\Release\net9.0\ref\workshop_update.dll
+D:\Storage\Desktop\工作2\STS2_Work\workshop_update\obj\Release\net9.0\workshop_update.sourcelink.json

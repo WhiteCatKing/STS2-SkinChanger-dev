@@ -1,6 +1,8 @@
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Models;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 /// <summary>
@@ -9,6 +11,7 @@ namespace STS2SkinChanger.Ui;
 /// No provider name is hard-coded; the scene naming contract is documented in
 /// <see cref="STS2SkinChanger.Catalog.ProviderVariantOptions"/>.
 /// </summary>
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(CharacterModel), "get_MerchantAnimPath")]
 internal static class ProviderMerchantVariantPathPatch
 {
@@ -22,6 +25,7 @@ internal static class ProviderMerchantVariantPathPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(CharacterModel), "get_RestSiteAnimPath")]
 internal static class ProviderRestSiteVariantPathPatch
 {

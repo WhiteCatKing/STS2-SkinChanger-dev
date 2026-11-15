@@ -12,6 +12,8 @@ using MegaCrit.Sts2.Core.Runs;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Core;
 
 internal sealed record BackgroundOption(
@@ -3780,6 +3782,7 @@ internal static class BackgroundSkinService
     }
 }
 
+[FeaturePatch(FeatureIds.Background)]
 [HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom.SetUpBackground))]
 internal static class BackgroundSkinRoomPatch
 {
@@ -3793,6 +3796,7 @@ internal static class BackgroundSkinRoomPatch
 /// The pack that redrew the tent must therefore be on top before that scene binds its skeleton,
 /// otherwise the fight keeps drawing the vanilla tent even though the event shows the new one.
 /// </summary>
+[FeaturePatch(FeatureIds.Background)]
 [HarmonyPatch(typeof(EncounterModel), nameof(EncounterModel.CreateBackground))]
 internal static class FakeMerchantCombatArtPatch
 {
@@ -3811,6 +3815,7 @@ internal static class FakeMerchantCombatArtPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Background)]
 [HarmonyPatch(typeof(EncounterModel), nameof(EncounterModel.CreateBackground))]
 internal static class BackgroundSkinCreatePatch
 {

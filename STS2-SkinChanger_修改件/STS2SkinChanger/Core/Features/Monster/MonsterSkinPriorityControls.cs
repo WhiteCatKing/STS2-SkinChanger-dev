@@ -6,6 +6,8 @@ using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 internal static partial class ContextualSkinControls
@@ -808,6 +810,7 @@ internal static partial class ContextualSkinControls
         IReadOnlyList<string> GroupIds);
 }
 
+[FeaturePatch(FeatureIds.Monster)]
 [HarmonyPatch(typeof(NBestiary), nameof(NBestiary.OnSubmenuOpened))]
 internal static class BestiaryInitialSkinNamePatch
 {

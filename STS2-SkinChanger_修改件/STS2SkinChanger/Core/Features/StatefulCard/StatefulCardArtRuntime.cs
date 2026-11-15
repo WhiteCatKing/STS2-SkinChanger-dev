@@ -10,6 +10,8 @@ using MegaCrit.Sts2.Core.HoverTips;
 using STS2SkinChanger.Pck;
 using STS2SkinChanger.Catalog;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Core;
 
 // One winning provider owns the whole card. Only its pure state-art resolver is called;
@@ -238,6 +240,7 @@ internal static class StatefulCardArtRuntime
             new Dictionary<string, AncientCardPortrait>(), ProviderId: providerId) { StatefulArt = contract });
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch(typeof(LocManager), nameof(LocManager.SetLanguage))]
 internal static class StatefulCardLocalizationPatch
 {

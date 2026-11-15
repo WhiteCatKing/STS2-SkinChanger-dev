@@ -24,6 +24,8 @@ using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Unlocks;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 /// <summary>
@@ -1796,6 +1798,7 @@ internal static class MerchantRuntimeAppearance
     }
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NMapScreen), nameof(NMapScreen.Open))]
 internal static class MerchantRoomPrewarmPatch
 {
@@ -1813,6 +1816,7 @@ internal static class MerchantRoomPrewarmPatch
 // factory, so the old "throw away the preloaded room and create a fresh one" path has no entry
 // point. Only the behaviour focus and the runtime-scope bookkeeping survive; player visuals are
 // applied by MerchantRoomPlayerAppearancePatch below, which already runs on _Ready.
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._Ready))]
 internal static class MerchantRoomCreateAppearancePatch
 {
@@ -1887,6 +1891,7 @@ internal static class MerchantRoomConcreteReadyPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._Ready))]
 internal static class MerchantRoomPlayerAppearancePatch
 {
@@ -1946,6 +1951,7 @@ internal static class MerchantRoomPlayerAppearancePatch
     }
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._EnterTree))]
 internal static class MerchantRoomPreviewEnterTreePatch
 {
@@ -1955,6 +1961,7 @@ internal static class MerchantRoomPreviewEnterTreePatch
         !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._ExitTree))]
 internal static class MerchantRoomPreviewExitTreePatch
 {
@@ -1974,6 +1981,7 @@ internal static class MerchantRoomPreviewExitTreePatch
     }
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant._Ready))]
 internal static class FakeMerchantAppearancePatch
 {
@@ -2021,6 +2029,7 @@ internal static class FakeMerchantAppearancePatch
     }
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant._EnterTree))]
 internal static class FakeMerchantPreviewEnterTreePatch
 {
@@ -2030,6 +2039,7 @@ internal static class FakeMerchantPreviewEnterTreePatch
         !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant._ExitTree))]
 internal static class FakeMerchantPreviewExitTreePatch
 {
@@ -2049,6 +2059,7 @@ internal static class FakeMerchantPreviewExitTreePatch
     }
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NRestSiteRoom), nameof(NRestSiteRoom._Ready))]
 internal static class RestSitePlayerAppearancePatch
 {
@@ -2061,6 +2072,7 @@ internal static class RestSitePlayerAppearancePatch
     }
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NMerchantButton), nameof(NMerchantButton._Ready))]
 internal static class MerchantButtonProviderReadyBridgePatch
 {
@@ -2081,6 +2093,7 @@ internal static class MerchantButtonProviderReadyBridgePatch
     }
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NMerchantInventory), nameof(NMerchantInventory._Ready))]
 internal static class MerchantInventoryProviderReadyBridgePatch
 {
@@ -2095,6 +2108,7 @@ internal static class MerchantInventoryProviderReadyBridgePatch
         MerchantRuntimeAppearance.CompleteSelectedMerchantNodeReady(__instance, __state);
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NMerchantHand), nameof(NMerchantHand._Ready))]
 internal static class MerchantHandProviderReadyBridgePatch
 {
@@ -2114,6 +2128,7 @@ internal static class MerchantHandProviderReadyBridgePatch
 // so allowing a slot's purchase task to run would invoke MerchantEntry.OnTryPurchase and produce
 // null-reference errors. Return a completed task only for preview slots; live shop purchases are
 // untouched.
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NMerchantSlot), "OnSelected")]
 internal static class MerchantPreviewPurchaseBlockPatch
 {

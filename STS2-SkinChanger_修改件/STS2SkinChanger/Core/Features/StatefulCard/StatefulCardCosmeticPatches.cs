@@ -12,8 +12,11 @@ using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Vfx;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch]
 internal static class StatefulCardTooltipPatch
 {
@@ -37,6 +40,7 @@ internal static class StatefulCardTooltipPatch
     }
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch(typeof(NCard), "ActivateRewardScreenGlow")]
 internal static class StatefulRewardGlowPatch
 {
@@ -47,6 +51,7 @@ internal static class StatefulRewardGlowPatch
     }
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch(typeof(CardModel), nameof(CardModel.CreateOverlay))]
 internal static class StatefulInfectionOverlayPatch
 {
@@ -66,6 +71,7 @@ internal static class StatefulInfectionOverlayPatch
     }
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch(typeof(NCharacterSelectScreen), "BeginRun")]
 internal static class StatefulCharacterSceneExitPatch
 {
@@ -81,6 +87,7 @@ internal static class StatefulCharacterSceneExitPatch
     }
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch]
 internal static class StatefulCardPlayCosmeticPatch
 {
@@ -111,6 +118,7 @@ internal static class StatefulCardPlayCosmeticPatch
     }
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch(typeof(AbstractModel), nameof(AbstractModel.AfterDamageGiven))]
 internal static class StatefulDamageCosmeticPatch
 {
@@ -133,6 +141,7 @@ internal static class StatefulDamageCosmeticPatch
     }
 }
 
+[FeaturePatch(FeatureIds.StatefulCard)]
 [HarmonyPatch(typeof(AbstractModel), nameof(AbstractModel.AfterSideTurnStart))]
 internal static class StatefulSideTurnCosmeticPatch
 {

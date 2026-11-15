@@ -7,6 +7,8 @@ using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Vfx;
 using MegaCrit.Sts2.Core.Nodes.Vfx.Cards;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 /// <summary>
@@ -23,6 +25,7 @@ namespace STS2SkinChanger.Ui;
 /// path; the animation then only reads already-loaded textures. Everything is best-effort: a
 /// failure here never blocks the game's transform flow.
 /// </summary>
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NTransformPreview), nameof(NTransformPreview.Initialize))]
 internal static class TransformPreviewPortraitPreloadPatch
 {
@@ -62,6 +65,7 @@ internal static class TransformPreviewPortraitPreloadPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCardTransformVfx), nameof(NCardTransformVfx.Create))]
 internal static class CardTransformVfxPortraitPreloadPatch
 {
@@ -98,6 +102,7 @@ internal static class CardTransformVfxPortraitPreloadPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCardTransformShineVfx), nameof(NCardTransformShineVfx.Create))]
 internal static class CardTransformShineVfxPortraitPreloadPatch
 {

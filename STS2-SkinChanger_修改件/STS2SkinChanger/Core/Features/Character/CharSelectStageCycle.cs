@@ -6,6 +6,8 @@ using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 /// <summary>
@@ -722,6 +724,7 @@ internal static class CharSelectStageCycle
         string? DataDirectory = null);
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NCharacterSelectScreen), "SelectCharacter")]
 internal static class CharSelectStageCyclePatch
 {

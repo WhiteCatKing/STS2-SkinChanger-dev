@@ -3,8 +3,11 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Vfx;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Core;
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NNecrobinderVfx), nameof(NNecrobinderVfx._Ready))]
 internal static class NecrobinderOptionalHeadReadyPatch
 {
@@ -28,6 +31,7 @@ internal static class NecrobinderOptionalHeadReadyPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NNecrobinderVfx), "UpdateFlameVisibility")]
 internal static class NecrobinderOptionalHeadAnimationPatch
 {

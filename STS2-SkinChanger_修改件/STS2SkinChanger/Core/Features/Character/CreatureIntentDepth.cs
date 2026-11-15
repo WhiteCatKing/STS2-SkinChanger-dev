@@ -5,6 +5,8 @@ using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 // Keep the provider's baseline and undo only our own last write. A replacement skin
@@ -147,6 +149,7 @@ internal static class CreatureIntentDepth
     }
 }
 
+[FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NCreature), nameof(NCreature.UpdateIntent))]
 internal static class CreatureIntentDepthPatch
 {

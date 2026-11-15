@@ -3,6 +3,8 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Core;
 
 /// <summary>
@@ -85,6 +87,7 @@ internal static class CombatHudResourceLifecycle
 /// A failing UI mod prefix must not strand the game's subscriptions on a freed combat UI.
 /// Retain the exception for Godot's log; finish only the native cancellation/unsubscription.
 /// </summary>
+[FeaturePatch(FeatureIds.Background)]
 [HarmonyPatch(typeof(NCombatUi), nameof(NCombatUi._ExitTree))]
 internal static class CombatUiExitCleanupPatch
 {

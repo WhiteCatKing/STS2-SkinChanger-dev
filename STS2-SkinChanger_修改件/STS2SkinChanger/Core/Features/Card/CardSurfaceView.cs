@@ -5,6 +5,8 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 // Lease only the properties we change. No full layout restore, no global rarity patch.
@@ -82,6 +84,7 @@ internal static class CardSurfaceView
     }
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NTinyCard), nameof(NTinyCard.SetCard))]
 internal static class TinyCardSelectedSurfacePatch
 {
@@ -89,6 +92,7 @@ internal static class TinyCardSelectedSurfacePatch
     private static void Postfix(NTinyCard __instance, CardModel card) => CardSurfaceView.BindTinyCard(__instance, card);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NTinyCard), nameof(NTinyCard.Set))]
 internal static class TinyCardAnonymousSurfacePatch
 {

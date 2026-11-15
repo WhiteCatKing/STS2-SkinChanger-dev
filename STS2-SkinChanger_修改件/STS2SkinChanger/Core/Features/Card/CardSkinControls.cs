@@ -15,6 +15,8 @@ using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Ui;
 
 internal static class CardSkinControls
@@ -2486,12 +2488,14 @@ internal static class CardInspectSkinControls
     }
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary._Ready))]
 internal static class CardLibrarySkinReadyPatch
 {
     private static void Postfix(NCardLibrary __instance) => CardSkinControls.Attach(__instance);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NInspectCardScreen), nameof(NInspectCardScreen._Ready))]
 internal static class CardInspectSkinReadyPatch
 {
@@ -2499,6 +2503,7 @@ internal static class CardInspectSkinReadyPatch
         CardInspectSkinControls.Attach(__instance);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NInspectCardScreen), "UpdateCardDisplay")]
 internal static class CardInspectSkinDisplayPatch
 {
@@ -2507,6 +2512,7 @@ internal static class CardInspectSkinDisplayPatch
         CardInspectSkinControls.Sync(__instance);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary.OnSubmenuOpened))]
 internal static class CardLibrarySkinOpenedPatch
 {
@@ -2517,6 +2523,7 @@ internal static class CardLibrarySkinOpenedPatch
         CardSkinControls.SyncToSelectedFilter(__instance);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch]
 internal static class CardLibraryAvailabilityFilterPatch
 {
@@ -2532,6 +2539,7 @@ internal static class CardLibraryAvailabilityFilterPatch
         CardSkinControls.ApplyAvailabilityFilter(__instance, ref filter);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCardLibrary), "UpdateCardPoolFilter")]
 internal static class CardLibraryPoolSkinPatch
 {
@@ -2539,6 +2547,7 @@ internal static class CardLibraryPoolSkinPatch
         CardSkinControls.ShowForFilter(__instance, filter);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch]
 internal static class CardLibraryInitialPortraitPreloadPatch
 {
@@ -2567,6 +2576,7 @@ internal static class CardLibraryInitialPortraitPreloadPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCardLibraryGrid), "AssignCardsToRow")]
 internal static class CardLibraryRowPortraitPreloadPatch
 {
@@ -2579,6 +2589,7 @@ internal static class CardLibraryRowPortraitPreloadPatch
             __instance.VisibleCards.Skip(startIndex).Take(row.Count));
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch]
 internal static class CardRewardPortraitPreloadPatch
 {
@@ -2592,6 +2603,7 @@ internal static class CardRewardPortraitPreloadPatch
         SkinService.PreloadCardPortraits(options.Select(option => option.Card));
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(CardModel), nameof(CardModel.Portrait), MethodType.Getter)]
 internal static class CardPortraitResultPatch
 {
@@ -2600,6 +2612,7 @@ internal static class CardPortraitResultPatch
         CardSkinControls.ReplacePortrait(__instance, ref __result);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCard), nameof(NCard.UpdateVisuals))]
 internal static class CardPreviewModeCapturePatch
 {
@@ -2608,6 +2621,7 @@ internal static class CardPreviewModeCapturePatch
         CardSkinControls.RememberPreviewMode(__instance, previewMode);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCard), "ReloadOverlay")]
 internal static class CardBuiltInOverlayPatch
 {
@@ -2620,6 +2634,7 @@ internal static class CardBuiltInOverlayPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCard), "set_Model")]
 internal static class CardLayoutModelRebindPatch
 {
@@ -2630,6 +2645,7 @@ internal static class CardLayoutModelRebindPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch]
 internal static class CardLayoutPoolReleasePatch
 {
@@ -2643,6 +2659,7 @@ internal static class CardLayoutPoolReleasePatch
     private static void Prefix(NCard __instance) => CardSkinControls.ReleasePresentationForReuse(__instance);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch]
 internal static class CardLayoutResetPatch
 {
@@ -2654,6 +2671,7 @@ internal static class CardLayoutResetPatch
         CardSkinControls.RestoreBaselineLayout(__instance);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch]
 internal static class CardLayoutBaselineCapturePatch
 {
@@ -2665,6 +2683,7 @@ internal static class CardLayoutBaselineCapturePatch
         CardSkinControls.CaptureBaselineLayout(__instance);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch]
 internal static class CardLayoutFinalPatch
 {
@@ -2698,6 +2717,7 @@ internal static class CardLayoutFinalPatch
     }
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCard), nameof(NCard._EnterTree))]
 internal static class CardTreeReentrySkinPatch
 {
@@ -2706,6 +2726,7 @@ internal static class CardTreeReentrySkinPatch
         CardSkinControls.ReapplyCardAfterTreeEntry(__instance);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCardPlayQueue), nameof(NCardPlayQueue.OnLocalCardPlayed))]
 internal static class LocalCardPlayQueuePortraitPatch
 {
@@ -2714,6 +2735,7 @@ internal static class LocalCardPlayQueuePortraitPatch
         CardSkinControls.ReapplyQueuedCardPortraits(__instance);
 }
 
+[FeaturePatch(FeatureIds.Card)]
 [HarmonyPatch(typeof(NCardPlayQueue), nameof(NCardPlayQueue.UpdateCardBeforeExecution))]
 internal static class CardPlayQueueRebindPortraitPatch
 {

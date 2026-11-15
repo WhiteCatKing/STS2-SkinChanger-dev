@@ -3,6 +3,8 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Nodes.Events.Custom;
 
+using STS2SkinChanger.Core.Features;
+
 namespace STS2SkinChanger.Core;
 
 // ============================================================================================
@@ -246,6 +248,7 @@ internal static class FakeMerchantEventFrame
     }
 }
 
+[FeaturePatch(FeatureIds.Merchant)]
 [HarmonyPatch(typeof(NFakeMerchant), "_Ready")]
 internal static class FakeMerchantEventFramePatch
 {
