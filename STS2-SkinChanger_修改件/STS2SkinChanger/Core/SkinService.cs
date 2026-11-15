@@ -6026,31 +6026,13 @@ internal static partial class SkinService
         {
             var canonicalPath = pair.Key;
             var selectedResource = pair.Value;
-            Resource? previousResource = null;
-            if (ResourceLoader.HasCached(canonicalPath))
-            {
-                var cached = ResourceLoader.Load<Resource>(
-                    canonicalPath,
-                    null,
-                    ResourceLoader.CacheMode.Reuse);
-                if (cached != null && !ReferenceEquals(cached, selectedResource))
-                {
-                    previousResource = cached;
-                }
-            }
-
             var aliasPath = resourcePaths.GetValueOrDefault(canonicalPath);
             if (string.IsNullOrWhiteSpace(aliasPath))
             {
                 aliasPath = selectedResource.ResourcePath;
             }
 
-            selectedResource.TakeOverPath(canonicalPath);
-            ownedResources.Add(new CanonicalRuntimeResourceOwnershipEntry(
-                canonicalPath,
-                aliasPath,
-                selectedResource,
-                previousResource));
+            BindRuntimeDependency(canonicalPath, aliasPath, selectedResource, ownedResources);
         }
 
         return restoreOwnership
@@ -6803,13 +6785,15 @@ internal static partial class SkinService
                 {
                     if (GodotObject.IsInstanceValid(entry.SelectedResource))
                     {
-                        entry.SelectedResource.TakeOverPath(entry.AliasPath);
+                        RestoreRuntimeResourceAlias(entry.SelectedResource, entry.AliasPath, entry.CanonicalPath);
                     }
 
                     if (entry.PreviousResource != null &&
                         GodotObject.IsInstanceValid(entry.PreviousResource))
                     {
-                        entry.PreviousResource.TakeOverPath(entry.CanonicalPath);
+                        var displaced = ResourceLoader.HasCached(entry.CanonicalPath)
+                            ? ResourceLoader.Load<Resource>(entry.CanonicalPath, null, ResourceLoader.CacheMode.Reuse) : null;
+                        TakeOverRuntimeCanonicalPath(entry.PreviousResource, entry.CanonicalPath, displaced);
                     }
                 }
                 catch (Exception exception)

@@ -10,6 +10,7 @@ internal static partial class SkinService
     private static long _sessionPreparedBytes;
     private sealed record SourceAlias(string Path);
     private static readonly ConditionalWeakTable<Resource, SourceAlias> RuntimeSourceAliases = new();
+    private static long _retainedRuntimePathGeneration;
 
     internal static void PrefetchCharacterChoices(string currentGroup)
     {
@@ -75,7 +76,32 @@ internal static partial class SkinService
         RuntimeSourceAliases.Add(resource, new(alias));
         if (ReferenceEquals(previous, resource)) return;
         bindings.Add(new(canonical, alias, resource, previous));
+        TakeOverRuntimeCanonicalPath(resource, canonical, previous);
+    }
+
+    private static void TakeOverRuntimeCanonicalPath(Resource resource, string canonical, Resource? previous)
+    {
+        // Godot take_over_path clears the displaced Resource's ResourcePath even while
+        // a live scene still owns it. Keep that resource on its immutable private path
+        // BEFORE the next graph claims the canonical name. Joan's native palette and
+        // stage handlers identify their live atlas/skeleton through this exact path.
+        if (previous != null && !ReferenceEquals(previous, resource) && RuntimeSourceAliases.TryGetValue(previous, out var displaced) &&
+            !displaced.Path.Equals(canonical, StringComparison.OrdinalIgnoreCase))
+            RestoreRuntimeResourceAlias(previous, displaced.Path, canonical);
         resource.TakeOverPath(canonical);
+    }
+
+    private static void RestoreRuntimeResourceAlias(Resource resource, string alias, string canonical)
+    {
+        // A text scene may already have decoded another copy under this immutable alias.
+        // Returning an older resource there must not erase THAT live copy's path either.
+        var target = alias;
+        if (ResourceLoader.HasCached(alias) && !ReferenceEquals(
+                ResourceLoader.Load<Resource>(alias, null, ResourceLoader.CacheMode.Reuse), resource))
+            target = "res://sts2_skin_runtime/retained/" + Interlocked.Increment(ref _retainedRuntimePathGeneration) + "/" +
+                (alias.StartsWith("res://", StringComparison.Ordinal) ? alias[6..] : alias);
+        resource.TakeOverPath(target);
+        if (resource is PackedScene) NonCombatSceneIdentity.Register(target, canonical);
     }
 
     private static Resource? TryGetBoundRuntimeDependency(string canonical, string alias)

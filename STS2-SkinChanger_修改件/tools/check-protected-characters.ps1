@@ -11,7 +11,7 @@ try {
     $project = 'tests/STS2SkinChanger.RuntimeTests/STS2SkinChanger.RuntimeTests.csproj'
     dotnet build $project -c Release --nologo -v:q "-p:GameAssemblyDir=$GameAssemblyDir"
     if ($LASTEXITCODE -ne 0) { throw 'Protected regression build failed' }
-    foreach ($test in @('--test-runtime-safety', '--test-protected-boundaries')) {
+    foreach ($test in @('--test-runtime-safety', '--test-protected-boundaries', '--test-preview-binding')) {
         dotnet run --no-build --project $project -c Release "-p:GameAssemblyDir=$GameAssemblyDir" -- $test
         if ($LASTEXITCODE -ne 0) { throw "Protected regression failed: $test" }
     }
