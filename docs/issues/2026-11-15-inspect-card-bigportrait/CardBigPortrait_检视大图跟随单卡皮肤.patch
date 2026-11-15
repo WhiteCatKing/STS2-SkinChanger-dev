@@ -1,0 +1,31 @@
+diff --git "a/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Ui/CardSkinControls.cs" "b/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Ui/CardSkinControls.cs"
+index 5c7aaa2..5a16bc5 100644
+--- "a/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Ui/CardSkinControls.cs"
++++ "b/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Ui/CardSkinControls.cs"
+@@ -2600,6 +2600,26 @@ internal static class CardPortraitResultPatch
+         CardSkinControls.ReplacePortrait(__instance, ref __result);
+ }
+ 
++// v0.113 起检视大图界面（NInspectCardScreen.UpdateCardDisplay）在 UpdateVisuals 之后再调用
++// NCard.SetPortraitTexture(CardModel.BigPortrait)。BigPortrait 直接从全局资源读
++// packed/card_portraits/<池>/<id>.png，不经过上面的 Portrait 补丁：单卡选择被覆盖成
++// 全局包栈栈顶那个包的同名 PNG，或（皮肤图不在该路径时）游戏原版图。
++// 这里让 BigPortrait 返回与 Portrait 相同的换肤结果；无生效皮肤请求时保留原版高清图。
++// 用反射取目标：正式版 v0.107.1 没有 BigPortrait，Prepare 返回 false 时整条补丁跳过；
++// 不能写 nameof(CardModel.BigPortrait)，否则按 v0.113 引用编译后在 v0.107.1 上找不到成员。
++[HarmonyPatch]
++internal static class CardBigPortraitResultPatch
++{
++    private static System.Reflection.MethodBase? TargetMethod() =>
++        AccessTools.PropertyGetter(typeof(CardModel), "BigPortrait");
++
++    private static bool Prepare() => TargetMethod() != null;
++
++    [HarmonyPriority(Priority.Last)]
++    private static void Postfix(CardModel __instance, ref Texture2D __result) =>
++        CardSkinControls.ReplacePortrait(__instance, ref __result);
++}
++
+ [HarmonyPatch(typeof(NCard), nameof(NCard.UpdateVisuals))]
+ internal static class CardPreviewModeCapturePatch
+ {
