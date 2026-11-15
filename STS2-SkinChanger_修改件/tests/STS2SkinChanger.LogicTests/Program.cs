@@ -2055,6 +2055,7 @@ MerchantFigureRestorePolicyTests.Run();
 FeatureRegistryTests.Run();
 SkinCacheStorageTests.Run();
 ProviderActivationSchedulePolicyTests.Run();
+RuntimeResourceRestoreTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
 internal static class DirectCharacterRuntimeFixture

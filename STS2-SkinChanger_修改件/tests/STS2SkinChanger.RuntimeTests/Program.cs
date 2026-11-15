@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-switch-resource-lifetime")
+{
+    SwitchResourceLifetimeTests.Run();
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--test-czn-compatibility")
 {
     CznCompatibilityTests.Run(args[1], args[2]);

@@ -92,6 +92,7 @@
              Link="FrameworkProviderInitializerPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterCombatSceneInstantiationPolicy.cs"
              Link="CharacterCombatSceneInstantiationPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/RuntimeResourceRestorePolicy.cs" Link="RuntimeResourceRestorePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/FrameworkAssemblyLoadContextPolicy.cs"
              Link="FrameworkAssemblyLoadContextPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/FrameworkSelectionSynchronizer.cs"

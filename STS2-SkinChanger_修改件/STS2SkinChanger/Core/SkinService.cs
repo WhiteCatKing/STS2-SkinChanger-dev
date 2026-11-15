@@ -4639,7 +4639,11 @@ internal static partial class SkinService
                 selection,
                 resourcePaths,
                 includeProviderDependencies: true);
-            MountContextualFullRuntimeProviderPacks(catalog, selection);
+            // The local selection was already mounted with its correction overlay. Only
+            // a different remote selection needs a temporary full-pack promotion here.
+            if (CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
+                    selection, Config.GetSelection(groupId)))
+                MountContextualFullRuntimeProviderPacks(catalog, selection);
             if (prepared.OverlayPath != null &&
                 !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
             {
@@ -4668,9 +4672,8 @@ internal static partial class SkinService
                     catalog.ResolveVisualProviderId(selection));
             }
 
-            var restoreGroups = prepared.RestoreGroups
-                .Append(groupId)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var restoreGroups = RuntimeResourceRestorePolicy.GetGroups(groupId, prepared.RestoreGroups,
+                selection, Config.GetSelection(groupId));
             return new MountedRuntimeResourceScope(restoreGroups, ManualCharacterVariantBridge.BeginScope(groupId));
         }
     }
@@ -6739,7 +6742,7 @@ internal static partial class SkinService
                 manualModeScope?.Dispose();
                 try
                 {
-                    MountOverlay(restoreGroups);
+                    if (restoreGroups.Count > 0) MountOverlay(restoreGroups);
                 }
                 catch (Exception exception)
                 {
@@ -7466,6 +7469,7 @@ internal static partial class SkinService
         // priority, so an existing deterministic pack can restore paths shadowed by a temporary
         // runtime pack without writing another multi-hundred-megabyte copy to disk.
         var mountWatch = Stopwatch.StartNew();
+        ModLog.Info($"[资源挂载] 开始 {category}：{System.IO.Path.GetFileName(overlayPath)}；文件={files.Count}。");
         if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
         {
             MountedOverlayCache.Remove(signature);
@@ -7474,6 +7478,7 @@ internal static partial class SkinService
 
         PerfTrace.Report($"覆盖包[{category}] LoadResourcePack",
             mountWatch.Elapsed.TotalMilliseconds, files.Count);
+        ModLog.Info($"[资源挂载] 完成 {category}：{System.IO.Path.GetFileName(overlayPath)}。");
         return writtenBytes;
     }
 

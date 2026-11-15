@@ -24,6 +24,7 @@ internal static class OverlayCacheStore
     private const long MaxBytes = 3L * 1024 * 1024 * 1024;
 
     private static readonly object Sync = new();
+    private static readonly MountedArchiveLifetime Lifetime = new();
     private static string? _stamp;
 
     internal static string DirectoryPath => Path.Combine(
@@ -89,6 +90,7 @@ internal static class OverlayCacheStore
                 }
 
                 File.SetLastAccessTimeUtc(path, DateTime.UtcNow);
+                Lifetime.Pin(path);
                 return path;
             }
             catch
@@ -101,8 +103,17 @@ internal static class OverlayCacheStore
     /// <summary>本次生成的覆盖包写到哪：命中缓存时直接复用，未命中时写进缓存目录。</summary>
     internal static string ReservePath(string signature)
     {
-        System.IO.Directory.CreateDirectory(DirectoryPath);
-        return PathFor(signature);
+        lock (Sync)
+        {
+            System.IO.Directory.CreateDirectory(DirectoryPath);
+            var path = PathFor(signature);
+            // A missing pinned file may have been removed outside this process. Its old
+            // pack entry still exists in Godot: rebuilding at that name is unsafe.
+            if (Lifetime.IsPinned(path))
+                path = Path.Combine(DirectoryPath, signature.ToLowerInvariant() + "_" + Guid.NewGuid().ToString("N") + ".pck");
+            Lifetime.Pin(path); // protect the new file from AfterWrite's trim, before mounting
+            return path;
+        }
     }
 
     /// <summary>写入成功后调用：保持上限。</summary>
@@ -117,8 +128,8 @@ internal static class OverlayCacheStore
     private static string PathFor(string signature) =>
         Path.Combine(DirectoryPath, signature.ToLowerInvariant() + ".pck");
 
-    /// <summary>按"最久未使用"删到上限以下；跳过正在被本进程挂载的文件由操作系统占用自然兜底。</summary>
-    private static void TrimToLimit()
+    /// <summary>只裁剪本进程未引用的旧包；已保留的路径等下次启动再清理。</summary>
+    private static void TrimToLimit(long maxBytes = MaxBytes)
     {
         try
         {
@@ -134,15 +145,17 @@ internal static class OverlayCacheStore
             var total = files.Sum(file => file.Length);
             foreach (var file in files)
             {
-                if (total <= MaxBytes)
+                if (Lifetime.IsPinned(file.FullName)) continue;
+                if (total <= maxBytes)
                 {
                     break;
                 }
 
                 try
                 {
-                    total -= file.Length;
+                    var length = file.Length;
                     file.Delete();
+                    total -= length;
                 }
                 catch
                 {
@@ -160,6 +173,7 @@ internal static class OverlayCacheStore
     {
         foreach (var file in System.IO.Directory.EnumerateFiles(DirectoryPath))
         {
+            if (Lifetime.IsPinned(file)) continue;
             try
             {
                 File.Delete(file);
