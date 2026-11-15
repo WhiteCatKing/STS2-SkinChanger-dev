@@ -156,6 +156,12 @@ internal static class ManagedCharacterAssetReplacementScanner
         }
 
         var reader = peReader.GetMetadataReader();
+        var hasCharacterProfile = reader.TypeReferences.Any(handle =>
+        {
+            var reference = reader.GetTypeReference(handle);
+            return reader.GetString(reference.Name) == "CharacterSkinProfile" &&
+                   reader.GetString(reference.Namespace) == "CznCore.Presentation";
+        });
         var characterEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var providerPathsByProperty = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var typeHandle in reader.TypeDefinitions)
@@ -173,6 +179,8 @@ internal static class ManagedCharacterAssetReplacementScanner
                 if (il != null)
                 {
                     ScanIl(reader, il, characterEntries, providerPathsByProperty);
+                    if (hasCharacterProfile)
+                        ScanCharacterProfile(reader, peReader, methodHandle, characterEntries, providerPathsByProperty);
                 }
             }
         }
@@ -199,6 +207,32 @@ internal static class ManagedCharacterAssetReplacementScanner
         return mappedPaths.Count == 0
             ? null
             : new ManagedCharacterAssetReplacement(targetGroupId, mappedPaths);
+    }
+
+    // CznCore profiles declare the target with typeof(T), then pass the combat skeleton
+    // to CharacterSkinProfile's constructor. Read the declaration without running .cctor.
+    private static void ScanCharacterProfile(MetadataReader reader, PEReader pe,
+        MethodDefinitionHandle method, ISet<string> targets, IDictionary<string, string> paths)
+    {
+        var instructions = ReadIconInstructions(reader, pe, method);
+        if (!instructions.Any(i => i.Op == OpCodes.Newobj && i.Token != 0 &&
+                ResolveDeclaringTypeName(reader, MetadataTokens.EntityHandle(i.Token)) == "CharacterSkinProfile")) return;
+        var types = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i + 1 < instructions.Count; i++)
+        {
+            if (instructions[i].Op != OpCodes.Ldtoken || instructions[i + 1].Text != "GetTypeFromHandle") continue;
+            var handle = MetadataTokens.EntityHandle(instructions[i].Token);
+            if (handle.Kind == HandleKind.TypeReference)
+                types.Add(reader.GetString(reader.GetTypeReference((TypeReferenceHandle)handle).Name));
+        }
+        var skeletons = instructions.Where(i => i.Op == OpCodes.Ldstr &&
+                i.Text?.StartsWith("res://", StringComparison.Ordinal) == true &&
+                i.Text.EndsWith("_skel_data.tres", StringComparison.OrdinalIgnoreCase))
+            .Select(i => i.Text!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        // Multiple targets/skeletons need data-flow analysis; do not guess.
+        if (types.Count != 1 || skeletons.Length != 1) return;
+        targets.Add(types.Single());
+        paths["CombatSkeletonDataPath"] = skeletons[0];
     }
 
     // Some skins assign a cached private texture from NCharacterSelectButton.Init instead of

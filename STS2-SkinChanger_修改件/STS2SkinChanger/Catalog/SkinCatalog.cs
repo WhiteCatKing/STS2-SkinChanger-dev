@@ -1120,7 +1120,11 @@ internal sealed partial class SkinCatalog : IDisposable
 
                     // 骨架路径型整包（CznCore 角色框架）自带的外观由它自己的代码写进角色模型，
                     // 包里没有可覆盖的角色场景；接管它的呈现入口只会让游戏继续画原皮。
-                    handBackToGameLoader = AppliesSkeletonThroughCharacterModel(mod);
+                    handBackToGameLoader = AppliesSkeletonThroughCharacterModel(mod) &&
+                        !ManagedCharacterAssetReplacementScanner.Scan(mod.RootPath, mod.ResourceNamespaceId)
+                            .Any(r => r.CanonicalPathsByProviderPath.Values.Contains(
+                                $"res://animations/characters/{r.TargetGroupId}/{r.TargetGroupId}_skel_data.tres",
+                                StringComparer.OrdinalIgnoreCase));
                     if (handBackToGameLoader)
                     {
                         unservablePackWithVisualPatches = true;

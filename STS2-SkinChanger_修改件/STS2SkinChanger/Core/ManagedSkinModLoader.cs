@@ -1549,6 +1549,7 @@ internal static class ManagedSkinModLoader
         }
 
         providerIds.Add(providerId);
+        CznPresentationBridge.RegisterAssembly(providerId, assembly);
         ProviderModelDiscovery.Publish(assembly, providerId);
         ManagedMerchantSettingsBridge.Install(assembly);
         ManagedSkinBehaviorBridge.Install(assembly);

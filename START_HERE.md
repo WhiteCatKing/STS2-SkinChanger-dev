@@ -13,7 +13,7 @@
 D:\Storage\Desktop\工作2\STS2-SkinChanger_修改件\   ← 唯一要改的源码工程（git 仓库内容）
 ```
 
-`D:\Storage\Desktop\工作2` 是 git 仓库根（remote `https://github.com/WhiteCatKing/STS2-SkinChanger.git`，主线 `master`）。
+`D:\Storage\Desktop\工作2` 是 git 仓库根（remote `https://github.com/WhiteCatKing/STS2-SkinChanger.git`，主线 `main`）。
 
 绝对不要动：
 
@@ -100,12 +100,12 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；第三位只在真正上传工坊时提；`workshop\workshop.json` 的 `version` 保持 `1.0.31` 不动（给游戏 SemVer 解析用）。
 
-当前值：`1.0.32.3`。
+当前值：`1.0.32.5`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_czn_shared_presentation.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
 - 工坊：`STS2_Work\publish.ps1` → 调 `steamcmd` + `workshop_build.vdf`（`contentfolder` 指向 `D:\steam\steamapps\workshop\content\2868840\3787302680`）。上传前先把四处 dll 与内容目录同步好。
-- GitHub：`sync.ps1`，或手工 `git -c http.proxy=http://127.0.0.1:7890 -c http.version=HTTP/1.1 push origin master`（直连会 `Recv failure: Connection was reset`）。
+- GitHub：`sync.ps1`，或手工 `git -c http.proxy=http://127.0.0.1:7890 -c http.version=HTTP/1.1 push origin main`（直连会 `Recv failure: Connection was reset`）。
 
 工坊标题/描述改动必须同步 15 种语言（`docs\publish-github-skin-mod.*.md`）。
 
@@ -185,7 +185,7 @@ Initialize()
 
 ### 6.4 骨架包交回原加载器
 
-`Catalog\SkinCatalog.cs` 的 `AppliesSkeletonThroughCharacterModel` 用 `PEReader` 匹配游戏程序集里是否引用 `set_BodySkeletonDataPath` / `set_NonCombatBodySkeletonPaths`，命中就把骨架交回游戏原加载器，不再自己替换（修 CznCore 系列显示原皮）。
+`Catalog\SkinCatalog.cs` 的 `AppliesSkeletonThroughCharacterModel` 用 `PEReader` 匹配游戏程序集里是否引用 `set_BodySkeletonDataPath` / `set_NonCombatBodySkeletonPaths`，命中就把骨架交回游戏原加载器，不再自己替换（修 CznCore 系列显示原皮）。1.0.32.5 起，能明确读取 CharacterSkinProfile 身体声明的包改由统一兼容桥接管；未知声明仍保留此交回规则。
 
 ---
 
@@ -205,7 +205,7 @@ Initialize()
 
 ## 8. 当前状态 / 待办
 
-- 版本 `1.0.32.3` 已构建、已测、已部署四处，**未发工坊、未 push**，等作者指令。
+- 版本 `1.0.32.5` 已构建、离线测试、部署四处；按作者要求提交并推送 origin/main，不上传工坊。上一版大卡问题作者已实机确认修复；CZN 兼容与闪退防护的画面表现尚未真机核验。
 - 最近提交（新→旧）：`106b643` 缓存无上限修复 → `058c5d6` 版本统一 + 八模块分区 → `f044092` 合入维修版 1.0.32.1 → `fd0d344` 看门狗热修。
 - 待作者真机确认：进游戏看日志有无「退出缓存清理：已删除 N 个文件」或「皮肤缓存超出 8 GB 预算」。
 - 待决定：八个模块是否改按需激活（见 §5.2）。

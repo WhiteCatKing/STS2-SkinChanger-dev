@@ -1,5 +1,14 @@
 ## 2026-11-16
 
+### 1.0.32.5 —— CZN 系列统一兼容与切换加载安全
+
+- 新增识别 Hilde/Heidemarie/Tressa/Chizuru/Meirin 的 CharacterSkinProfile 战斗骨架声明；Tiphera 保留玩法内容加载流程。
+- 接入 CznCore 共享选择边界，解决仅卸载皮肤补丁仍残留背景/火堆/商店事件的问题；选角背景改为登记实际构造的展示对象再重放，预览入树前绑定战斗身体，关闭受管皮肤重复强制套用卡图的入口。
+- 切换安全：不再全域扫描并读取第三方静态字段；后台预加载只接收不可变私有路径，避免公共资源在加载期间换归属。
+- 验证：Release 0 警告 0 错误、LogicTests、五个真实包声明/探测/下拉目录、真实 CznCore Harmony 接口及选择边界、大卡与卡图契约回归通过。
+- 限制：未启动游戏验证画面；本次闪退没有原生堆栈，仅移除已确认的危险路径，不能宣称所有闪退已消除。详见修改件 docs/issues/ISSUE_2026-11-16_czn_shared_presentation.md。
+## 2026-11-16
+
 ### 1.0.32.4 —— 修复点开大卡后卡图与皮肤名称不一致
 
 - 根因：游戏 UpdateCardDisplay 在 UpdateVisuals 后用 BigPortrait 覆盖皮肤卡图，原补丁仅同步下拉名称。

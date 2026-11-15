@@ -145,6 +145,11 @@ internal static class SkinPreloader
                         }
 
                         var sourcePath = asset.SourcePath;
+                        // Canonical res:// paths change ownership on a hot switch. An already
+                        // dispatched worker cannot be cancelled by Paused and may still read
+                        // the old skeleton/import while MountOverlay replaces its dependencies.
+                        // Only immutable, session-private resource paths are safe to warm.
+                        if (!IsImmutableResourcePath(sourcePath)) break;
                         if (Known.Add(sourcePath))
                         {
                             Pending.Enqueue(sourcePath);
@@ -178,6 +183,10 @@ internal static class SkinPreloader
             }
         }
     }
+
+    internal static bool IsImmutableResourcePath(string path) =>
+        path.StartsWith("res://sts2_skin_runtime/", StringComparison.Ordinal) &&
+        !path.Contains("..", StringComparison.Ordinal) && !path.Contains('\\');
 
     private static void EnsureTimer()
     {
