@@ -1,0 +1,127 @@
+diff --git "a/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Core/SkinPreloader.cs" "b/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Core/SkinPreloader.cs"
+index 5eb7cbc..8c26612 100644
+--- "a/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Core/SkinPreloader.cs"
++++ "b/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Core/SkinPreloader.cs"
+@@ -36,13 +36,18 @@ internal static class SkinPreloader
+     // 同一时间最多只有 1 个后台加载在途（原实现每 tick 发 2 个且不限在途，最多 48 个并发）。
+     private const int MaxInFlight = 1;
+ 
+-    // 游戏 Common 预加载迟迟不完成时的兜底：从首次排队算起，最多等这么久就放行派发。
+-    private const double StartupGateTimeoutSeconds = 60;
++    // 游戏 Common 预加载已经开始、但迟迟不完成时的兜底：从 Common 开始算起，最多等这么久就放行派发。
++    // （旧实现从首次排队算起：冷启动时 SC 自身初始化就要几十秒，60 秒常在 Common 跑到一半时到期。）
++    private const double CommonGateTimeoutSeconds = 60;
++
++    // 一直没看到 Common 开始（例如游戏流程变化/补丁未生效）时的兜底：从首次排队算起。
++    private const double ScheduleGateTimeoutSeconds = 180;
+ 
+     private static readonly Queue<string> Pending = new();
+     private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase);
+     private static readonly HashSet<string> InFlight = new(StringComparer.OrdinalIgnoreCase);
+-    private static readonly System.Diagnostics.Stopwatch StartupGateWatch = new();
++    private static readonly System.Diagnostics.Stopwatch ScheduleGateWatch = new();
++    private static readonly System.Diagnostics.Stopwatch CommonGateWatch = new();
+     private static bool _timerRunning;
+     private static bool _reportedFailure;
+     private static bool _gamePreloadSettled;
+@@ -66,6 +71,17 @@ internal static class SkinPreloader
+         ModLog.Info($"[性能] 游戏预加载已结束（{reason}），开始派发皮肤预加载（队列 {Pending.Count} 个）。");
+     }
+ 
++    /// <summary>游戏 Common 预加载会话已开始（尚未完成）。只记第一次，用作 Common 超时兜底的起点。</summary>
++    internal static void NoteGameCommonStarted()
++    {
++        if (_gamePreloadSettled || CommonGateWatch.IsRunning)
++        {
++            return;
++        }
++
++        CommonGateWatch.Start();
++    }
++
+     /// <summary>
+     /// 暂停派发。选人界面重建外观时会同步 <c>ResourceLoader.Load</c>（还会反射触发皮肤包自己的
+     /// 同步加载），此时若后台仍有线程加载在跑，Godot 的加载器会互相等待，表现为切皮肤瞬间死锁。
+@@ -158,9 +174,9 @@ internal static class SkinPreloader
+ 
+             if (added > 0)
+             {
+-                if (!_gamePreloadSettled && !StartupGateWatch.IsRunning)
++                if (!_gamePreloadSettled && !ScheduleGateWatch.IsRunning)
+                 {
+-                    StartupGateWatch.Start();
++                    ScheduleGateWatch.Start();
+                 }
+ 
+                 ModLog.Info(
+@@ -219,9 +235,15 @@ internal static class SkinPreloader
+         {
+             // 启动阶段先让游戏自己的 IntroLogo/MainMenuEssentials/Common 预加载跑完，
+             // 否则两边同时抢 WorkerThreadPool 的低优先级名额（8 线程 CPU 上只有 2 个）。
+-            if (StartupGateWatch.Elapsed.TotalSeconds >= StartupGateTimeoutSeconds)
++            if (CommonGateWatch.IsRunning &&
++                CommonGateWatch.Elapsed.TotalSeconds >= CommonGateTimeoutSeconds)
++            {
++                MarkGamePreloadSettled($"Common 开始后超过 {CommonGateTimeoutSeconds:F0} 秒仍未完成，兜底放行");
++            }
++            else if (!CommonGateWatch.IsRunning &&
++                     ScheduleGateWatch.Elapsed.TotalSeconds >= ScheduleGateTimeoutSeconds)
+             {
+-                MarkGamePreloadSettled($"等待超过 {StartupGateTimeoutSeconds:F0} 秒，兜底放行");
++                MarkGamePreloadSettled($"排队后 {ScheduleGateTimeoutSeconds:F0} 秒仍未见 Common 开始，兜底放行");
+             }
+             else
+             {
+@@ -320,7 +342,8 @@ internal static class SkinPreloader
+ /// <summary>
+ /// 游戏自己的 <c>Common</c> 预加载会话完成时放行 <see cref="SkinPreloader"/>。
+ /// <c>PreloadManager.LoadCommonAndMainMenuAssets</c> 内部不等待会话完成，对它做 Postfix 只能拿到"开始"，
+-/// 所以挂在每帧推进会话的 <c>AssetLoadingSession.Process</c> 上，看到 Common 完成即放行。
++/// 所以挂在每帧推进会话的 <c>AssetLoadingSession.Process</c> 上：看到 Common 进行中就记下开始时间
++/// （超时兜底从这里算起），看到 Common 完成即放行。
+ /// 放行后每次调用只做一次布尔判断就返回；任何异常都吞掉并直接放行，绝不把异常抛进游戏的加载循环。
+ /// </summary>
+ [HarmonyPatch(typeof(AssetLoadingSession), nameof(AssetLoadingSession.Process))]
+@@ -338,11 +361,6 @@ internal static class GameCommonPreloadCompletePatch
+ 
+         try
+         {
+-            if (!__instance.IsCompleted)
+-            {
+-                return;
+-            }
+-
+             if (!_sessionNameResolved)
+             {
+                 _sessionNameResolved = true;
+@@ -358,14 +376,28 @@ internal static class GameCommonPreloadCompletePatch
+ 
+             if (_sessionName == null)
+             {
+-                SkinPreloader.MarkGamePreloadSettled("无法识别会话名，直接放行");
++                // 识别不了会话名：保持旧行为，第一个完成的会话就放行。
++                if (__instance.IsCompleted)
++                {
++                    SkinPreloader.MarkGamePreloadSettled("无法识别会话名，直接放行");
++                }
++
++                return;
++            }
++
++            if (!string.Equals(_sessionName(__instance), "Common", StringComparison.Ordinal))
++            {
+                 return;
+             }
+ 
+-            if (string.Equals(_sessionName(__instance), "Common", StringComparison.Ordinal))
++            if (__instance.IsCompleted)
+             {
+                 SkinPreloader.MarkGamePreloadSettled("Common 完成");
+             }
++            else
++            {
++                SkinPreloader.NoteGameCommonStarted();
++            }
+         }
+         catch (Exception exception)
+         {
