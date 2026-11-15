@@ -17,7 +17,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.32.0";
+    public const string InternalTestVersion = "1.0.32.1";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -69,6 +69,7 @@ public static class Entry
         // v0.113.0 renamed NCreature.OstyScaleToSize; the Osty skin pack still patches the old
         // name, and one unresolved target makes it unpatch all of itself.
         OstyDefectImpostorCompat.Install(harmony);
+        BlackedEventMerchantCompat.Install(harmony);
         Ui.MerchantRoomConcreteReadyPatch.Install(harmony);
         ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
         ModLog.Info(failedPatchClasses.Count == 0
@@ -411,6 +412,8 @@ internal static class DuplicateModelInitCompatibilityPatch
     [HarmonyPostfix]
     private static void Postfix() => ProviderModelDiscovery.InstantiatePublishedAfterInit();
 }
+
+
 
 
 
