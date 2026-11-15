@@ -191,9 +191,9 @@ internal static class MerchantRuntimeAppearance
 
             ModLog.Info(
                 $"商人外观提供者 {providerId} 不在当前场景范围内，先重新启用以套用其骨骼变换。");
-            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
-                [groupId],
-                "商人外观");
+            // A selection is already mounted here. Finish its initializer synchronously;
+            // re-focusing alone can enqueue the merchant again and replay zero callbacks.
+            SkinService.TryActivateDeferredProvider(providerId);
         }
         catch (Exception exception)
         {
@@ -872,36 +872,6 @@ internal static class MerchantRuntimeAppearance
     // 判成不可达代码（CS0162），恢复时只改这一行的值即可。
     internal static readonly bool EnhancedMerchantRefreshEnabled = false;
 
-    // a/b 的缩放是乘性叠加（0.18 × 0.18 = 0.0324）：进门那次若包自己的 _Ready 修饰还在位，
-    // 我们的重放会把位姿套两遍，表现为模型缩成小点并跑到右下角。检测到这个数量级就还原成单次。
-    internal static void CorrectDoubleAppliedPose(Node? room)
-    {
-        try
-        {
-            var visual = room?.FindChild("MerchantVisual", recursive: true, owned: false) as Node2D
-                         ?? room?.GetNodeOrNull<Node2D>("%MerchantVisual");
-            if (visual == null)
-            {
-                return;
-            }
-
-            var scale = visual.Scale.X;
-            var providerId = SkinService.GetSelectedRuntimeProvider(GroupId) ?? string.Empty;
-            if (scale <= 0f || scale >= 0.1f)
-            {
-                return;
-            }
-
-            var isAta = providerId.Contains("ATA", StringComparison.OrdinalIgnoreCase);
-            visual.Scale = isAta ? new Vector2(0.1500f, 0.1500f) : new Vector2(0.1800f, 0.1800f);
-            visual.Position = isAta ? new Vector2(125.0f, 280.0f) : new Vector2(137.3f, 223.3f);
-            ModLog.Warn($"[商人] 检测到位姿被重复套用（缩放={scale:0.0000}），已还原为单次：{providerId}");
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn($"[商人] 位姿还原失败：{exception.GetBaseException().Message}");
-        }
-    }
     internal static void TickRefreshAfterLoad()
     {
         if (!EnhancedMerchantRefreshEnabled)
@@ -982,6 +952,9 @@ internal static class MerchantRuntimeAppearance
         var handSwapped = false;
         try
         {
+            var selectedProvider = SkinService.GetSelectedFullRuntimeProvider(GroupId);
+            if (selectedProvider != null)
+                EnsureSelectedMerchantProviderActive(GroupId, selectedProvider);
             newButton = InstantiateMerchantButton();
             try
             {
@@ -1539,7 +1512,8 @@ internal static class MerchantRuntimeAppearance
             EnsureSelectedMerchantProviderActive(groupId, providerId);
             // 第一次切到某个商人皮肤时，它的补丁可能还没装上（激活发生在重放之后），
             // 此时重放拿不到任何步骤 → 位姿退回基础值。先确保补丁在位再重放。
-            ManagedSkinModLoader.EnsureProviderPatchesInstalled(providerId);
+            // Activation owns initialization and patch classification. Do not PatchAll a
+            // partially initialized assembly here: that installs a second native owner.
             var behaviorProviderId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
             // 只按一个键重放一次：ReplaySelectedNodeReadyPrefixes 开头会 RestoreNodeReadyMutation，
             // 同一节点重放两次会把自己刚建出来的节点回收掉，表现为“模型消失”。
@@ -1887,7 +1861,6 @@ internal static class MerchantRoomConcreteReadyPatch
         }
 
             MerchantRuntimeAppearance.ScopePartTakeover(__instance);
-            MerchantRuntimeAppearance.CorrectDoubleAppliedPose(__instance);
     }
 }
 

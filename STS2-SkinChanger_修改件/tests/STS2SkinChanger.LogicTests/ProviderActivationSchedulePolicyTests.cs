@@ -54,6 +54,12 @@ internal static class ProviderActivationSchedulePolicyTests
             duplicated.Deferred.SequenceEqual(["AncientWaifus_Beta"]),
             "空白项与重复项不能进队列，否则后台会重复跑同一个初始化器。");
 
+        var merchant = ProviderActivationSchedulePolicy.Plan(
+            ["ATA_Merchant", "AncientWaifus_Beta"], _ => false, true, "ata_merchant");
+        Require(merchant.Immediate.SequenceEqual(["ATA_Merchant"]) &&
+                merchant.Deferred.SequenceEqual(["AncientWaifus_Beta"]),
+            "所选商人必须在建节点之前同步初始化，其他后台任务仍延后。");
+
         var nothing = ProviderActivationSchedulePolicy.Plan(
             [],
             isFirstScreen,

@@ -1040,24 +1040,6 @@ internal static class ManagedSkinModLoader
     /// sometimes reuse the same owner string; only the selected provider's assembly is touched.
     /// </summary>
     public static string[] ActiveProviderRuntimeIds() => ActiveProviderRuntimes.Keys.ToArray();
-    public static void EnsureProviderPatchesInstalled(string providerId)
-    {
-        var assembly = ProviderIdsByAssembly
-            .FirstOrDefault(pair => pair.Value.Contains(providerId))
-            .Key;
-        // 第一次切到某个商人皮肤时，它可能还没登记进 ProviderIdsByAssembly（激活发生在后面），
-        // 但程序集往往已经在 AppDomain 里。按程序集名兜底，避免“前两次必错”。
-        assembly ??= AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(candidate =>
-            string.Equals(candidate.GetName().Name, providerId, StringComparison.OrdinalIgnoreCase));
-        var existing = assembly == null ? -1 : CaptureProviderPatches(assembly).Count;
-        if (assembly == null || existing > 0)
-        {
-            return;
-        }
-
-        PatchAllTolerant(new Harmony($"{Entry.ModId}.merchant.{NormalizeHarmonyId(providerId)}"), assembly, providerId);
-        ModLog.Info($"[商人注册] 已为 {providerId} 补装补丁（重放前发现不在位）。");
-    }
     private static bool IsMerchantSkinProvider(string providerId, string? merchantSelection)
     {
         if (!string.IsNullOrWhiteSpace(merchantSelection) &&
@@ -1066,7 +1048,8 @@ internal static class ManagedSkinModLoader
             return true;
         }
 
-        return providerId.Contains("Merchant", StringComparison.OrdinalIgnoreCase);
+        return !string.IsNullOrWhiteSpace(merchantSelection) &&
+               string.Equals(providerId, ResolveBehaviorProviderId(merchantSelection), StringComparison.OrdinalIgnoreCase);
     }
     /// <summary>
     /// 选择项 id 可能带 <c>::variant:&lt;key&gt;</c> 或 <c>::source:&lt;tag&gt;</c> 后缀（十字军变体、

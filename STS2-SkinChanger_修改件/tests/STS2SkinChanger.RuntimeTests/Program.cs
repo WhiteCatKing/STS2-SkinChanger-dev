@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-merchant-lifecycle")
+{
+    MerchantLifecycleTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-switch-resource-lifetime")
 {
     SwitchResourceLifetimeTests.Run();

@@ -68,6 +68,11 @@ internal static class CznCompatibilityTests
                     "CznCore profile ownership hook did not install: " + method);
             var bootstrap = assembly.GetType("CznCore.Presentation.CharacterSkinModBootstrap", true)!;
             Require(Harmony.GetPatchInfo(AccessTools.Method(bootstrap, "Init"))?.Prefixes.Count > 0, "CznCore registration hook missing.");
+            foreach (var type in new[] { typeof(MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantCharacter),
+                         typeof(MegaCrit.Sts2.Core.Nodes.RestSite.NRestSiteCharacter) })
+                Require(Harmony.GetPatchInfo(AccessTools.Method(type, "_Ready"))?.Prefixes.Any(p =>
+                    p.PatchMethod.Name == "RestoreNonCombatIdentity") == true,
+                    "Noncombat scene identity must be restored before author callbacks: " + type.Name);
             CheckSelectionGate();
             Console.WriteLine("Real CznCore Harmony contract installed without running provider initializers.");
         }

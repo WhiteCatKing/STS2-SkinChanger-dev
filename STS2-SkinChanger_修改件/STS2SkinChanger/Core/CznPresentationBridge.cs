@@ -5,6 +5,8 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
+using MegaCrit.Sts2.Core.Nodes.RestSite;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Ui;
 
@@ -39,6 +41,10 @@ internal static class CznPresentationBridge
         try
         {
             Harmony.Patch(AccessTools.Method(bootstrap, "Init"), prefix: Patch(nameof(CaptureProfile)));
+            var identityPatch = Patch(nameof(RestoreNonCombatIdentity));
+            identityPatch.priority = Priority.First;
+            Harmony.Patch(AccessTools.Method(typeof(NMerchantCharacter), "_Ready"), prefix: identityPatch);
+            Harmony.Patch(AccessTools.Method(typeof(NRestSiteCharacter), "_Ready"), prefix: identityPatch);
             foreach (var method in catalog.GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
                          .Where(m => m.Name is "IsSelected" or "IsActive"))
                 Harmony.Patch(method, prefix: Patch(nameof(ProfileSelected)));
@@ -57,6 +63,12 @@ internal static class CznPresentationBridge
     }
 
     private static HarmonyMethod Patch(string name) => new(typeof(CznPresentationBridge), name);
+
+    private static void RestoreNonCombatIdentity(Node __instance)
+    {
+        var canonical = NonCombatSceneIdentity.Resolve(__instance.SceneFilePath);
+        if (canonical != __instance.SceneFilePath) __instance.SceneFilePath = canonical;
+    }
 
     private static void CaptureProfile(Type __0, object __1)
     {

@@ -5961,6 +5961,11 @@ internal static partial class SkinService
                 }
 
                 resources[pair.Key] = resource;
+                if (resource is PackedScene)
+                {
+                    NonCombatSceneIdentity.Register(pair.Value, pair.Key);
+                    NonCombatSceneIdentity.Register(resource.ResourcePath, pair.Key);
+                }
                 RuntimeResourceCache[
                     RuntimeResourceKey(groupId, selection, pair.Key)] = resource;
             }
@@ -6628,7 +6633,9 @@ internal static partial class SkinService
         var activationSchedule = ProviderActivationSchedulePolicy.Plan(
             activeRuntimeProviders,
             providerId => firstScreenProviders?.Contains(providerId) ?? true,
-            deferNonFirstScreen);
+            deferNonFirstScreen,
+            requiredProviderId: catalog.ResolveVisualProviderId(
+                effectiveSelections.GetValueOrDefault("merchant", SkinCatalog.BaseOptionId)));
         ManagedSkinModLoader.ActivateSelectedProviders(activationSchedule.Immediate);
         // 大包排到最后：未被任何选择引用的放队尾，保证主菜单先出来。
         static int ActivationCostHint(string providerId) =>

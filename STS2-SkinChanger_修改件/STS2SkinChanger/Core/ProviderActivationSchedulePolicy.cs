@@ -37,7 +37,8 @@ internal static class ProviderActivationSchedulePolicy
     public static ProviderActivationSchedule Plan(
         IEnumerable<string> activeProviderIds,
         Func<string, bool> isFirstScreenProvider,
-        bool deferNonFirstScreen)
+        bool deferNonFirstScreen,
+        string? requiredProviderId = null)
     {
         var immediate = new List<string>();
         var deferred = new List<string>();
@@ -49,7 +50,8 @@ internal static class ProviderActivationSchedulePolicy
                 continue;
             }
 
-            if (!deferNonFirstScreen || isFirstScreenProvider(providerId))
+            if (!deferNonFirstScreen || isFirstScreenProvider(providerId) ||
+                string.Equals(providerId, requiredProviderId, StringComparison.OrdinalIgnoreCase))
             {
                 immediate.Add(providerId);
             }
