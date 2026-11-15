@@ -1,0 +1,105 @@
+说明
+====
+- 来源：反馈者本机 %APPDATA%\SlayTheSpire2\logs\ 下当局的 godot.log
+  （进程 PID 2520，20:34 启动，约 21:22 进商店出错；之后轮换为 godot2026-11-15T21.24.23.log）。
+- 原始日志文件已被游戏的日志轮换（只保留最近 5 份）删除，无法再附原件。
+  以下是当晚排查时用 grep / sed 读出的原文片段，行号是原文件里的行号。
+- 当时读取时每行被截到 220~260 字符，被截断的行末尾用 "…" 标出。
+- 当时是按关键字过滤读取的（滤掉了 VERYDEBUG、焦点切换、堆栈中段等），所以片段之间、
+  以及没有行号的行之间都有省略；行首空白（无行号）的行是同一段落里过滤后读到的、未记录行号的原文。
+- 第 6 节配置是排查时（约 21:25）读取的值。
+- Steam ID 已替换：
+    HOST   = 房主
+    PEER_B = 另一位客户端
+    LOCAL  = 反馈者本机（客户端）
+- 时间：2026-11-15 约 21:22（UTC+8）。
+
+
+1. 本局启动时 SkinChanger 的版本与商店补丁（同一进程、启动阶段；行号未记录）
+------------------------------------------------------------------------------
+[INFO] [SkinChanger] 内测版本 1.0.32.0；程序集=Gurio.SkinChanger 1.0.32.0；路径=D:\TOOL\steam\steamapps\workshop\content\2868840\3787302680\Gurio.SkinChanger.dll
+[INFO] [SkinChanger] 托管加载模式已识别 126 个皮肤提供者；PCK 资源由本 Mod 按选择接管；…
+[INFO] [SkinChanger] [商人] 已为 2 个具体商店房间挂上 _Ready 补丁。
+[INFO] [SkinChanger] 代码补丁已加载。等待游戏资源初始化。
+[INFO] [BaseLib] Created node factory for NMerchantCharacter.
+（另：联机握手时房主侧看到的本机版本串为 Gurio.SkinChanger-1.0.31）
+
+
+2. 进入商店 (4,2)：InvalidCastException 出在 MultiplayerMerchantPlayerVisualIsolationPatch.Prefix
+-------------------------------------------------------------------------------------------------
+15666:[INFO] Preloading 'Standard Merchant Room' assets... count=1 vfx=0
+15667:[INFO] Preloading 'Standard Merchant Room' Complete: assets=1 time_elapsed=854ms
+15668:[INFO] [MaidenSuccubus] [TextureMemory] release=creature-exit; warmCount=43; warmEstimateMiB=17.7; workingSetMiB=2253.9
+(... 同样的 release=creature-exit 共 4 行 ...)
+      [INFO] [SkinChanger] 战斗房间退出后已释放 8 个怪物资源引用/1 个资源包缓存；已生成的运行包仍保留供下次快速复用。
+      [WARN] Asset not cached: res://themes/kreon_bold_shared.tres
+      [INFO] [SkinChanger] 拖拽柄悬停事件已接入：STS2IndividualCardSkinSelector
+      [INFO] [SkinChanger] [外观诊断] 行为提供者: 候选=regentHpWear,defectHpWear,anaertailin 破滑溜爆衣半血红脸 myhl,会画画的Small_day nsfw nw,佚名 nsfw wysc,silentKaguyaHpWear,汐の雨い 半血爆…
+      [INFO] [SkinChanger] 已按商店将皮肤代码行为收窄到 2 个可见外观组；保留 1 个当前场景需要的 DLL 皮肤提供者。
+      [INFO] [MaidenSuccubus] [TextureMemory] imported=cards/PhotonVolt.png; size=1000x760; textureEstimateMiB=0.72; warmEstimateMiB=18.43
+      (... 另 4 张天音卡图 imported ...)
+      [INFO] [SkinChanger] 单张卡图首次加载较慢：colorless/Pornographic beautification of all cards v2.1/res://generated/runtime/cae_7c1701bbd70a/assets/card_art/MegaCrit.Sts2.Core.Models.Cards.SecretTechnique_MegaC…
+15683:[INFO] [MaidenSuccubus] [MerchantInvasionCurse] Native cleanup slot mounted beside card removal.
+15684:ERROR: System.InvalidCastException: Unable to cast object of type 'Godot.Node2D' to type 'MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantCharacter'.
+15686:   at STS2SkinChanger.Core.MultiplayerMerchantPlayerVisualIsolationPatch.Prefix(List`1 ____players, Control ____characterContainer, List`1 ____playerVisuals)
+15687:   at MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom.AfterRoomIsLoaded_Patch2(NMerchantRoom this)
+15688:   at MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom._Ready_Patch5(NMerchantRoom this)
+15689:   at MegaCrit.Sts2.Core.Nodes.Rooms.NStandardMerchantRoom._Ready_Patch1(NStandardMerchantRoom this)
+15692:   at MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom.InvokeGodotClassMethod(godot_string_name& method, NativeVariantPtrArgs args, godot_variant& ret)
+15693:   at MegaCrit.Sts2.Core.Nodes.Rooms.NStandardMerchantRoom.InvokeGodotClassMethod(godot_string_name& method, NativeVariantPtrArgs args, godot_variant& ret)
+15704:       [7] void MegaCrit.Sts2.Core.Rooms.MerchantRoom+<EnterInternal>d__7.MoveNext()
+15712:       [15] void MegaCrit.Sts2.Core.Assets.PreloadManager+<LoadRoomMerchantAssets>d__16.MoveNext()
+15728:   at MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom.OnActiveScreenUpdated()
+15730:   at MegaCrit.Sts2.Core.Rooms.MerchantRoom.EnterInternal(IRunState runState, Boolean isRestoringRoomStackBase)
+
+
+3. 商店房间初始化失败的后果：OnActiveScreenUpdated 空引用，移动动作带异常结束（黑屏）
+--------------------------------------------------------------------------------------
+15791:   at System.Threading.Tasks.Task.TrySetException(Object exceptionObject)
+15792:   at System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1.SetException(Exception exception, Task`1& taskField)
+15793:   at MegaCrit.Sts2.Core.Rooms.MerchantRoom.EnterInternal(IRunState runState, Boolean isRestoringRoomStackBase)
+15801:   at MegaCrit.Sts2.Core.Assets.PreloadManager.LoadRoomMerchantAssets()
+15809:   at MegaCrit.Sts2.Core.Assets.PreloadManager.LoadRoomAssets(String roomName, IEnumerable`1 additionalAssets)
+15820:[ERROR] GameAction MoveToMapCoordAction HOST MapCoord (4, 2) completed with exception: System.AggregateException: One or more errors occurred. (Object reference not set to an instance of an object.)
+15821: ---> System.NullReferenceException: Object reference not set to an instance of an object.
+15822:   at MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom.OnActiveScreenUpdated()
+15823:   at MegaCrit.Sts2.Core.Nodes.NRun.SetCurrentRoom_Patch2(NRun this, Control node)
+15824:   at MegaCrit.Sts2.Core.Rooms.MerchantRoom.EnterInternal(IRunState runState, Boolean isRestoringRoomStackBase)
+15825:   at MegaCrit.Sts2.Core.Runs.RunManager.EnterRoomInternal(AbstractRoom room, Boolean isRestoringRoomStackBase)
+15826:   at MegaCrit.Sts2.Core.Runs.RunManager.EnterRoom(AbstractRoom room)
+15827:   at MegaCrit.Sts2.Core.Runs.RunManager.EnterMapPointInternal(Int32 actFloor, MapPointType pointType, AbstractRoom preFinishedRoom, Boolean saveGame)
+15830:   at MegaCrit.Sts2.Core.Helpers.TaskHelper.LogTaskExceptions(Task task)
+
+
+4. 同一时间其他玩家的商店是正常的（他们在买东西，本机因不在该位置而把消息排队）
+--------------------------------------------------------------------------------
+15854:[VERYDEBUG] [RunLocationTargetedMessageBuffer] Handling map-targeted message MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.MerchantEntryPurchasedMessage from HOST for location act 0 coord (4, 2) room 0
+15855:[DEBUG] [RunLocationTargetedMessageBuffer] Message MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.MerchantEntryPurchasedMessage from HOST is for location act 0 coord (4, 2) room 0, enqueueing it because we are currently at location act 0 …
+15864:[VERYDEBUG] [RunLocationTargetedMessageBuffer] Handling map-targeted message MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.MerchantEntryPurchasedMessage from PEER_B for location act 0 coord (4, 2) room 0
+15865:[DEBUG] [RunLocationTargetedMessageBuffer] Message MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.MerchantEntryPurchasedMessage from PEER_B is for location act 0 coord (4, 2) room 0, enqueueing it because w…
+
+
+5. 随后房主断开连接，本机回到主菜单，商店房间的回调再次空引用
+------------------------------------------------------------
+      [DEBUG] [SteamClient] Connection status changed [4118138266]: k_ESteamNetworkingConnectionState_Connected -> k_ESteamNetworkingConnectionState_ClosedByPeer
+      [INFO] [SteamClient] Steam connection closed by host. Reason: 1001, Application closed connection
+      [DEBUG] [SteamClient] Disconnecting from host (now: True reason: 1001 debug: Application closed connection)
+15877:[INFO] [RunLobby] Disconnected. Reason: Quit
+      [INFO] Unloading 3 missed cache assets
+      [INFO] Preloading 'Common' assets... count=151 vfx=1
+      [DEBUG] [ActionExecutor] Action queue changed, beginning ExecuteActions
+15884:[ERROR] System.NullReferenceException: Object reference not set to an instance of an object.
+15885:   at MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom.OnActiveScreenUpdated()
+15891:   at MegaCrit.Sts2.Core.Helpers.TaskHelper.LogTaskExceptions(Task task)
+15892:   at MegaCrit.Sts2.Core.Helpers.TaskHelper.LogTaskExceptions(Task task)
+      [INFO] [FullMapPreview] PollingNode: 游戏结束
+      [INFO] [sts2.piyixiajiuhenfen.damagemeter] [UITrace] Auto-hid windows on return to main menu
+      [INFO] Preloading 'Common' Complete: assets=152 time_elapsed=383ms
+
+
+6. 当时的皮肤切换器配置（%APPDATA%\SlayTheSpire2\Gurio.SkinChanger\skin_changer.json，排查时读取）
+-----------------------------------------------------------------------------------------------
+"MultiplayerSkinSyncEnabled": false
+"MultiplayerSkinMode": 2
+"LoadOtherPlayersCustomSkins": false
+"merchant": "Merchant2CuteII"      （该商人皮肤 Mod 当时处于禁用状态）

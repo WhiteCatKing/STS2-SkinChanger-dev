@@ -1,0 +1,2 @@
+# Scoped to this report folder: keep the patch LF so "git apply" matches the LF sources (see STS2-SkinChanger_修改件/.gitattributes).
+*.patch text eol=lf

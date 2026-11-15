@@ -1,0 +1,65 @@
+diff --git "a/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs" "b/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs"
+index 709d5ca..18bfd36 100644
+--- "a/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs"
++++ "b/STS2-SkinChanger_\344\277\256\346\224\271\344\273\266/STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs"
+@@ -44,6 +44,41 @@ internal static class MultiplayerMerchantPlayerVisualIsolationPatch
+         ____players.Remove(localPlayer);
+         ____players.Insert(0, localPlayer);
+ 
++        // Custom characters (e.g. MaidenSuccubus on BaseLib) can ship a merchant scene whose root is
++        // a plain Node2D. Instantiate<NMerchantCharacter> then throws InvalidCastException halfway
++        // through this loop and leaves the room half-built (black screen). Instantiate every player's
++        // scene first; if any root is not NMerchantCharacter, discard them and let the game run its
++        // own loop (losing only the per-player skin scope for this room).
++        var visuals = new List<NMerchantCharacter>(____players.Count);
++        foreach (var player in ____players)
++        {
++            using var scope = MultiplayerSkinSync.BeginPlayerRuntimeScope(
++                player,
++                player.Character.MerchantAnimPath);
++            using var sceneLease = RemoteRoomSceneLease.Begin(
++                player,
++                player.Character.MerchantAnimPath,
++                "商人");
++            var node = PreloadManager.Cache
++                .GetScene(player.Character.MerchantAnimPath)
++                .Instantiate(PackedScene.GenEditState.Disabled);
++            if (node is NMerchantCharacter merchantVisual)
++            {
++                visuals.Add(merchantVisual);
++                continue;
++            }
++
++            ModLog.Warn(
++                $"[商人] {player.Character.Id.Entry} 的商店场景根节点是 {node.GetType().Name}，不是 NMerchantCharacter；本房间改走游戏原逻辑。");
++            node.Free();
++            foreach (var created in visuals)
++            {
++                created.Free();
++            }
++
++            return true;
++        }
++
+         var gridSize = Mathf.CeilToInt(Mathf.Sqrt(____players.Count));
+         for (var row = 0; row < gridSize; row++)
+         {
+@@ -56,17 +91,7 @@ internal static class MultiplayerMerchantPlayerVisualIsolationPatch
+                     break;
+                 }
+ 
+-                var player = ____players[playerIndex];
+-                using var scope = MultiplayerSkinSync.BeginPlayerRuntimeScope(
+-                    player,
+-                    player.Character.MerchantAnimPath);
+-                using var sceneLease = RemoteRoomSceneLease.Begin(
+-                    player,
+-                    player.Character.MerchantAnimPath,
+-                    "商人");
+-                var visual = PreloadManager.Cache
+-                    .GetScene(player.Character.MerchantAnimPath)
+-                    .Instantiate<NMerchantCharacter>(PackedScene.GenEditState.Disabled);
++                var visual = visuals[playerIndex];
+                 ____characterContainer.AddChildSafely(visual);
+                 ____characterContainer.MoveChildSafely(visual, 0);
+                 visual.Position = new Vector2(x, -50f * row);
