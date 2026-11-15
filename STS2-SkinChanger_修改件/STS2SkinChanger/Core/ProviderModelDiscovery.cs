@@ -17,7 +17,8 @@ namespace STS2SkinChanger.Core;
 /// This bridge publishes the provider assembly into the owning mod's assembly list before
 /// <c>ModelDb.Init</c> and invalidates the cached type list. If the database is already
 /// initialized (provider selected later at runtime), it instantiates the missing singleton models
-/// so their constructors can subscribe their hooks.
+/// so their constructors can subscribe their hooks. Modern providers can declare an explicit
+/// custom AbstractModel subscription contract instead of the removed game SingletonModel.
 /// </summary>
 internal static class ProviderModelDiscovery
 {
@@ -159,14 +160,31 @@ internal static class ProviderModelDiscovery
             return;
         }
 
+        CrusaderHookBridge.Install(assembly);
+        foreach (var type in SafeTypes(assembly).Where(type => type != null && CrusaderHookBridge.IsHookModel(type)).Cast<Type>())
+        {
+            if (ModelDb.Contains(type)) continue;
+            try
+            {
+                // Inject registers the instance as well as running its subscribing constructor.
+                // A keep-alive-only instance would not prevent repeated activation from subscribing twice.
+                ModelDb.Inject(type);
+                ModLog.Info($"已补注册皮肤提供者 {providerId} 的新版战斗/房间钩子模型 {type.Name}。");
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn($"补注册新版皮肤钩子 {type.Name} 失败：" + exception.GetBaseException().Message);
+            }
+        }
+
         if (SingletonModelType == null)
         {
             if (!_missingSingletonModelLogged)
             {
                 _missingSingletonModelLogged = true;
                 ModLog.Info(
-                    "当前游戏版本没有 SingletonModel 类型，跳过皮肤提供者单例补注册；" +
-                    "提供者的模型类型改由 ModelDb 自身的类型发现负责。");
+                    "当前游戏版本没有 SingletonModel 类型，跳过旧型单例补注册；" +
+                    "已识别的新版提供者钩子按其模型合同补注册。");
             }
 
             return;
