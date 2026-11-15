@@ -43,7 +43,24 @@ internal static class MerchantLifecycleTests
             foreach (var old in new[] { "Merchant2CuteII", "Merchant2CuteIIB", "OtherMerchant" })
                 Require(!(bool)owner.Invoke(null, [old, "ATA_Merchant"])!, "Outgoing merchant must deactivate: " + old);
             Require(!(bool)owner.Invoke(null, ["ATA_Merchant", null])!, "Original selection must not keep an old merchant active.");
+            var roomType = typeof(MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom).Assembly
+                .GetType(MerchantRoomConcreteReadyPatch.StandardTypeName, true)!;
+            for (var i = 0; i < 200; i++)
+            {
+                var room = (MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom)RuntimeHelpers.GetUninitializedObject(roomType);
+                GC.SuppressFinalize(room);
+                Require(MerchantRuntimeAppearance.TryClaimInitialMerchantRoom(room), "A new shop must initialize its selected appearance.");
+                Require(!MerchantRuntimeAppearance.TryClaimInitialMerchantRoom(room), "Base/concrete Ready must not rebuild the same shop twice.");
+            }
+            foreach (var patchType in new[] { typeof(MerchantRoomCreateAppearancePatch), typeof(MerchantRoomConcreteReadyPatch) })
+                Require(Calls(AccessTools.Method(patchType, "Postfix")).Any(m => m.Name == "QueueInitialMerchantAppearance"),
+                    "Shop entry must refresh cached merchant visuals on both game layouts: " + patchType.Name);
+            var initial = Calls(AccessTools.Method(typeof(MerchantRuntimeAppearance), "CompleteInitialMerchantAppearance"));
+            Require(initial.Any(m => m.Name == "TryRefreshMerchant"), "Initial entry must use the selected isolated visual transaction.");
+            Require(!initial.Any(m => m.Name is "Initialize" or "_Ready" or "TryCreateCurrentMerchantRoom"),
+                "Initial appearance must preserve live room and inventory initialization.");
             Console.WriteLine("Merchant lifecycle passed: 200 authored shop/rest scene identities, initialization-before-build and outgoing-provider isolation.");
+            Console.WriteLine("Initial shop entry passed: 200 distinct rooms, duplicate Ready rejection and retained inventory refresh boundary.");
         }
         finally { harmony.UnpatchAll(harmony.Id); }
     }

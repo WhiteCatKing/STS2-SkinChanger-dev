@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
@@ -473,6 +474,34 @@ internal static class MerchantRuntimeAppearance
     /// </summary>
     internal static void ScopePartTakeover(Node room) =>
         PartTakeoverVisualScope.Capture(room, GroupId);
+
+    private static readonly ConditionalWeakTable<NMerchantRoom, object> InitialMerchantRooms = new();
+
+    internal static bool TryClaimInitialMerchantRoom(NMerchantRoom room) =>
+        InitialMerchantRooms.TryAdd(room, new object());
+
+    internal static void QueueInitialMerchantAppearance(NMerchantRoom room)
+    {
+        if (IsMerchantPreviewRoot(room) || SkinService.GetSelectedRuntimeProvider(GroupId) == null ||
+            !TryClaimInitialMerchantRoom(room)) return;
+
+        // Child Ready runs before the room's Ready. Its skin prefix can transform a cached
+        // vanilla skeleton before the current selection's resources are ever instantiated.
+        // Wait for both base and concrete Ready, then use the same isolated visual transaction
+        // as a hot switch. Never re-enter room/gameplay initialization or its inventory model.
+        Callable.From(() => CompleteInitialMerchantAppearance(room)).CallDeferred();
+    }
+
+    private static void CompleteInitialMerchantAppearance(NMerchantRoom room)
+    {
+        if (!GodotObject.IsInstanceValid(room) || !room.IsInsideTree() ||
+            !ReferenceEquals(NMerchantRoom.Instance, room) ||
+            SkinService.GetSelectedRuntimeProvider(GroupId) == null) return;
+        if (TryRefreshMerchant(out var error))
+            ModLog.Info("[商人] 新房间已按当前选择重建商人外观，保留商品与购买状态。");
+        else
+            ModLog.Warn("[商人] 新房间商人外观初始化失败：" + error);
+    }
 
     internal static void PrepareMerchantSelectionChange()
     {
@@ -1813,6 +1842,7 @@ internal static class MerchantRoomCreateAppearancePatch
 
         RoomRuntimeScopeOwnership.Record(__instance, __state);
         MerchantRuntimeAppearance.ScopePartTakeover(__instance);
+        MerchantRuntimeAppearance.QueueInitialMerchantAppearance(__instance);
     }
 }
 
@@ -1861,7 +1891,8 @@ internal static class MerchantRoomConcreteReadyPatch
             return;
         }
 
-            MerchantRuntimeAppearance.ScopePartTakeover(__instance);
+        MerchantRuntimeAppearance.ScopePartTakeover(__instance);
+        MerchantRuntimeAppearance.QueueInitialMerchantAppearance(__instance);
     }
 }
 
