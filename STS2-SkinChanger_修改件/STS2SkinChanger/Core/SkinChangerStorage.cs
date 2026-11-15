@@ -170,10 +170,10 @@ internal sealed class SkinChangerStorage : IDisposable
                 .Select(directory => new
                 {
                     Path = directory,
-                    Bytes = Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
-                        .Sum(file => new FileInfo(file).Length)
+                    Bytes = MeasureSessionBytes(directory)
                 })
-                .OrderByDescending(session => Directory.GetLastWriteTimeUtc(session.Path))
+                // 最旧的先删：预算不够时保留最近一次会话的缓存。以前按降序排，等于先扔掉刚攒好的那份。
+                .OrderBy(session => Directory.GetLastWriteTimeUtc(session.Path))
                 .ToList();
             report.RemainingBytes = sessions.Sum(session => session.Bytes);
             foreach (var session in sessions)
@@ -198,6 +198,23 @@ internal sealed class SkinChangerStorage : IDisposable
             report.Errors.Add(e.Message);
         }
         return report;
+    }
+
+    // 单个会话量不出来（文件正好被删/权限异常）时只当它是 0 字节，不能让一个坏文件
+    // 把整轮裁剪跳过去——以前整段 Sum 包在外层 try 里，抛一次就一个会话都删不掉。
+    private static long MeasureSessionBytes(string directory)
+    {
+        try
+        {
+            long total = 0;
+            foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                try { total += new FileInfo(file).Length; }
+                catch (Exception e) when (IsIoError(e)) { }
+            }
+            return total;
+        }
+        catch (Exception e) when (IsIoError(e)) { return 0; }
     }
 
     internal sealed class CacheTrimReport
@@ -268,10 +285,15 @@ internal sealed class SkinChangerStorage : IDisposable
         root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (!path.StartsWith(root + Path.DirectorySeparatorChar, comparison)) return false;
+        // 根目录本身允许是链接：玩家常把整个用户目录搬到大盘再留下一个 junction
+        // （本机就是 C:\Users\…\AppData\Roaming\SlayTheSpire2 -> D:\Storage\AppData\Roaming\SlayTheSpire2）。
+        // 这条路是玩家选的，不是我们要防的越界；而根一旦参与 reparse 判定，缓存目录建不出来、
+        // 退出清理和 8 GB 裁剪会被整轮否决（历史上正是这样堆到 63 GB）。根以下的链接仍然拒绝，
+        // 因为那才会把删除重定向到我们不认识的地方。
         for (var current = path; current != null; current = Path.GetDirectoryName(current))
         {
+            if (string.Equals(current, root, comparison)) break;
             if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return false;
-            if (current.Equals(root, comparison)) break;
         }
         return true;
     }

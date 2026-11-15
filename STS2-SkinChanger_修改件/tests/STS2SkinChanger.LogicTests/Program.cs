@@ -2053,6 +2053,7 @@ BackgroundSkinPolicyTests.Run();
 FakeMerchantEventArtPolicyTests.Run();
 MerchantFigureRestorePolicyTests.Run();
 FeatureRegistryTests.Run();
+SkinCacheStorageTests.Run();
 ProviderActivationSchedulePolicyTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
