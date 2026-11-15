@@ -1,3 +1,0 @@
-using System.Reflection.Metadata; using System.Reflection.PortableExecutable;
-foreach (var path in args){ Console.WriteLine("===== "+path); using var fs=File.OpenRead(path); using var pe=new PEReader(fs); if(!pe.HasMetadata) continue; var md=pe.GetMetadataReader();
-foreach(var h in md.TypeDefinitions){ var t=md.GetTypeDefinition(h); var b=t.BaseType.IsNil?"":(t.BaseType.Kind switch{ HandleKind.TypeReference=>md.GetString(md.GetTypeReference((TypeReferenceHandle)t.BaseType).Name), HandleKind.TypeDefinition=>md.GetString(md.GetTypeDefinition((TypeDefinitionHandle)t.BaseType).Name), _=>""}); if(b.Contains("ActModel")) Console.WriteLine($"{md.GetString(t.Namespace)}.{md.GetString(t.Name)} : {b}"); } }
