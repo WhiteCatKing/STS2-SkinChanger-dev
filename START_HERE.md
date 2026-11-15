@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；第三位只在真正上传工坊时提；`workshop\workshop.json` 的 `version` 保持 `1.0.31` 不动（给游戏 SemVer 解析用）。
 
-当前值：`1.0.32.14`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_live_resource_path_takeover_regression.md`。
+当前值：`1.0.32.15`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_vakuu_external_image_background_contract.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -234,3 +234,5 @@ Initialize()
 - 1.0.32.13：修复可战损贞德变体重建后背景调色/点击绑定；隔离加载三档并共用稳定图，消费一次点击，保留 WearEnabled 与 SFW 无战损边界。
 
 - 1.0.32.14：定位 .12 规范缓存接管导致旧背景资源路径被清空；保护被替换者及私有别名占用者的路径。新增测试在 .13 DLL 明确失败、修复版通过 200 次替换与临时恢复，纳入战士保护必跑脚本。
+
+- 1.0.32.15：采纳玩家瓦库散图背景补丁，保留 Image 并添加供官方回调写图的隐藏 TextureRect 空槽；防缺失节点中断与彩蛋覆盖。旧 DLL 负对照失败、修复版与先古卡牌专项通过；从当前源码打包，不部署玩家旧注入 DLL。

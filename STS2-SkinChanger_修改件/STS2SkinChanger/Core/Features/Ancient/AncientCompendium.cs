@@ -2608,6 +2608,20 @@ internal partial class AncientCompendiumScreen : NSubmenu
         root.AddChild(image);
         image.Owner = root;
 
+        // v0.113.1 Vakuu.ConfigureBackgroundScene writes normal/angry art to this
+        // exact child. Keep its contract without letting that write replace Image.
+        // Explicitly hide the slot: a texture can otherwise grow a zero-sized rect
+        // through its minimum size when the game assigns the official background.
+        var officialBgSlot = new TextureRect
+        {
+            Name = "TextureRect",
+            Visible = false,
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            MouseFilter = MouseFilterEnum.Ignore
+        };
+        root.AddChild(officialBgSlot);
+        officialBgSlot.Owner = root;
+
         var scene = new PackedScene();
         var error = scene.Pack(root);
         root.Free();
