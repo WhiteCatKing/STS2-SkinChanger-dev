@@ -30,6 +30,24 @@ internal static class ProtectedCharacterTests
                 var scenes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var selection in options)
                 {
+                    if (provider.Id.StartsWith("JoanofArc", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var wear = catalog.ReadProviderFile("ironclad", selection.Id, "s2_charselect_data.tres") is { Length: > 0 };
+                        if (wear != (provider.Id == "JoanofArcIroncladHpwear"))
+                            throw new Exception("Joan stage capability crossed package boundary: " + selection.Id);
+                        if (wear)
+                        {
+                            var stageRoots = Enumerable.Range(1, 3).Select(stage =>
+                                $"res://joanofarcironcladhpwear/s{stage}_charselect_data.tres").ToArray();
+                            var stages = catalog.BuildRuntimeResourceOverlay("ironclad", selection.Id, stageRoots, "protected-stages/001", true);
+                            if (!stages.CanBindDependencies || stageRoots.Any(path => !stages.ResourcePaths.ContainsKey(path)) ||
+                                RuntimeLoadSafety.EstimateTextureBytes(stages.Files) > RuntimeLoadSafety.MaximumSingleLoadBytes)
+                                throw new Exception("Joan stage graph incomplete or outside budget: " + selection.Id +
+                                    "; bind=" + stages.CanBindDependencies + "; bytes=" + RuntimeLoadSafety.EstimateTextureBytes(stages.Files) +
+                                    "; missing=" + string.Join(",", stageRoots.Where(path => !stages.ResourcePaths.ContainsKey(path))) +
+                                    "; unbound=" + string.Join(",", stages.UnboundDependencies));
+                        }
+                    }
                     const string canonical = "res://scenes/creature_visuals/ironclad.tscn";
                     var scenePath = selection.Assets.TryGetValue(canonical, out var sceneAsset) ? sceneAsset.SourcePath : canonical;
                     scenes.Add(scenePath);

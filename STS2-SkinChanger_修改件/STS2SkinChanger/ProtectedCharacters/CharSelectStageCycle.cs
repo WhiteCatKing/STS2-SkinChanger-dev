@@ -12,15 +12,13 @@ using STS2SkinChanger.Core.Features;
 namespace STS2SkinChanger.Ui;
 
 /// <summary>
-/// Click-to-cycle for the <b>damage stages</b> of the character-select background, for a skin pack
-/// whose own code is not executing.
+/// Click-to-cycle for the <b>damage stages</b> proved present in the selected package.
 ///
 /// The Joan packs ship <c>s1/s2/s3_&lt;group&gt;_data.tres</c> and, when their DLL runs, a click on the
 /// background swaps the live <c>SpineSprite</c>'s skeleton data between those stages. Two packs can
 /// ship the same assembly identity, so only one of them can execute — the other one kept its art but
-/// lost the click. This component performs the same swap from the Skin Changer side, purely with
-/// resources, and only while the selected package's code is <b>not</b> running (a running pack keeps
-/// its own click; one click must never advance twice).
+/// lost the click. The persistent SC catcher performs one isolated swap and consumes the event;
+/// it does not depend on the author's stale static stage cache after a background replacement.
 /// </summary>
 internal static class CharSelectStageCycle
 {
@@ -110,12 +108,31 @@ internal static class CharSelectStageCycle
                 return;
             }
 
-            // Let Joan's own click handler run its transition when it owns this background.
-            var joanCatcher = background.GetNodeOrNull<Control>("JoanofArcIroncladHpwearClickCatcher");
-            var joanHandlesClick = GodotObject.IsInstanceValid(joanCatcher) &&
-                                   joanCatcher!.IsVisibleInTree() &&
-                                   joanCatcher.MouseFilter == Control.MouseFilterEnum.Stop;
-            var usable = !joanHandlesClick && ResolvePlan(groupId, spine) is not null;
+            var plan = ResolvePlan(groupId, spine);
+            var usable = plan != null && WearEnabled(groupId);
+            // A provider catcher can remain visible/Stop while its private stage cache or
+            // ownership check no longer matches the rebuilt model. For packages whose own
+            // PCK proves stage support, one persistent SC catcher owns the click exclusively.
+            if (plan is { } currentPlan)
+            {
+                var selection = SkinService.GetCharacterSelectionOptionId(groupId);
+                var binding = selection + "|" + background.GetInstanceId();
+                if (host.GetMeta("sc_stage_binding", string.Empty).AsString() != binding)
+                {
+                    // One attempt per new selection/background; failed resources already have
+                    // their own circuit breaker. A 5 Hz observer must never become a retry loop.
+                    host.SetMeta("sc_stage_binding", binding);
+                    var data = LoadStageData(groupId, currentPlan.DataDirectory ?? currentPlan.Directory,
+                        currentPlan.Group, currentPlan.CurrentStage);
+                    if (data != null)
+                    {
+                        spine.Set("skeleton_data_res", data);
+                        PlayIdle(spine);
+                        if (ProviderSettingsVariantOptions.ContractOf(selection) is { } contract)
+                            ReapplyPalette(contract, spine);
+                    }
+                }
+            }
 
             // Parent to the container that holds the background art (AnimatedBg), not to the background
             // node itself and not to the screen: the Skin Changer rebuilds the per-character background
@@ -153,8 +170,8 @@ internal static class CharSelectStageCycle
             {
                 host.SetMeta(UsableMeta, true);
                 ModLog.Info(
-                    $"已在选人界面为 {groupId} 接上“点角色切战损”：当前皮肤包的代码没有执行，" +
-                    "由本 Mod 按它自己的 s1/s2/s3 资源切换。");
+                    $"已在选人界面为 {groupId} 接上“点角色切战损”：" +
+                    "由本 Mod 按当前包隔离的 s1/s2/s3 资源切换。");
             }
         }
         catch
@@ -254,7 +271,8 @@ internal static class CharSelectStageCycle
                 return;
             }
 
-            CycleWithLog(screen, groupId, string.IsNullOrWhiteSpace(entry) ? groupId : entry);
+            if (WearEnabled(groupId) && CycleWithLog(screen, groupId, string.IsNullOrWhiteSpace(entry) ? groupId : entry))
+                catcher.AcceptEvent();
         }
         catch (Exception exception)
         {
@@ -263,8 +281,8 @@ internal static class CharSelectStageCycle
     }
 
     /// <summary>
-    /// Whether this click is ours and what the next stage is. The pack that runs its own code keeps its
-    /// click, and a package without further stages (the 0.3.5-S build only ships s1) never installs one.
+    /// Whether this click is ours and what the next stage is. A package without further stages
+    /// (the 0.3.5-S build only ships s1) never installs an active catcher.
     /// </summary>
     private static StagePlan? ResolvePlan(string groupId, Node spine)
     {
@@ -398,28 +416,11 @@ internal static class CharSelectStageCycle
     {
         try
         {
-            if (!ResourceLoader.Exists(path))
-            {
-                EnsureProviderPackMounted(groupId);
-            }
-
-            if (ResourceLoader.Exists(path))
-            {
-                if (ResourceLoader.Load<Resource>(path) is { } cached)
-                {
-                    return cached;
-                }
-
-                if (ResourceLoader.Load<Resource>(path, null, ResourceLoader.CacheMode.Reuse) is { } reused)
-                {
-                    return reused;
-                }
-            }
-
-            // Last resort: let the Skin Changer serve this stage file out of the selected package.
+            // Both Joan packages export identical canonical paths. Never consult the global
+            // ResourceLoader cache first: an existing resource may belong to the other package.
             return SkinService.WithRuntimeResources(
                 groupId,
-                [path],
+                StageBatchPaths(path),
                 loaded => loaded.TryGetValue(path, out var resource) ? resource as Resource : null,
                 includeProviderDependencies: true);
         }
@@ -428,6 +429,19 @@ internal static class CharSelectStageCycle
             ModLog.Warn($"读取 {path} 失败：{exception.GetBaseException().Message}");
             return null;
         }
+    }
+
+    internal static string[] StageBatchPaths(string path)
+    {
+        var slash = path.LastIndexOf('/');
+        var file = slash < 0 ? path : path[(slash + 1)..];
+        // The wear-enabled Joan package proves all three stages exist. Request a stable
+        // graph once, rather than creating three alias packs and decoding the same atlas
+        // again on each click. Other resource layouts keep their original single request.
+        if (slash >= 0 && file.Length == "s1_charselect_data.tres".Length &&
+            file[0] == 's' && file[1] is >= '1' and <= '3' && file[2..] == "_charselect_data.tres")
+            return Enumerable.Range(1, 3).Select(stage => path[..(slash + 1)] + $"s{stage}_charselect_data.tres").ToArray();
+        return [path];
     }
 
     private static readonly Dictionary<string, bool> StageSupportCache =
@@ -490,8 +504,8 @@ internal static class CharSelectStageCycle
     {
         try
         {
-            if (!ManagedSkinModLoader.TryGetLoadedProviderAssembly(contract.AssemblyPath, out var assembly) ||
-                assembly == null)
+            if (!ProviderSettingsVariantOptions.TryGetExecutorContract(contract, out var executor) ||
+                !ManagedSkinModLoader.TryGetLoadedProviderAssembly(executor.AssemblyPath, out var assembly) || assembly == null)
             {
                 return;
             }
@@ -519,6 +533,23 @@ internal static class CharSelectStageCycle
         {
             // The stage art is already on screen; the tint is a bonus.
         }
+    }
+
+    private static bool WearEnabled(string groupId)
+    {
+        try
+        {
+            var contract = ProviderSettingsVariantOptions.ContractOf(SkinService.GetCharacterSelectionOptionId(groupId));
+            if (contract == null || !ManagedSkinModLoader.TryGetLoadedProviderAssembly(contract.AssemblyPath, out var assembly) || assembly == null)
+                return true;
+            var runtime = assembly.GetType(contract.RuntimeTypeName);
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+            var settings = contract.InstanceMemberIsMethod
+                ? runtime?.GetMethod(contract.InstanceMemberName, flags)?.Invoke(null, null)
+                : runtime?.GetProperty(contract.InstanceMemberName, flags)?.GetValue(null);
+            return settings?.GetType().GetProperty("WearEnabled")?.GetValue(settings) is not false;
+        }
+        catch { return false; }
     }
 
     private static void PlayIdle(Node spine)

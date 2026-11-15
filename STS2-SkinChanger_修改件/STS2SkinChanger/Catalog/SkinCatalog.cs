@@ -4882,7 +4882,10 @@ internal sealed partial class SkinCatalog : IDisposable
             if (primary == null && selected?.IsDirectCharacterRuntimeProvider == true)
             {
                 primary = GetSelectionProviderIndexes(selected)
-                    .Select(index => index.Assets.GetValueOrDefault(sourcePath))
+                    // Stage 2/3 resources may only be auxiliary files: no canonical scene
+                    // references them until a click. Build this explicit root from the exact
+                    // selected package instead of returning an empty isolation overlay.
+                    .Select(index => index.Assets.GetValueOrDefault(sourcePath) ?? index.TryBuildAsset(sourcePath))
                     .FirstOrDefault(asset => asset != null);
             }
             if (primary == null)

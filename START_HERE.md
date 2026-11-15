@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；第三位只在真正上传工坊时提；`workshop\workshop.json` 的 `version` 保持 `1.0.31` 不动（给游戏 SemVer 解析用）。
 
-当前值：`1.0.32.12`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_character_binding_idle_loading.md`。
+当前值：`1.0.32.13`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_joan_variant_background_stage_binding.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -230,3 +230,5 @@ Initialize()
 - 版本 1.0.32.11：十字军/贞德相关 12 模块移入 STS2SkinChanger/ProtectedCharacters，后续须遵守该目录 AGENTS.md 并运行 tools/check-protected-characters.ps1。加入解码/缓存预算、低内存/缺失失败冷却、有界遍历和选角文件预读；结束对局不删除已挂载联机 PCK；开局/退出兜底保持。真实 13 选项及专项/既有回归通过，未宣称消除所有原生崩溃；三文件同步四处并推送 main/标签。
 
 - 版本 1.0.32.12：选项变体优先，同源外观标识与选人失败回滚；角色预览始终启用、奥斯提仅骨妹显示；完整依赖图隔离复用；空闲分片文件预读、需求插队、输入暂停，保留开局/退出兜底。详细边界及离线验证见本版本问题记录。
+
+- 1.0.32.13：修复可战损贞德变体重建后背景调色/点击绑定；隔离加载三档并共用稳定图，消费一次点击，保留 WearEnabled 与 SFW 无战损边界。

@@ -2055,6 +2055,7 @@ internal static partial class ContextualSkinControls
             RefreshLocalLobbyAvatar(screen);
             if (!CharacterModelPreviewControls.BindNow(screen, character))
                 throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
+            CharSelectStageCycle.Attach(screen, character);
             return;
         }
 
@@ -2095,6 +2096,7 @@ internal static partial class ContextualSkinControls
                 RefreshLocalLobbyAvatar(screen);
                 if (!CharacterModelPreviewControls.BindNow(screen, character))
                     throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
+                CharSelectStageCycle.Attach(screen, character);
                 return;
             }
             catch (AppearanceResourceUnavailableException exception)
@@ -2150,6 +2152,7 @@ internal static partial class ContextualSkinControls
         RefreshLocalLobbyAvatar(screen);
         if (!CharacterModelPreviewControls.BindNow(screen, character))
             throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
+        CharSelectStageCycle.Attach(screen, character);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
         DescribeCharacterSelectBackground(screen, groupId, character);
         CharSelectPackRebindCompat.AfterRebuild(screen, groupId, SkinService.GetSelectedRuntimeProvider(groupId));

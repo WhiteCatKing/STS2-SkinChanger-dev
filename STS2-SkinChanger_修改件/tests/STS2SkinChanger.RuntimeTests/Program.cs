@@ -26,6 +26,7 @@ if (args.Length == 1 && args[0] == "--test-preview-binding")
 
 if (args.Length == 1 && args[0] == "--test-protected-boundaries")
 {
+    JoanStageBindingTests.Run();
     ManualCharacterVariantTests.Run();
     ScopedSkinBehaviorTests.Run();
     AnimatorPatchDiscoveryTests.Run();
