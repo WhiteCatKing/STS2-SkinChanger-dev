@@ -75,7 +75,21 @@ internal static class CardTransformVfxPortraitPreloadPatch
             // present while nothing is drawn the effect node is being hidden or stalling.
             Core.ModLog.Info(
                 $"变化特效已创建：{startCard?.Id.ToString() ?? "<null>"} → {endCard?.Id.ToString() ?? "<null>"}");
-            Core.SkinService.PreloadCardPortraits([startCard, endCard]);
+            var cards = new List<CardModel>(2);
+            if (startCard != null)
+            {
+                cards.Add(startCard);
+            }
+
+            if (endCard != null)
+            {
+                cards.Add(endCard);
+            }
+
+            if (cards.Count > 0)
+            {
+                Core.SkinService.PreloadCardPortraits(cards);
+            }
         }
         catch (Exception exception)
         {

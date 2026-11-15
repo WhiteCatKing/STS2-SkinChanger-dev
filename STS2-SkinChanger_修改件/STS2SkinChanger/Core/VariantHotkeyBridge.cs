@@ -34,8 +34,10 @@ internal static class VariantHotkeyBridge
 
     /// <summary>
     /// 战士（Joan 系）变体热键桥。作者要求先停用所有战士专属逻辑，代码保留待恢复。
+    /// 刻意用 static readonly 而不是 const：运行期同样恒为 false，但编译器不会把保留下来的
+    /// 分支判成不可达代码（CS0162），恢复时只改这一行的值即可。
     /// </summary>
-    private const bool IroncladCompatEnabled = false;
+    private static readonly bool IroncladCompatEnabled = false;
 
     private static double _elapsed;
     private static readonly Dictionary<string, int> AdoptedLogKeys = new(StringComparer.OrdinalIgnoreCase);

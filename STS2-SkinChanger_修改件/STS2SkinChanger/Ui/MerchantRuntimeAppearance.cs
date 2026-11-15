@@ -866,7 +866,9 @@ internal static class MerchantRuntimeAppearance
     /// 临时总开关：关闭商人的全部增强刷新（房间就绪后的重试看门狗、热切换重放、位姿记忆）。
     /// 只保留最基础的一条：房间 _Ready 时按当前选择套用资源（MerchantRoomConcreteReadyPatch）。
     /// </summary>
-    internal const bool EnhancedMerchantRefreshEnabled = false;
+    // 刻意用 static readonly 而不是 const：运行期同样恒为 false，但编译器不会把保留下来的分支
+    // 判成不可达代码（CS0162），恢复时只改这一行的值即可。
+    internal static readonly bool EnhancedMerchantRefreshEnabled = false;
 
     // a/b 的缩放是乘性叠加（0.18 × 0.18 = 0.0324）：进门那次若包自己的 _Ready 修饰还在位，
     // 我们的重放会把位姿套两遍，表现为模型缩成小点并跑到右下角。检测到这个数量级就还原成单次。

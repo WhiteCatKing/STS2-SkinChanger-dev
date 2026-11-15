@@ -2123,7 +2123,7 @@ internal static partial class ContextualSkinControls
                 selection!,
                 $"scenes/screens/char_select/char_select_bg_{characterId}.tscn");
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             return true;
         }
@@ -2251,7 +2251,7 @@ internal static partial class ContextualSkinControls
             }
 
         }
-        catch (Exception exception)
+        catch (Exception)
         {
         }
     }
@@ -3333,9 +3333,9 @@ internal static partial class ContextualSkinControls
         var characterId = character.Id.Entry.ToLowerInvariant();
         if (!locked && VariantPortraits.Resolve(group.Id, "select", 1) is { } variantSelect)
         {
-            result = variantSelect as CompressedTexture2D;
-            if (result != null)
+            if (variantSelect as CompressedTexture2D is { } variantTexture)
             {
+                result = variantTexture;
                 return;
             }
         }

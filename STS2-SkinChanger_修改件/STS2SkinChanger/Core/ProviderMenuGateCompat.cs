@@ -30,8 +30,10 @@ internal static class ProviderMenuGateCompat
     /// <summary>
     /// 战士（Joan 系）专属的选人门控兼容。作者要求先把所有「只针对战士」的逻辑停用，让铁甲战士
     /// 和其他角色走完全同一条路径；代码保留，确认背景问题根源后再决定是否恢复。
+    /// 刻意用 static readonly 而不是 const：运行期同样恒为 false，但编译器不会把保留下来的分支
+    /// 判成不可达代码（CS0162），恢复时只改这一行的值即可。
     /// </summary>
-    private const bool IroncladCompatEnabled = false;
+    private static readonly bool IroncladCompatEnabled = false;
 
     /// <summary>Installs the gate patch for every loaded package that exposes a variant contract.</summary>
     internal static void Tick(double delta)
