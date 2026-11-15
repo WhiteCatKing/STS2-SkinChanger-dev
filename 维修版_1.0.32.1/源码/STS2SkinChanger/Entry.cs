@@ -1,0 +1,520 @@
+using Godot;
+using HarmonyLib;
+using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Models;
+using STS2SkinChanger.Core;
+using STS2SkinChanger.Ui.EmperorCrabCompat;
+using System.Reflection;
+
+namespace STS2SkinChanger;
+
+[ModInitializer("Initialize")]
+public static class Entry
+{
+    public const string ModId = "Gurio.SkinChanger";
+    public const string LegacyModId = "STS2SkinChanger";
+    // Four-part versions are kept out of the game's manifest version field because older
+    // loaders only accept three-part SemanticVersion values. This marker is embedded in the
+    // assembly and printed at startup so an internal deployment can be identified unambiguously.
+    public const string InternalTestVersion = "1.0.32.1";
+
+    public static bool IsSelfModId(string? modId) =>
+        modId != null &&
+        (modId.Equals(ModId, StringComparison.OrdinalIgnoreCase) ||
+         modId.Equals(LegacyModId, StringComparison.OrdinalIgnoreCase));
+
+    public static void Initialize()
+    {
+        var assembly = typeof(Entry).Assembly;
+        ModLog.Info(
+            $"内测版本 {InternalTestVersion}；程序集={assembly.GetName().Name} " +
+            $"{assembly.GetName().Version}；路径={assembly.Location}");
+        // 熔断 / 防崩溃安全件的日志出口（安全件本身不依赖 ModLog，便于离线测试）。
+        Core.Safety.SafetyLog.Sink = ModLog.Warn;
+        Core.Safety.SafetyKeys.ConfigureDefaults();
+        ModPrivateDependencyResolver.Install(ModLog.Info);
+        StartupWatchdog.Begin();
+        SkinChangerPaths.Initialize();
+        StartupWatchdog.Stage("路径与依赖就绪");
+        FrameworkCompatibilityLayer.Initialize();
+        ManagedSkinModLoader.Initialize();
+        // 与框架类 Mod（RitsuLib、BaseLib 等）共存时，单个补丁类的目标类型可能因加载
+        // 竞争解析失败。PatchAll 一处失败即中断且只能整体回滚，会把单类问题放大成整个
+        // Mod 停用；改为逐类安装，失败的类跳过并单独撤销，其余补丁照常生效。
+        var harmony = new Harmony(ModId);
+        StartupWatchdog.Stage("补丁类安装");
+        // 旧版游戏（正式版分支）里，部分补丁类的目标类型并不存在。类型加载期抛出
+        // TypeLoadException 会让整个 Initialize 中断，后果是「所有皮肤都检测不到」。
+        // 所以这里先兜住：失败也只是少了那些类，扫描与界面照常。
+        var failedPatchClasses = new System.Collections.Generic.List<string>();
+        try
+        {
+            var loadableTypes = GetLoadableTypes(assembly);
+            // 已迁移成功能模块的补丁类交给模块注册表按需装卸，不在这里统一安装。
+            Core.Features.FeatureBootstrap.Initialize(harmony, loadableTypes);
+            failedPatchClasses = InstallPatchClasses(
+                harmony,
+                loadableTypes.Where(type => !Core.Features.FeatureBootstrap.IsManagedByFeature(type)));
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("[启动] 补丁类枚举失败（已跳过补丁安装，其余流程继续）：" +
+                exception.GetBaseException().GetType().Name + " / " + exception.GetBaseException().Message);
+        }
+        StartupWatchdog.Stage("补丁类安装完成");
+        // Bundled 白猫 EmperorCrabSkinFix: combat background creation, bestiary background
+        // rebuild, half-HP skeleton swap and the RitsuLib async guard. Installed manually because
+        // those patches target runtime types discovered by reflection rather than [HarmonyPatch]
+        // classes.
+        EmperorCrabCompat.Install(harmony);
+        // "Custom Skeleton Loader" (Nexus 505) and a selected skin both own the same creature;
+        // when this client shows a skin for a group, the loader keeps its hands off it.
+        CustomSkeletonLoaderCompat.Install(harmony);
+        // Pengo's Tarot paints localized text with its bundled Latin-only Balatro font; give the
+        // CJK labels the game's locale font so Chinese/Japanese/Korean stop rendering as boxes.
+        PengoTarotFontCompat.Install(harmony);
+        // v0.113.0 renamed NCreature.OstyScaleToSize; the Osty skin pack still patches the old
+        // name, and one unresolved target makes it unpatch all of itself.
+        OstyDefectImpostorCompat.Install(harmony);
+        Ui.MerchantRoomConcreteReadyPatch.Install(harmony);
+        ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
+        ModLog.Info(failedPatchClasses.Count == 0
+            ? "代码补丁已加载。等待游戏资源初始化。"
+            : $"代码补丁已加载（{failedPatchClasses.Count} 个类失败被跳过：{string.Join("、", failedPatchClasses)}）。");
+        try
+        {
+            if (Engine.GetMainLoop() is SceneTree tree)
+            {
+                tree.CreateTimer(25).Timeout += BackgroundSkinService.RunSelfCheck;
+                DebugSnapshot.EnsureInstalled();
+            }
+        }
+        catch
+        {
+            // The tree is not available in some loaders; the compendium still works.
+        }
+    }
+
+    internal static List<string> InstallPatchClasses(Harmony harmony, IEnumerable<Type> types)
+    {
+        var failedPatchClasses = new List<string>();
+        foreach (var type in types)
+        {
+            if (!type.IsClass || !type.IsDefined(typeof(HarmonyPatch), inherit: false))
+            {
+                continue;
+            }
+
+            try
+            {
+                harmony.CreateClassProcessor(type).Patch();
+            }
+            catch (Exception exception)
+            {
+                try
+                {
+                    harmony.CreateClassProcessor(type).Unpatch();
+                }
+                catch
+                {
+                    // 撤销失败只会残留该类的半安装补丁，不影响其余类继续安装。
+                }
+
+                failedPatchClasses.Add(type.Name);
+                ModLog.Error(
+                    "补丁类 " + type.Name + " 安装失败，已跳过该类：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        return failedPatchClasses;
+    }
+
+    internal static Type[] GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException exception)
+        {
+            // 部分类型加载失败时仍为可加载的类型安装补丁；完整异常交由补丁类日志逐类暴露。
+            ModLog.Warn(
+                $"程序集类型枚举部分失败，仅对 {exception.Types.Count(static type => type != null)} 个可加载类型继续：{exception.LoaderExceptions.Length} 个加载异常。");
+            return exception.Types.OfType<Type>().ToArray();
+        }
+    }
+
+}
+
+[HarmonyPatch(typeof(OneTimeInitialization), nameof(OneTimeInitialization.ExecuteEssential))]
+internal static class EssentialInitializationPatch
+{
+    private static void Prefix()
+    {
+        try
+        {
+            VisualPatchGuard.RemoveProviderVisualPatches(
+                ManagedSkinModLoader.ProviderRoots,
+                ManagedSkinModLoader.GetPreservedRuntimeRoots(ModManager.Mods));
+            StartupWatchdog.Stage("进入外观基底初始化");
+            SkinService.InitializeBeforeAssets();
+        }
+        catch (Exception exception)
+        {
+            // 启动期是单点：这里任何异常都会顺着 OneTimeInitialization 冒到游戏启动流程，
+            // 直接把玩家挡在"致命错误"画面。皮肤只是外观，宁可选错皮也不能让游戏起不来。
+            ModLog.Error(
+                "启动期皮肤初始化前置步骤失败（已跳过，游戏继续启动）：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static void Postfix()
+    {
+        try
+        {
+            VisualPatchGuard.RemoveProviderVisualPatches(
+                ManagedSkinModLoader.ProviderRoots,
+                ManagedSkinModLoader.GetPreservedRuntimeRoots(ModManager.Mods));
+            StartupWatchdog.Stage("卡图与模型后置初始化");
+            SkinService.InitializeCardGroupsAfterModels();
+            StartupWatchdog.Stage("卡图完成，开始选角预载");
+            StartupWatchdog.Stage("外观预热与选角预载");
+            SkinService.PrepareSelectedCharacterPreviews();
+            ExternalCardVisualBridge.WarmUp();
+            StartupWatchdog.Complete();
+            // 目录与配置都就绪了：第一次按需决定各功能模块的补丁去留。
+            Core.Features.FeatureBootstrap.Reevaluate();
+            SkinWorkshopService.StartCommunityRefresh();
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error(
+                "启动期皮肤初始化后置步骤失败（已跳过，游戏继续启动）：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    // Start-up is over once this runs: from here on a Quit call is the player leaving, and until
+    // here it is not (see QuitInterceptionPolicy). Deliberately a finalizer rather than the last
+    // line of the postfix - the steps above are not individually guarded, so a throw would leave
+    // the interception closed for the rest of the session and no later Quit could ever exit.
+    [HarmonyFinalizer]
+    private static Exception? Finalizer(Exception? __exception)
+    {
+        QuitCacheCleanup.MarkInitializationCompleted();
+        return __exception;
+    }
+}
+
+[HarmonyPatch(typeof(ModManager), nameof(ModManager.GetModdedLocTables))]
+internal static class CosmeticLocalizationOwnershipPatch
+{
+    // PCK namespaces remain mounted after a character skin is deselected. Filter only its
+    // characters.json table; events, cards and all other Mod text keep their normal lifetime.
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(ref IEnumerable<string> __result) =>
+        __result = SkinService.FilterModdedLocalizationTables(__result);
+}
+
+[HarmonyPatch(typeof(ReflectionHelper), nameof(ReflectionHelper.ModTypes), MethodType.Getter)]
+internal static class DuplicateModelTypeCompatibilityPatch
+{
+    // Some older gameplay mods ship a model with the same ID as a model introduced by the
+    // current game. ModelDb constructs both and aborts startup before any mod UI can appear.
+    // Keep the game's canonical type whenever that ID already exists; unrelated mod-only models
+    // and all unrelated non-model types remain untouched. SkinChangerNetMessage is also kept
+    // out of automatic discovery: v0.107.1 alphabetically mixes cosmetic Mod messages into the
+    // official network ID table, so leaving our manually-reserved envelope here shifts official
+    // IDs whenever only one peer has Skin Changer and black-screens the multiplayer run.
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(ref Type[] __result)
+        => __result = ModelTypeCompatibility.Filter(__result)
+            .Where(type => type != typeof(SkinChangerNetMessage))
+            .ToArray();
+}
+
+internal static class ModelTypeCompatibility
+{
+    private static readonly Lazy<IReadOnlySet<ModelId>> CanonicalModelIds = new(BuildCanonicalModelIds);
+    private static readonly HashSet<ModelId> ReportedCollisions = [];
+    private static readonly PropertyInfo? RegisteredModelsProperty =
+        typeof(ModelDb).GetProperty(
+            "All",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+    private static readonly FieldInfo? RegisteredModelsField =
+        typeof(ModelDb).GetField(
+            "_contentById",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+    private static IReadOnlySet<ModelId> BuildCanonicalModelIds()
+    {
+        var ids = new HashSet<ModelId>();
+        // 第三方皮肤包可能引用已被新版游戏删除的类型（例如 v0.113.0 的 SingletonModel），
+        // 这时 GameAssembly 的整份类型枚举会抛 ReflectionTypeLoadException。只取可加载的类型，
+        // 不能让一个包带崩模型 ID 兼容过滤，更不能带崩启动。
+        foreach (var type in Entry.GetLoadableTypes(typeof(AbstractModel).Assembly))
+        {
+            if (type.IsAbstract ||
+                !type.IsSubclassOf(typeof(AbstractModel)))
+            {
+                continue;
+            }
+
+            try
+            {
+                ids.Add(ModelDb.GetId(type));
+            }
+            catch
+            {
+                // A malformed optional type must not prevent the compatibility filter from
+                // protecting the rest of the model database.
+            }
+        }
+
+        return ids;
+    }
+
+    internal static Type[] Filter(
+        IEnumerable<Type> types,
+        bool includeAlreadyRegisteredModels = false)
+    {
+        var coreAssembly = typeof(AbstractModel).Assembly;
+        // ReflectionHelper.ModTypes is also used after ModelDb.Init by frameworks such as
+        // BaseLib to discover custom character scene conversions. Seeding this set from the
+        // live ModelDb in that path made every legitimate, already-initialized Mod model look
+        // like a duplicate and removed it from all later reflection scans. Only the actual
+        // ModelDb.Init boundary needs to account for models injected by earlier prefixes.
+        var seenIds = includeAlreadyRegisteredModels
+            ? GetRegisteredModels().Select(model => model.Id).ToHashSet()
+            : [];
+        var filtered = new List<Type>();
+
+        foreach (var type in types)
+        {
+            if (type.Assembly == coreAssembly ||
+                !type.IsSubclassOf(typeof(AbstractModel)))
+            {
+                filtered.Add(type);
+                continue;
+            }
+
+            ModelId id;
+            try
+            {
+                id = ModelDb.GetId(type);
+            }
+            catch
+            {
+                filtered.Add(type);
+                continue;
+            }
+
+            // A mod type with a canonical game ID can never replace the game's type.
+            // For IDs that are not present in the game, also de-duplicate competing mod
+            // types: the first loaded provider owns the ID and later providers are skipped.
+            if (CanonicalModelIds.Value.Contains(id) || !seenIds.Add(id))
+            {
+                ReportCollision(id);
+                continue;
+            }
+
+            filtered.Add(type);
+        }
+
+        return filtered.ToArray();
+    }
+
+    private static void ReportCollision(ModelId id)
+    {
+        lock (ReportedCollisions)
+        {
+            if (ReportedCollisions.Add(id))
+            {
+                ModLog.Warn($"检测到重复 Mod 模型 ID {id}，已保留先注册的模型以避免启动失败。");
+            }
+        }
+    }
+
+    internal static int RemoveExistingCanonicalConflicts()
+    {
+        var coreAssembly = typeof(AbstractModel).Assembly;
+        var removed = 0;
+        foreach (var model in GetRegisteredModels().ToArray())
+        {
+            var type = model.GetType();
+            if (type.Assembly == coreAssembly ||
+                !CanonicalModelIds.Value.Contains(model.Id))
+            {
+                continue;
+            }
+
+            ModelDb.Remove(type);
+            removed++;
+            lock (ReportedCollisions)
+            {
+                if (ReportedCollisions.Add(model.Id))
+                {
+                    ModLog.Warn($"检测到已注入的 Mod 模型 {model.Id} 与当前游戏原版重复，已移除 Mod 实例并保留原版。");
+                }
+            }
+        }
+
+        return removed;
+    }
+
+    private static IEnumerable<AbstractModel> GetRegisteredModels()
+    {
+        if (RegisteredModelsProperty?.GetValue(null) is IEnumerable<AbstractModel> models)
+        {
+            return models;
+        }
+
+        if (RegisteredModelsField?.GetValue(null) is IDictionary<ModelId, AbstractModel> modelMap)
+        {
+            return modelMap.Values;
+        }
+
+        return [];
+    }
+}
+
+// Some compatibility/framework mods pass an explicit model array to ModelDb.Init instead
+// of letting the game read ReflectionHelper.ModTypes. In that path the property patch above
+// is never consulted, so apply the same filtering at the actual initialization boundary.
+// The formal v0.107.1 build exposes Init() while the public beta exposes Init(Type[]?). Resolve
+// the method dynamically and use Harmony's __args bridge so one DLL can load on both branches.
+[HarmonyPatch]
+internal static class DuplicateModelInitCompatibilityPatch
+{
+    private static MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(ModelDb), nameof(ModelDb.Init)) ??
+        throw new MissingMethodException(typeof(ModelDb).FullName, nameof(ModelDb.Init));
+
+    // Other mods may inject legacy models from their own Init prefix. Run after those
+    // prefixes so the database and the explicit list are both in their final pre-init state.
+    [HarmonyPriority(Priority.Last)]
+    private static void Prefix(object[] __args)
+    {
+        var existingRemoved = ModelTypeCompatibility.RemoveExistingCanonicalConflicts();
+        // The normal game call passes null and resolves AllAbstractModelSubtypes inside the
+        // original method. Resolve it here too, so a previously cached/unfiltered reflection
+        // list cannot bypass the compatibility filter.
+        var candidates = __args is [{ } firstArgument] && firstArgument is Type[] injected
+            ? injected
+            : ModelDb.AllAbstractModelSubtypes;
+        var originalCount = candidates.Length;
+        var filtered = ModelTypeCompatibility.Filter(
+            candidates,
+            includeAlreadyRegisteredModels: true);
+        var removedCount = originalCount - filtered.Length;
+        if (__args.Length > 0)
+        {
+            __args[0] = filtered;
+        }
+
+        ModLog.Info($"ModelDb.Init 兼容补丁已执行：模型 {originalCount} 个，移除列表重复 {removedCount} 个，移除已注入冲突 {existingRemoved} 个。");
+    }
+
+    [HarmonyPostfix]
+    private static void Postfix() => ProviderModelDiscovery.InstantiatePublishedAfterInit();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,35 @@
+﻿位置,行号,文件,所在方法,retry提及,上限,首行,建议模块
+STS2SkinChanger/Core/DeferredRegistrationQueue.cs:49,49,STS2SkinChanger/Core/DeferredRegistrationQueue.cs,TryRegister,1,⚠ 未见上限,public int RetryPending(,core
+STS2SkinChanger/Core/FrameworkCompatibilityLayer.cs:179,179,STS2SkinChanger/Core/FrameworkCompatibilityLayer.cs,SynchronizeSelections,1,⚠ 未见上限,var completed = ProviderRegistrations.RetryPending(,core
+STS2SkinChanger/Core/MultiplayerSkinSync.cs:144,144,STS2SkinChanger/Core/MultiplayerSkinSync.cs,SessionCharacterSelection,4,⚠ 未见上限,private static double _appearanceRetryCooldown;,multiplayer
+STS2SkinChanger/Core/MultiplayerSkinSync.cs:821,821,STS2SkinChanger/Core/MultiplayerSkinSync.cs,ResetRoundStateForLobby,1,⚠ 未见上限,_appearanceRetryCooldown = 0;,multiplayer
+STS2SkinChanger/Core/MultiplayerSkinSync.cs:928,928,STS2SkinChanger/Core/MultiplayerSkinSync.cs,DetachFromRun,1,⚠ 未见上限,_appearanceRetryCooldown = 0;,multiplayer
+STS2SkinChanger/Core/MultiplayerSkinSync.cs:1074,1074,STS2SkinChanger/Core/MultiplayerSkinSync.cs,Tick,2,3,RetryAdvertisementsWaitingForPlayerIdentity();,multiplayer
+STS2SkinChanger/Core/MultiplayerSkinSync.cs:1129,1129,STS2SkinChanger/Core/MultiplayerSkinSync.cs,(未知),3,⚠ 未见上限,if (_appearanceRetryCooldown > 0 ||,multiplayer
+STS2SkinChanger/Core/MultiplayerSkinSync.cs:1519,1519,STS2SkinChanger/Core/MultiplayerSkinSync.cs,RequestFullRemoteRefresh,1,⚠ 未见上限,_appearanceRetryCooldown = 0;,multiplayer
+STS2SkinChanger/Core/MultiplayerSkinSync.cs:2303,2303,STS2SkinChanger/Core/MultiplayerSkinSync.cs,DictionaryEquals,1,⚠ 未见上限,private static void RetryAdvertisementsWaitingForPlayerIdentity(),multiplayer
+STS2SkinChanger/Core/MultiplayerSkinSync.cs:2373,2373,STS2SkinChanger/Core/MultiplayerSkinSync.cs,RememberLocalAdvertisement,1,⚠ 未见上限,internal static void RetryCachedSelection(,multiplayer
+STS2SkinChanger/Core/OnlineSkinCache.cs:748,748,STS2SkinChanger/Core/OnlineSkinCache.cs,ProcessRequest,1,⚠ 未见上限,"MultiplayerSkinSync.RetryCachedSelection(request, alreadyCached.OptionId);",core
+STS2SkinChanger/Core/OnlineSkinCache.cs:857,857,STS2SkinChanger/Core/OnlineSkinCache.cs,CachedProvider,1,3,"MultiplayerSkinSync.RetryCachedSelection(request, sessionOptionId);",core
+STS2SkinChanger/Core/SkinChangerStorage.cs:137,137,STS2SkinChanger/Core/SkinChangerStorage.cs,CacheCleanupReport,6,⚠ 未见上限,void Attempt(Action clean),core
+STS2SkinChanger/Core/StatefulCardArtRuntime.cs:20,20,STS2SkinChanger/Core/StatefulCardArtRuntime.cs,(未知),1,⚠ 未见上限,"private static readonly Dictionary<string, long> RetryAt = new(StringComparer.OrdinalIgnoreCase);",card
+STS2SkinChanger/Core/StatefulCardArtRuntime.cs:41,41,STS2SkinChanger/Core/StatefulCardArtRuntime.cs,For,2,⚠ 未见上限,if (RetryAt.GetValueOrDefault(option.ProviderId) > System.Environment.TickCount64) return null;,card
+STS2SkinChanger/Core/StatefulCardArtRuntime.cs:59,59,STS2SkinChanger/Core/StatefulCardArtRuntime.cs,Runtime,1,⚠ 未见上限,RetryAt[option.ProviderId] = System.Environment.TickCount64 + 2000;,card
+STS2SkinChanger/Core/WorkshopCatalogSession.cs:10,10,STS2SkinChanger/Core/WorkshopCatalogSession.cs,(未知),1,⚠ 未见上限,internal readonly HashSet<ulong> Attempted = [];,workshop
+STS2SkinChanger/Core/WorkshopCatalogSession.cs:34,34,STS2SkinChanger/Core/WorkshopCatalogSession.cs,Load,2,⚠ 未见上限,var missing = ids.Distinct().Where(id => !state.Attempted.Contains(id)).ToArray();,workshop
+STS2SkinChanger/Ui/AncientCompendium.cs:358,358,STS2SkinChanger/Ui/AncientCompendium.cs,ScheduleDeferredAttach,2,12,if (state.DeferredScheduled || state.DeferredAttempts >= 12),ancient
+STS2SkinChanger/Ui/AncientCompendium.cs:424,424,STS2SkinChanger/Ui/AncientCompendium.cs,EnumerateDescendants,1,⚠ 未见上限,public int DeferredAttempts { get; set; },ancient
+STS2SkinChanger/Ui/BestiaryEntranceSwitcher.cs:26,26,STS2SkinChanger/Ui/BestiaryEntranceSwitcher.cs,(未知),1,⚠ 未见上限,private static int _scanAttempts;,monster
+STS2SkinChanger/Ui/BestiaryEntranceSwitcher.cs:114,114,STS2SkinChanger/Ui/BestiaryEntranceSwitcher.cs,ScheduleScan,2,16,if (_scanScheduled || _scanAttempts >= 16),monster
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs:55,55,STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,(未知),3,⚠ 未见上限,private static SceneTree _retryTree;,compat:EmperorCrab
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs:65,65,STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,Install,1,⚠ 未见上限,StartInstallRetry();,compat:EmperorCrab
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs:224,224,STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,TryInstallHalfHpPrefix,1,⚠ 未见上限,StopInstallRetry();,compat:EmperorCrab
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs:506,506,STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,GetRuntimeResourceMethod,1,⚠ 未见上限,private static void StartInstallRetry(),compat:EmperorCrab
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs:508,508,STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,StartInstallRetry,11,18000,if (_halfHpPrefixInstalled || _retryTree != null),compat:EmperorCrab
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs:556,556,STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,StopInstallRetry,4,⚠ 未见上限,if (_retryTree != null && _retryHandler != null),compat:EmperorCrab
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs:861,861,STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,CreatePreviewPlayer,1,⚠ 未见上限,private static int _watchedRoomAttempts;,merchant
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs:912,912,STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,TickRefreshAfterLoad,5,⚠ 未见上限,_watchedRoomAttempts = 0;,merchant
+STS2SkinChanger/Ui/OstyModelPreviewControls.cs:640,640,STS2SkinChanger/Ui/OstyModelPreviewControls.cs,RefreshModel,1,⚠ 未见上限,_fitAttempts = 0;,osty
+STS2SkinChanger/Ui/OstyModelPreviewControls.cs:689,689,STS2SkinChanger/Ui/OstyModelPreviewControls.cs,(未知),2,⚠ 未见上限,_fitAttempts = 0;,osty
+STS2SkinChanger/Ui/OstyModelPreviewControls.cs:700,700,STS2SkinChanger/Ui/OstyModelPreviewControls.cs,ScheduleFit,4,30,_fitAttempts++;,osty
+STS2SkinChanger/Ui/OstyModelPreviewControls.cs:868,868,STS2SkinChanger/Ui/OstyModelPreviewControls.cs,TryShowScene,1,⚠ 未见上限,_fitAttempts = 0;,osty
