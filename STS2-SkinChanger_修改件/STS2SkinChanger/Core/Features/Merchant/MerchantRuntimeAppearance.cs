@@ -1234,6 +1234,7 @@ internal static class MerchantRuntimeAppearance
             replacement = SkinService
                 .GetOrLoadRuntimeScene(groupId, player.Character.MerchantAnimPath)
                 .Instantiate<NMerchantCharacter>(PackedScene.GenEditState.Disabled);
+            using var appearanceOwner = CznPresentationBridge.BeginNonCombatOwnerScope(player, replacement);
 
             // NMerchantRoom.AfterRoomIsLoaded always assigns the local player's slot to (0, 0).
             // Do not inherit a previous skin's already-adjusted root position: that turns a

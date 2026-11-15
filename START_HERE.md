@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；第三位只在真正上传工坊时提；`workshop\workshop.json` 的 `version` 保持 `1.0.31` 不动（给游戏 SemVer 解析用）。
 
-当前值：`1.0.32.7`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_merchant_lifecycle_and_actor_scale.md`。
+当前值：`1.0.32.8`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_character_owner_presentation.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -220,3 +220,5 @@ Initialize()
 - 已确认原因的错误直接修并验证，不用中途反复请示；涉及新的设计取舍或需要额外权限时先说。
 - 只改与任务相关的文件，不做无关重构；`AGENTS.md` 的规则优先于本文档的重复描述。
 - 回答简短：结论、当前状态、需要作者做什么。
+
+- 版本 1.0.32.8：修复商店局内角色被 CZN 外来皮肤覆盖，双重检查事件/呈现归属，核对战斗与火堆边界；作者确认上一版商人正常。本版离线回归通过，未实机核验；三文件同步四处，提交并推送 main/标签，不上传工坊。

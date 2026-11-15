@@ -67,6 +67,7 @@ internal static class MultiplayerMerchantPlayerVisualIsolationPatch
                 var visual = PreloadManager.Cache
                     .GetScene(player.Character.MerchantAnimPath)
                     .Instantiate<NMerchantCharacter>(PackedScene.GenEditState.Disabled);
+                using var appearanceOwner = CznPresentationBridge.BeginNonCombatOwnerScope(player, visual);
                 ____characterContainer.AddChildSafely(visual);
                 ____characterContainer.MoveChildSafely(visual, 0);
                 visual.Position = new Vector2(x, -50f * row);

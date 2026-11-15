@@ -7,6 +7,7 @@ using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Ui;
 
@@ -22,6 +23,7 @@ internal static class CznPresentationBridge
     private static readonly List<object> SelectionRuntimes = [];
     private static readonly Harmony Harmony = new(Entry.ModId + ".czn-presentation");
     private static bool _installed;
+    [ThreadStatic] private static (Player Player, NMerchantCharacter Visual)? _nonCombatOwner;
     private const BindingFlags Members = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
 
     internal static void RegisterAssembly(string provider, Assembly assembly)
@@ -45,6 +47,14 @@ internal static class CznPresentationBridge
             identityPatch.priority = Priority.First;
             Harmony.Patch(AccessTools.Method(typeof(NMerchantCharacter), "_Ready"), prefix: identityPatch);
             Harmony.Patch(AccessTools.Method(typeof(NRestSiteCharacter), "_Ready"), prefix: identityPatch);
+            var merchant = core!.GetType("CznCore.Presentation.MerchantPresentationRuntime", true)!;
+            Harmony.Patch(AccessTools.Method(merchant, "ResolveMerchantCharacterPlayer"), prefix: Patch(nameof(ResolveMerchantOwner)));
+            Harmony.Patch(AccessTools.Method(merchant, "Apply", [typeof(NMerchantCharacter)]), prefix: Patch(nameof(AllowMerchantPresentation)));
+            var ownership = core.GetType("CznCore.Presentation.SkinEventOwnership", true)!;
+            var merchantEvent = core.GetType("CznCore.Presentation.MerchantCharacterReadyEvent", true)!;
+            var accepts = ownership.GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+                .Single(m => m.Name == "Accepts" && m.IsGenericMethodDefinition).MakeGenericMethod(merchantEvent);
+            Harmony.Patch(accepts, prefix: Patch(nameof(AllowMerchantEvent)));
             foreach (var method in catalog.GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
                          .Where(m => m.Name is "IsSelected" or "IsActive"))
                 Harmony.Patch(method, prefix: Patch(nameof(ProfileSelected)));
@@ -63,6 +73,65 @@ internal static class CznPresentationBridge
     }
 
     private static HarmonyMethod Patch(string name) => new(typeof(CznPresentationBridge), name);
+
+    internal static IDisposable BeginNonCombatOwnerScope(Player owner, NMerchantCharacter visual)
+    {
+        var previous = _nonCombatOwner;
+        _nonCombatOwner = (owner, visual);
+        return new OwnerScope(previous);
+    }
+
+    private sealed class OwnerScope((Player Player, NMerchantCharacter Visual)? previous) : IDisposable
+    {
+        private bool _disposed;
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _nonCombatOwner = previous;
+        }
+    }
+
+    private static Player? MerchantOwner(NMerchantCharacter visual)
+    {
+        if (_nonCombatOwner is { } context && ReferenceEquals(context.Visual, visual)) return context.Player;
+        var room = NMerchantRoom.Instance;
+        if (room == null) return null;
+        var players = AccessTools.Field(typeof(NMerchantRoom), "_players")?.GetValue(room) as List<Player>;
+        if (players == null) return null;
+        // PlayerVisuals identifies ownership; GetIndex counts unrelated/retiring siblings.
+        var index = room.PlayerVisuals.ToList().FindIndex(node => ReferenceEquals(node, visual));
+        return index >= 0 && index < players.Count ? players[index] : players.Count == 1 ? players[0] : null;
+    }
+
+    private static bool ResolveMerchantOwner(NMerchantCharacter __0, ref Player? __result)
+    {
+        __result = MerchantOwner(__0);
+        return false;
+    }
+
+    private static bool AllowMerchantPresentation(object __instance, NMerchantCharacter __0)
+    {
+        var owner = MerchantOwner(__0);
+        if (owner == null) return true; // native catalogue contexts keep their existing behavior
+        var predicate = AccessTools.Field(__instance.GetType(), "_appliesTo")?.GetValue(__instance) as Func<Player?, bool>;
+        return predicate?.Invoke(owner) ?? true;
+    }
+
+    private static bool AllowMerchantEvent(object[] __args, ref bool __result)
+    {
+        var profile = __args[0];
+        var visual = Get(__args[1], "Node") as NMerchantCharacter;
+        var owner = visual == null ? null : MerchantOwner(visual);
+        if (owner == null)
+        {
+            if (Find(profile) == null) return true;
+            __result = false;
+            return false;
+        }
+        __result = (bool)AccessTools.Method(profile.GetType(), "AppliesTo", [typeof(Player)]).Invoke(profile, [owner])!;
+        return false;
+    }
 
     private static void RestoreNonCombatIdentity(Node __instance)
     {

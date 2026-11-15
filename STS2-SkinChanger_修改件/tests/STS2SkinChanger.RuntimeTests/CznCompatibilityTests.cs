@@ -74,12 +74,71 @@ internal static class CznCompatibilityTests
                     p.PatchMethod.Name == "RestoreNonCombatIdentity") == true,
                     "Noncombat scene identity must be restored before author callbacks: " + type.Name);
             CheckSelectionGate();
+            CheckMerchantOwnership(assembly);
             Console.WriteLine("Real CznCore Harmony contract installed without running provider initializers.");
         }
         finally { logging.UnpatchAll(logging.Id); }
     }
 
     private static bool SkipLog() => false;
+
+    private static void CheckMerchantOwnership(Assembly core)
+    {
+        var player = (MegaCrit.Sts2.Core.Entities.Players.Player)RuntimeHelpers.GetUninitializedObject(
+            typeof(MegaCrit.Sts2.Core.Entities.Players.Player));
+        var other = (MegaCrit.Sts2.Core.Entities.Players.Player)RuntimeHelpers.GetUninitializedObject(player.GetType());
+        var visual = (MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantCharacter)RuntimeHelpers.GetUninitializedObject(
+            typeof(MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantCharacter));
+        GC.SuppressFinalize(visual);
+        var merchant = core.GetType("CznCore.Presentation.MerchantPresentationRuntime", true)!;
+        var resolve = AccessTools.Method(merchant, "ResolveMerchantCharacterPlayer");
+        var instance = RuntimeHelpers.GetUninitializedObject(merchant);
+        var apply = AccessTools.Method(merchant, "Apply", [visual.GetType()]);
+        Require(Harmony.GetPatchInfo(apply)?.Prefixes.Any(p => p.PatchMethod.Name == "AllowMerchantPresentation") == true,
+            "Shared presentation must check ownership before touching Spine.");
+        using (CznPresentationBridge.BeginNonCombatOwnerScope(player, visual))
+        {
+            for (var i = 0; i < 200; i++)
+            {
+                using (CznPresentationBridge.BeginNonCombatOwnerScope(other, visual))
+                    Require(ReferenceEquals(resolve.Invoke(instance, [visual]), other), "Nested owner lost.");
+                Require(ReferenceEquals(resolve.Invoke(instance, [visual]), player), "Owner not restored after replacement.");
+            }
+            var predicate = AccessTools.Field(merchant, "_appliesTo");
+            var gate = AccessTools.Method(typeof(CznPresentationBridge), "AllowMerchantPresentation");
+            foreach (var expected in new[] { false, true, false })
+            {
+                predicate.SetValue(instance, new Func<MegaCrit.Sts2.Core.Entities.Players.Player?, bool>(p =>
+                    ReferenceEquals(p, player) && expected));
+                Require((bool)gate.Invoke(null, [instance, visual])! == expected, "Wrong skin reached merchant body.");
+            }
+            var profileType = core.GetType("CznCore.Presentation.CharacterSkinProfile", true)!;
+            var profile = RuntimeHelpers.GetUninitializedObject(profileType);
+            AccessTools.Field(profileType, "_targetCharacterTypeResolved").SetValue(profile, true);
+            AccessTools.Field(profileType, "_resolvedTargetCharacterType").SetValue(profile, typeof(string));
+            var eventType = core.GetType("CznCore.Presentation.MerchantCharacterReadyEvent", true)!;
+            var evt = Activator.CreateInstance(eventType, [visual]);
+            var accepts = core.GetType("CznCore.Presentation.SkinEventOwnership", true)!
+                .GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+                .Single(m => m.Name == "Accepts" && m.IsGenericMethodDefinition).MakeGenericMethod(eventType);
+            Require(!(bool)accepts.Invoke(null, [profile, evt])!, "Foreign owned callback could bind its skeleton before the shared gate.");
+            var rest = (MegaCrit.Sts2.Core.Nodes.RestSite.NRestSiteCharacter)RuntimeHelpers.GetUninitializedObject(
+                typeof(MegaCrit.Sts2.Core.Nodes.RestSite.NRestSiteCharacter));
+            GC.SuppressFinalize(rest);
+            foreach (var (name, arguments) in new (string, object?[])[] {
+                ("RestSiteCharacterReadyEvent", [rest]),
+                ("PlayerTurnStartedEvent", [null, null, player]) })
+            {
+                var type = core.GetType("CznCore.Presentation." + name, true)!;
+                var value = Activator.CreateInstance(type, arguments);
+                var boundary = accepts.GetGenericMethodDefinition().MakeGenericMethod(type);
+                Require(!(bool)boundary.Invoke(null, [profile, value])!, "Foreign profile passed native owner gate: " + name);
+            }
+        }
+        Require(AccessTools.Field(typeof(CznPresentationBridge), "_nonCombatOwner").GetValue(null) == null,
+            "Owner scope leaked after refresh.");
+        Console.WriteLine("Character ownership: real CznCore merchant/rest/combat event gates, shared predicate and 200 nested replacements passed.");
+    }
 
     private sealed class Profile
     {
