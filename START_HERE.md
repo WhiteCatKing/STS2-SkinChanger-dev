@@ -98,13 +98,13 @@ git commit -q -F $tmp
 | `workshop\workshop.json` | `internalTestVersion` |
 | `STS2SkinChanger\STS2SkinChanger.csproj` | `Version` / `AssemblyVersion` / `FileVersion` / `InformationalVersion` |
 
-规则：**没上传工坊只加第四位**；第三位只在真正上传工坊时提；`workshop\workshop.json` 的 `version` 保持 `1.0.31` 不动（给游戏 SemVer 解析用）。
+规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.33`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.32.15`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_vakuu_external_image_background_contract.md`。
+当前值：`1.0.33.0`（工坊公开 `1.0.33`）。发布结果与验证限制见 `STS2-SkinChanger_修改件/docs/issues/RELEASE_2026-11-16_workshop_1.0.33.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
-- 工坊：`STS2_Work\publish.ps1` → 调 `steamcmd` + `workshop_build.vdf`（`contentfolder` 指向 `D:\steam\steamapps\workshop\content\2868840\3787302680`）。上传前先把四处 dll 与内容目录同步好。
+- 工坊：优先使用修改件 `tools/WorkshopPublisher`，通过已登录 Steam 客户端发布 `workshop/workshop.json`（含 15 语言回读核验；contentFolder 指向仓库 staging）。SteamCMD 旧通路仍为 `STS2_Work\publish.ps1` + `workshop_build.vdf`。上传前同步四处三文件和 Steam 工坊内容目录，并核对版本/哈希。
 - GitHub：`sync.ps1`，或手工 `git -c http.proxy=http://127.0.0.1:7890 -c http.version=HTTP/1.1 push origin main`（直连会 `Recv failure: Connection was reset`）。
 
 工坊标题/描述改动必须同步 15 种语言（`docs\publish-github-skin-mod.*.md`）。
@@ -236,3 +236,5 @@ Initialize()
 - 1.0.32.14：定位 .12 规范缓存接管导致旧背景资源路径被清空；保护被替换者及私有别名占用者的路径。新增测试在 .13 DLL 明确失败、修复版通过 200 次替换与临时恢复，纳入战士保护必跑脚本。
 
 - 1.0.32.15：采纳玩家瓦库散图背景补丁，保留 Image 并添加供官方回调写图的隐藏 TextureRect 空槽；防缺失节点中断与彩蛋覆盖。旧 DLL 负对照失败、修复版与先古卡牌专项通过；从当前源码打包，不部署玩家旧注入 DLL。
+
+- 正式版 1.0.33（内部 1.0.33.0）已上传原工坊条目 3787302680，15 语言逐一回读成功；汇总至 .32.15 的修复，更新 GitHub 链接及说明，保留 12 张预览图。发布详情见 RELEASE_2026-11-16_workshop_1.0.33.md。
