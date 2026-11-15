@@ -18,7 +18,7 @@ internal static class StandaloneModelPreviewTests
             (new(10, 20, 500, 429), new(0, 0, 1920, 1080), new(511, 20, 321, 429)),
             (new(10, -24, 500, 858), new(0, 0, 1920, 1080), new(511, -24, 629, 858)),
             (new(10, 20, 500, 429), new(0, 0, 700, 1080), new(511, 20, 165, 429)),
-            (new(10, 20, 500, 429), new(0, 0, 560, 1080), null),
+            (new(10, 20, 500, 429), new(0, 0, 560, 1080), new(416, 20, 120, 429)),
             (new(), new(0, 0, 1920, 1080), null),
             (new(float.NaN, 0, 500, 429), new(0, 0, 1920, 1080), null)
         })
@@ -37,12 +37,12 @@ internal static class StandaloneModelPreviewTests
             foreach (var state in Enum.GetValues<ModLoadState>())
             {
                 Mod[] mods = [new() { path = "original", manifest = new() { id = "thunninoiSkinManager" }, state = state }];
-                Require((bool)show.Invoke(null, [mods, false])! == (state != ModLoadState.Loaded),
-                    "只由当前实际加载的原管理器关闭内置预览，禁用或加载失败不能隐藏：" + state);
+                Require((bool)show.Invoke(null, [mods, false])!,
+                    "任何框架加载状态都必须保留 SC 角色预览：" + state);
             }
             Mod[] scOnly = [new() { path = "sc", manifest = new() { id = Entry.ModId }, state = ModLoadState.Loaded }];
-            Require((bool)show.Invoke(null, [scOnly, false])! && !(bool)show.Invoke(null, [scOnly, true])!,
-                "随 SC 分发的同名兼容 DLL 不是原管理器；已建立原生协作时不能出现两个预览。");
+            Require((bool)show.Invoke(null, [scOnly, false])! && (bool)show.Invoke(null, [scOnly, true])!,
+                "原生协作同样必须保留 SC 角色预览。");
         }
         finally { if (added) known.Remove("thunninoiSkinManager"); }
 
@@ -52,11 +52,11 @@ internal static class StandaloneModelPreviewTests
             "本机预览不应再创建底部名称，整个框内空间都应留给模型。");
         Require(Calls(AccessTools.Method(panel, "Initialize"), "DraggableSkinControl", "AttachWithHandle"),
             "黑条必须接入现有拖动/复位交互，不能只是装饰。");
-        Require(Calls(AccessTools.Method(panel, "RefreshModel"), "FrameworkModelPreview", "Refresh"),
+        Require(Calls(AccessTools.Method(panel, "TryRefreshModel"), "FrameworkModelPreview", "TryRefresh"),
             "本机预览必须复用隔离模型和实际像素取景流程，不能另写一套贴图/骨骼加载逻辑。");
         var contextual = assembly.GetType("STS2SkinChanger.Ui.ContextualSkinControls", true)!;
         Require(PatchProcessor.GetOriginalInstructions(AccessTools.Method(contextual, "RebuildCharacterDisplay"))
-            .Count(i => i.operand is MethodInfo m && m.DeclaringType == controls && m.Name == "Refresh") == 3,
+            .Count(i => i.operand is MethodInfo m && m.DeclaringType == controls && m.Name == "BindNow") == 3,
             "资源皮肤、完整 DLL 皮肤和运行时提供者三种成功切换分支都必须刷新预览。");
         Require(Calls(AccessTools.Method(contextual, "HideCharacterSelector"), controls.Name, "Hide") &&
                 Calls(AccessTools.Method(panel, "OnVisibilityChanged"), panel.Name, "ClearModel"),
@@ -139,7 +139,7 @@ internal static class StandaloneModelPreviewTests
                 "收起时不允许加载；拖出后仅在选角仍可见且有当前角色时恢复加载。");
 
         Require(Calls(AccessTools.Method(panel, "QueueRefresh"), panel.Name, "CanLoadModel") &&
-                Calls(AccessTools.Method(panel, "RefreshModel"), panel.Name, "CanLoadModel") &&
+                Calls(AccessTools.Method(panel, "TryRefreshModel"), panel.Name, "CanLoadModel") &&
                 Calls(AccessTools.Method(panel, "CanLoadModel"), controls.Name, "ShouldLoadModel"),
             "刷新入队和执行时都要检查收纳状态，避免收起前排队的刷新又加载模型。");
         Require(Calls(AccessTools.Method(panel, "SetDocked"), panel.Name, "ClearModel") &&

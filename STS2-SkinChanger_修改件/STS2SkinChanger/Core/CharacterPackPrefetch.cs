@@ -1,18 +1,47 @@
+using System.Diagnostics;
+
 namespace STS2SkinChanger.Core;
 
-// OS file-cache warming only. No Godot ResourceLoader, script registration or pack mounting
-// on this worker; cancelled/stale work cannot mutate the active character's dependencies.
+// Interruptible file-I/O queue. Workers never touch Godot objects, mounts or decoders.
 internal static class CharacterPackPrefetch
 {
+    private sealed class Work(string path, long sequence)
+    {
+        internal readonly string Path = path;
+        internal readonly long Sequence = sequence;
+        internal readonly TaskCompletionSource<bool> Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal long Offset, Length = -1;
+        internal int Demand;
+    }
     private static readonly object Sync = new();
-    private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly CancellationTokenSource Shutdown = new();
+    private static readonly Dictionary<string, Work> Pending = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, (long Size, DateTime Stamp)> Warm = new(StringComparer.OrdinalIgnoreCase);
-    private static int _pending;
+    private static bool _running;
+    private static long _sequence, _lastAction;
+    private static int _foreground;
     private static string? _lastFailure;
     internal static string? TakeFailure() => Interlocked.Exchange(ref _lastFailure, null);
-
-    internal static void Cancel() => Shutdown.Cancel();
+    internal static void NoteAction() => Interlocked.Exchange(ref _lastAction, Stopwatch.GetTimestamp());
+    internal static bool CanSpeculate(long now, long lastAction, int foreground) => foreground == 0 &&
+        (lastAction == 0 || Stopwatch.GetElapsedTime(lastAction, now).TotalMilliseconds >= 350);
+    internal static bool CanSpeculateNow => CanSpeculate(Stopwatch.GetTimestamp(),
+        Interlocked.Read(ref _lastAction), Volatile.Read(ref _foreground));
+    internal static IDisposable HoldForeground()
+    {
+        Interlocked.Increment(ref _foreground);
+        return new ForegroundLease();
+    }
+    private sealed class ForegroundLease : IDisposable
+    {
+        private int _disposed;
+        public void Dispose() { if (Interlocked.Exchange(ref _disposed, 1) == 0) Interlocked.Decrement(ref _foreground); }
+    }
+    internal static void Cancel()
+    {
+        Shutdown.Cancel();
+        lock (Sync) { foreach (var work in Pending.Values) work.Done.TrySetCanceled(); Pending.Clear(); }
+    }
     internal static bool IsWarm(string path)
     {
         try
@@ -33,56 +62,107 @@ internal static class CharacterPackPrefetch
                 Warm[path] = (file.Length, file.LastWriteTimeUtc);
             }
         }
-        catch { /* optional cache hint */ }
+        catch { }
     }
-
     internal static void Schedule(IEnumerable<string> candidates)
     {
-        if (Shutdown.IsCancellationRequested || Interlocked.CompareExchange(ref _pending, 1, 0) != 0) return;
-        var paths = candidates.Distinct(StringComparer.OrdinalIgnoreCase).Take(4).ToArray();
-        _ = Task.Run(() => Run(paths));
+        foreach (var path in candidates.Distinct(StringComparer.OrdinalIgnoreCase).Take(64)) _ = Enqueue(path, false);
     }
-
-    private static async Task Run(string[] paths)
+    private static Work? Enqueue(string path, bool demand)
     {
+        if (Shutdown.IsCancellationRequested || IsWarm(path)) return null;
+        lock (Sync)
+        {
+            if (Shutdown.IsCancellationRequested) return null;
+            if (!Pending.TryGetValue(path, out var work))
+            {
+                if (Pending.Count >= 64)
+                {
+                    var victim = Pending.Values.Where(item => item.Demand == 0).OrderByDescending(item => item.Sequence).FirstOrDefault();
+                    if (!demand || victim == null) return null;
+                    Pending.Remove(victim.Path); victim.Done.TrySetCanceled();
+                }
+                Pending[path] = work = new(path, ++_sequence);
+                _ = work.Done.Task.ContinueWith(task => { _ = task.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+            }
+            if (demand) work.Demand++;
+            if (!_running) { _running = true; _ = Task.Run(Run); }
+            return work;
+        }
+    }
+    internal static async Task WarmAsync(IEnumerable<string> paths, CancellationToken token = default,
+        Action<double>? progress = null, bool demand = true)
+    {
+        var work = paths.Distinct(StringComparer.OrdinalIgnoreCase).Take(64)
+            .Select(path => Enqueue(path, demand)).Where(item => item != null).Cast<Work>().ToArray();
         try
         {
-            await Gate.WaitAsync(Shutdown.Token).ConfigureAwait(false);
+            var completed = 0;
+            await Task.WhenAll(work.Select(async item =>
+            {
+                await item.Done.Task.WaitAsync(token).ConfigureAwait(false);
+                progress?.Invoke((double)Interlocked.Increment(ref completed) / Math.Max(1, work.Length));
+            })).ConfigureAwait(false);
+            progress?.Invoke(1);
+        }
+        finally
+        {
+            if (demand) lock (Sync) foreach (var item in work) item.Demand = Math.Max(0, item.Demand - 1);
+        }
+    }
+    private static async Task Run()
+    {
+        var buffer = new byte[256 * 1024];
+        while (!Shutdown.IsCancellationRequested)
+        {
+            Work? work;
+            lock (Sync)
+            {
+                if (Pending.Count == 0) { _running = false; return; }
+                work = Pending.Values.OrderByDescending(item => item.Demand > 0).ThenBy(item => item.Sequence).First();
+                if (_foreground != 0 || work.Demand == 0 && !CanSpeculate(Stopwatch.GetTimestamp(), Interlocked.Read(ref _lastAction), _foreground)) work = null;
+            }
+            if (work == null) { await Task.Delay(25).ConfigureAwait(false); continue; }
             try
             {
-                var buffer = new byte[256 * 1024];
-                long remaining = 256L * 1024 * 1024;
-                foreach (var path in paths)
+                RuntimeLoadSafety.RequireHeadroom(0);
+                if (work.Length < 0) work.Length = new FileInfo(work.Path).Length;
+                var limit = work.Demand > 0 ? 512L * 1024 * 1024 : 128L * 1024 * 1024;
+                if (work.Length > limit) { Complete(work, false); continue; }
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Shutdown.Token);
+                deadline.CancelAfter(TimeSpan.FromSeconds(8));
+                await using (var stream = new FileStream(work.Path, FileMode.Open, FileAccess.Read,
+                    FileShare.Read | FileShare.Delete, buffer.Length, FileOptions.Asynchronous | FileOptions.SequentialScan))
                 {
-                    Shutdown.Token.ThrowIfCancellationRequested();
-                    if (IsWarm(path)) continue;
-                    var length = new FileInfo(path).Length;
-                    if (length <= 0 || length > 128L * 1024 * 1024 || length > remaining) continue;
-                    RuntimeLoadSafety.RequireHeadroom(0);
-                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Shutdown.Token);
-                    deadline.CancelAfter(TimeSpan.FromSeconds(8));
-                    await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
-                        FileShare.Read | FileShare.Delete, buffer.Length, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                    // Bounded by the initial length: growing files cannot extend the work forever.
-                    long readTotal = 0;
-                    while (readTotal < length)
-                    {
-                        var count = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, length - readTotal)), deadline.Token).ConfigureAwait(false);
-                        if (count == 0) throw new EndOfStreamException(path);
-                        readTotal += count;
-                    }
-                    remaining -= length;
-                    MarkWarm(path);
+                    stream.Position = work.Offset;
+                    var read = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, work.Length - work.Offset)), deadline.Token).ConfigureAwait(false);
+                    if (read == 0 && work.Offset < work.Length) throw new EndOfStreamException(work.Path);
+                    work.Offset += read;
                 }
+                if (work.Offset >= work.Length) Complete(work, true);
+                if (!SkinPreloader.GamePreloadSettled && work.Demand == 0) await Task.Delay(10).ConfigureAwait(false);
             }
-            finally { Gate.Release(); }
+            catch (Exception error)
+            {
+                lock (Sync)
+                    if (Pending.TryGetValue(work.Path, out var current) && ReferenceEquals(current, work))
+                        Pending.Remove(work.Path);
+                if (error is OperationCanceledException && Shutdown.IsCancellationRequested) work.Done.TrySetCanceled();
+                else { work.Done.TrySetException(error); Interlocked.Exchange(ref _lastFailure, error.GetBaseException().Message); }
+            }
         }
-        catch (OperationCanceledException) { /* timeout/exit is a normal speculative cancellation */ }
-        catch (Exception error)
+        lock (Sync) _running = false;
+    }
+    private static void Complete(Work work, bool warmed)
+    {
+        lock (Sync)
         {
-            // Report on the main thread at the next scheduling opportunity.
-            Interlocked.Exchange(ref _lastFailure, error.GetBaseException().Message);
+            if (Pending.TryGetValue(work.Path, out var current) && ReferenceEquals(current, work))
+            {
+                Pending.Remove(work.Path);
+                if (warmed) MarkWarm(work.Path);
+                work.Done.TrySetResult(true);
+            }
         }
-        finally { Interlocked.Exchange(ref _pending, 0); }
     }
 }

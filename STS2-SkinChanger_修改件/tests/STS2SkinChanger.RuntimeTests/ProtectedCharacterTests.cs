@@ -37,7 +37,9 @@ internal static class ProtectedCharacterTests
                         [scenePath], "protected-test/001", true);
                     var estimated = RuntimeLoadSafety.EstimateTextureBytes(overlay.Files);
                     if (estimated > RuntimeLoadSafety.MaximumSingleLoadBytes) throw new Exception("Protected model exceeds new budget: " + provider.Id);
-                    Console.WriteLine($"Protected real package: {provider.Id}; variant={selection.Id}; estimated={estimated / 1048576d:F1} MiB; isolated dependencies={overlay.CanReuseExternalDependencies}");
+                    Console.WriteLine($"Protected real package: {provider.Id}; variant={selection.Id}; estimated={estimated / 1048576d:F1} MiB; bound graph={overlay.CanBindDependencies}; order={overlay.LoadOrder.Count}");
+                    if (!overlay.CanBindDependencies || overlay.LoadOrder.Count != overlay.ResourcePaths.Count)
+                        throw new Exception("Incomplete isolated dependency graph: " + provider.Id + "; " + string.Join("; ", overlay.UnboundDependencies.Take(6)));
                 }
                 if (provider.Id == "CrusaderSkin" && scenes.Count != 5)
                     throw new Exception("Crusader variants collapsed to the same combat scene.");

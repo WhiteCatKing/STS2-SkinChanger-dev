@@ -184,7 +184,7 @@ internal static partial class ContextualSkinControls
 
     private static string? SelectedVariantSuffix(string groupId)
     {
-        var selection = SkinService.Config.GetSelection(groupId);
+        var selection = SkinService.GetDisplayedSelection(groupId);
         const string marker = "::variant:";
         var at = selection.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
         return at < 0 ? null : selection[(at + marker.Length)..].ToLowerInvariant();
@@ -195,15 +195,13 @@ internal static partial class ContextualSkinControls
 
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
-        var ownerGroup = SkinService.Catalog?.CompanionOwnerGroup("osty");
-        OstyModelPreviewControls.AllowedForCurrentCharacter = ownerGroup != null &&
-            string.Equals(character.Id.Entry, ownerGroup, StringComparison.OrdinalIgnoreCase);
-        if (!OstyModelPreviewControls.AllowedForCurrentCharacter)
+        OstyModelPreviewControls.BindCharacter(screen, character.Id.Entry);
+        if (!OstyModelPreviewControls.IsAllowed(screen))
         {
             OstyModelPreviewControls.Hide(screen);
             screen.GetNodeOrNull<Control>($"InfoPanel/{OstyModelPreviewControls.PanelName}")?.Set("visible", false);
         }
-        CharacterModelPreviewControls.Hide(screen);
+        CharacterModelPreviewControls.Refresh(screen, character);
         CaptureCharacterBackgroundHostLayout(screen);
         CancelCharacterDropdownSelection(screen);
         // Restore while the old provider is still active. FocusRuntimeProviderBehaviorsOnCharacters
@@ -265,7 +263,7 @@ internal static partial class ContextualSkinControls
             SkinService.DrawCompanionRandomSkin(companionGroupId);
         }
 
-        // 右侧的奥斯提预览框：所有角色都显示，内容和选项全局共用。
+        // Companion preview belongs only to Necrobinder; the character preview always exists.
         OstyModelPreviewControls.Refresh(screen);
         // 记下当前选人界面正在看哪个角色分组：皮肤包自己的外观快捷键要知道该切谁
         // （见 VariantHotkeyPoller）。
@@ -1651,6 +1649,8 @@ internal static partial class ContextualSkinControls
         var previousSelections = new Dictionary<string, string>(
             SkinService.Config.Selections,
             StringComparer.OrdinalIgnoreCase);
+        // Default choices may be implicit and therefore absent from the persisted dictionary.
+        previousSelections[groupId] = SkinService.Config.GetSelection(groupId);
         var applied = optionId.Equals(
             SkinService.InheritMonsterSelectionId,
             StringComparison.OrdinalIgnoreCase)
@@ -1667,6 +1667,33 @@ internal static partial class ContextualSkinControls
                     .Equals(current, StringComparison.OrdinalIgnoreCase));
             dropdown.Select(currentIndex);
             return false;
+        }
+
+        var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
+        var refreshedCharacter = false;
+        if (characterScreen != null && !HasMonsterPriorityContext(selector) &&
+            RefreshActions.TryGetValue(selector.GetInstanceId(), out var characterRefresh))
+        {
+            try
+            {
+                characterRefresh();
+                refreshedCharacter = true;
+            }
+            catch (Exception error)
+            {
+                // A selection is a presentation transaction. Never publish a new dropdown/map/
+                // combat identity while the background or required preview still shows the old one.
+                foreach (var key in previousSelections.Keys.Concat(SkinService.Config.Selections.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+                {
+                    var previous = previousSelections.GetValueOrDefault(key, SkinCatalog.BaseOptionId);
+                    if (SkinService.Config.GetSelection(key) != previous && !SkinService.ApplySelection(key, previous))
+                        ModLog.Warn("恢复角色外观选择失败：" + key + "；" + SkinService.LastError);
+                }
+                Populate(selector, FindGroup(groupId));
+                RunRefresh(characterRefresh);
+                ModLog.Warn("角色外观未完整就绪，已回滚本次选择：" + error.GetBaseException().Message);
+                return false;
+            }
         }
 
         if (FindAncestor<NCharacterSelectScreen>(selector) != null &&
@@ -1708,7 +1735,7 @@ internal static partial class ContextualSkinControls
             RefreshBestiaryMonsterNames(bestiary);
         }
 
-        if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
+        if (!refreshedCharacter && RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
         {
             Callable.From(() => RunRefresh(refresh)).CallDeferred();
         }
@@ -1725,13 +1752,20 @@ internal static partial class ContextualSkinControls
         bool preserveCharacterSkinBundle = false,
         bool selectRandomCharacterSkin = false)
     {
+        CancelCharacterDropdownSelection(screen);
+        CharacterPackPrefetch.NoteAction();
+        // Keep the committed option selected while the requested replacement is being prepared.
+        var previousOption = SkinService.Config.GetSelection(groupId);
+        var previousIndex = Enumerable.Range(0, dropdown.ItemCount)
+            .FirstOrDefault(item => dropdown.GetItemMetadata(item).AsString() == previousOption);
+        dropdown.Select(previousIndex);
         // Keep the visible bundle ID while warming its underlying character skin, so a
         // second arrow click advances from the bundle rather than from its ingredient.
         FrameworkRegistryCooperation.SelectionStarting(groupId, dropdown.GetItemMetadata(index).AsString());
         var generation = screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() + 1L;
         screen.SetMeta(CharacterLoadingGenerationMeta, generation);
-        selector.SetMeta(UpdatingMeta, true);
-        dropdown.Disabled = true;
+        selector.SetMeta(UpdatingMeta, false);
+        dropdown.Disabled = false;
 
         var optionName = dropdown.GetItemText(index);
         var overlay = EnsureCharacterLoadingOverlay(screen, optionName);
@@ -2006,7 +2040,7 @@ internal static partial class ContextualSkinControls
     {
         // F29 取证：卡死复现停在选角预览重建时，godot.log 以此行与挂载日志分界。
         ModLog.Info($"开始重建选角预览：{groupId}。");
-        CharacterModelPreviewControls.Hide(screen);
+        CharacterModelPreviewControls.Refresh(screen, character);
         // A behavior-driven provider can replace the title/description and hide the original
         // background without changing a canonical scene. Always restore the game presentation
         // first so switching *away* from such a provider is just as complete as switching to it.
@@ -2019,7 +2053,8 @@ internal static partial class ContextualSkinControls
             RebuildRuntimeProviderCharacterDisplay(screen, character);
             ReplaySelectedCharacterPresentation(screen, character, groupId);
             RefreshLocalLobbyAvatar(screen);
-            CharacterModelPreviewControls.Refresh(screen, character);
+            if (!CharacterModelPreviewControls.BindNow(screen, character))
+                throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
             return;
         }
 
@@ -2058,14 +2093,15 @@ internal static partial class ContextualSkinControls
                     characterSelectPath,
                     characterSelectTextures);
                 RefreshLocalLobbyAvatar(screen);
-                CharacterModelPreviewControls.Refresh(screen, character);
+                if (!CharacterModelPreviewControls.BindNow(screen, character))
+                    throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
                 return;
             }
             catch (AppearanceResourceUnavailableException exception)
             {
                 // A failed native dependency must not be retried through the generic fallback.
                 ModLog.Warn("[资源保护] 已停止本次选角重建，保留可用展示：" + exception.Message);
-                return;
+                throw;
             }
             catch (Exception exception)
             {
@@ -2112,7 +2148,8 @@ internal static partial class ContextualSkinControls
             },
             includeProviderDependencies: true);
         RefreshLocalLobbyAvatar(screen);
-        CharacterModelPreviewControls.Refresh(screen, character);
+        if (!CharacterModelPreviewControls.BindNow(screen, character))
+            throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
         DescribeCharacterSelectBackground(screen, groupId, character);
         CharSelectPackRebindCompat.AfterRebuild(screen, groupId, SkinService.GetSelectedRuntimeProvider(groupId));
@@ -2615,10 +2652,13 @@ internal static partial class ContextualSkinControls
         // own full-screen layer is selected. A normal Skin Changer rebuild always owns this host.
         container.Visible = true;
 
+        var group = FindGroup(character.Id.Entry, character.GetType().Name);
+        var identity = group == null ? (CharacterAppearanceIdentity?)null : SkinService.CaptureCharacterAppearance(group.Id);
         var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
         try
         {
             if (isolatedResources != null) RebindCharacterSceneResources(background, isolatedResources);
+            identity?.Bind(background);
         }
         catch { background.Free(); throw; }
 
@@ -2789,6 +2829,7 @@ internal static partial class ContextualSkinControls
                 ?? fallback;
             ModLog.Info($"已刷新 {character.Id.Entry} 的角色列表头像。");
         }
+        catch (AppearanceResourceUnavailableException) { throw; }
         catch (Exception exception)
         {
             ModLog.Warn(

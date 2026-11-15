@@ -4868,13 +4868,13 @@ internal sealed partial class SkinCatalog : IDisposable
                     .Select(index => index.Assets.GetValueOrDefault(sourcePath))
                     .FirstOrDefault(asset => asset != null);
             var primary = providerRelic ??
-                          providerCanonical ??
                           (selected != null && selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
                 ? selectedAsset
-                : selected?.ManagedMonsterScene != null &&
+                : providerCanonical ??
+                  (selected?.ManagedMonsterScene != null &&
                   sourcePath.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase)
                     ? selected.ManagedMonsterScene
-                    : baseline);
+                    : baseline));
             // Ready-time character skins can supply only a private skeleton path, without
             // replacing a canonical scene. An explicitly requested private root must come
             // from the selected provider and enter the same skeleton/atlas isolation chain.
@@ -4946,7 +4946,8 @@ internal sealed partial class SkinCatalog : IDisposable
             files,
             overlay.SourceAliases,
             overlay.PayloadAliases,
-            canonicalDependencyPaths);
+            canonicalDependencyPaths)
+        { LoadOrder = overlay.LoadOrder, RootBytes = overlay.RootBytes, CanBindDependencies = overlay.CanBindDependencies };
     }
 
     internal RuntimeResourceOverlay BuildIsolatedRelicResourceOverlay(
@@ -5735,13 +5736,33 @@ internal sealed partial class SkinCatalog : IDisposable
             aliasedResourcePaths[resourcePath] = aliasedResourcePath;
         }
 
+        var dependencies = resources.ToDictionary(resource => resource.SourcePath,
+            resource => new[] { resource.DirectFile, resource.RemapFile }.Where(file => file != null)
+                .Cast<ResourceFile>().Concat(resource.PayloadFiles).SelectMany(EnumerateDependencyPaths)
+                .Where(path => !resource.PayloadFiles.Any(payload => payload.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
+                // Exported SpineAtlasResource stores its editor .atlas source name alongside
+                // the actual .spatlas resource. Resolve that metadata to the packed resource.
+                .Select(path => !sourceAliases.ContainsKey(path) && path.EndsWith(".atlas", StringComparison.OrdinalIgnoreCase) &&
+                    sourceAliases.ContainsKey(Path.ChangeExtension(path, ".spatlas")) ? Path.ChangeExtension(path, ".spatlas") : path)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), StringComparer.OrdinalIgnoreCase);
+        // Payload names are export/import implementation details, not independently bound
+        // logical roots. A binary reference directly to one requires the deep-isolation path.
+        var known = sourceAliases.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unbound = dependencies.Values.SelectMany(paths => paths).Where(path => !known.Contains(path) &&
+            !new[] { ".cs", ".gd", ".gdc" }.Any(extension => path.EndsWith(extension, StringComparison.OrdinalIgnoreCase)))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var canBind = unbound.Length == 0;
+        var costs = resources.ToDictionary(resource => resource.SourcePath, resource =>
+            RuntimeLoadSafety.EstimateTextureBytes(files.Where(pair => pair.Key == sourceAliases[resource.SourcePath] ||
+                resource.PayloadFiles.Any(payload => payloadAliases[payload.Path] == pair.Key))), StringComparer.OrdinalIgnoreCase);
         return new RuntimeResourceOverlay(
             aliasedResourcePaths,
             files,
             sourceAliases,
             payloadAliases,
             canonicalRedirectPaths,
-            canReuseExternalDependencies);
+            canReuseExternalDependencies)
+        { LoadOrder = RuntimeDependencyPlan.Order(dependencies), RootBytes = costs, CanBindDependencies = canBind, UnboundDependencies = unbound };
     }
 
     internal static byte[] RewriteAliasedResourceBytes(
@@ -9684,7 +9705,13 @@ internal sealed record RuntimeResourceOverlay(
     IReadOnlyDictionary<string, string> SourceAliases,
     IReadOnlyDictionary<string, string> PayloadAliases,
     IReadOnlySet<string> CanonicalDependencyPaths,
-    bool CanReuseExternalDependencies = false);
+    bool CanReuseExternalDependencies = false)
+{
+    internal IReadOnlyList<string> LoadOrder { get; init; } = [];
+    internal IReadOnlyDictionary<string, long> RootBytes { get; init; } = new Dictionary<string, long>();
+    internal bool CanBindDependencies { get; init; }
+    internal IReadOnlyList<string> UnboundDependencies { get; init; } = [];
+}
 
 internal readonly record struct RelicTextureRect(float X, float Y, float Width, float Height);
 

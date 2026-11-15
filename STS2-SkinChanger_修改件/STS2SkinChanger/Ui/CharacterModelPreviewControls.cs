@@ -14,8 +14,7 @@ internal static class CharacterModelPreviewControls
     internal const float ModelInset = GripWidth + Gap;
 
     internal static bool ShouldShow(IEnumerable<Mod> mods, bool nativeCooperationActive) =>
-        !nativeCooperationActive && !mods.Any(mod => mod.state == ModLoadState.Loaded &&
-            FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id));
+        true; // User contract: SC's character preview exists even with a cooperating manager.
 
     internal static bool IsEnabled => ShouldShow(ModManager.Mods, FrameworkRegistryCooperation.IsActive);
 
@@ -27,7 +26,9 @@ internal static class CharacterModelPreviewControls
         // frame rather than InfoPanel's larger layout box. Never shrink the shared height.
         var x = infoFrame.End.X + Gap;
         var width = Math.Min(infoFrame.Size.Y * (308f / 429f) + ModelInset, screen.End.X - 24 - x);
-        return width < 64 + ModelInset ? null : new Rect2(x, infoFrame.Position.Y, width, infoFrame.Size.Y);
+        if (width < 64 + ModelInset)
+            return new Rect2(Math.Max(screen.Position.X, screen.End.X - 144), infoFrame.Position.Y, 120, infoFrame.Size.Y);
+        return new Rect2(x, infoFrame.Position.Y, width, infoFrame.Size.Y);
     }
 
     internal static Rect2? ResolveDockArea(Rect2 infoFrame)
@@ -68,11 +69,21 @@ internal static class CharacterModelPreviewControls
 
     public static void Hide(NCharacterSelectScreen screen) =>
         screen.GetNodeOrNull<CharacterModelPreviewPanel>($"InfoPanel/{PanelName}")?.Suspend();
+
+    internal static bool BindNow(NCharacterSelectScreen screen, CharacterModel character)
+    {
+        Refresh(screen, character);
+        return screen.GetNodeOrNull<CharacterModelPreviewPanel>($"InfoPanel/{PanelName}")?.TryRefreshModel() == true;
+    }
 }
 
 /// <summary>A view-only host for the same complete model renderer used by the optional manager.</summary>
 internal partial class CharacterModelPreviewPanel : Control
 {
+    private CharacterAppearanceIdentity? _boundAppearance;
+    private CharacterAppearanceIdentity? _requestedAppearance;
+    private int _retryGeneration, _retryCount;
+    private bool _retryQueued;
     private NCharacterSelectScreen _screen = null!;
     private Control _info = null!;
     private Control _frame = null!;
@@ -215,6 +226,11 @@ internal partial class CharacterModelPreviewPanel : Control
     internal void ShowCharacter(CharacterModel character)
     {
         _character = character;
+        var group = ContextualSkinControls.FindGroup(character.Id.Entry, character.GetType().Name)?.Id ?? character.Id.Entry.ToLowerInvariant();
+        var requested = SkinService.CaptureCharacterAppearance(group);
+        if (_requestedAppearance != requested)
+        { _requestedAppearance = requested; _retryGeneration++; _retryCount = 0; _retryQueued = false; }
+        _visualContainer.Visible = !_docked && _boundAppearance == requested;
         // Layout also establishes visibility when the parent has not finished opening yet.
         // A parked preview still needs its grip positioned, but never a model queued.
         QueueLayout();
@@ -223,6 +239,8 @@ internal partial class CharacterModelPreviewPanel : Control
 
     internal void Suspend()
     {
+        _boundAppearance = null;
+        _retryGeneration++;
         _character = null;
         Visible = false;
         ClearModel();
@@ -242,14 +260,38 @@ internal partial class CharacterModelPreviewPanel : Control
     }
 
     private void RefreshModel()
+        => TryRefreshModel();
+
+    internal bool TryRefreshModel()
     {
-        if (_character == null || !CharacterModelPreviewControls.IsEnabled) { Suspend(); return; }
-        if (!CanLoadModel()) return;
+        if (_character == null || !CharacterModelPreviewControls.IsEnabled) { Suspend(); return false; }
         ApplyLayout();
-        if (!IsVisibleInTree() || !CanLoadModel()) return;
-        // Do not leave the previous character on screen when the new provider cannot load.
-        ClearModel();
-        FrameworkModelPreview.Refresh(this, _character);
+        if (_docked) return true;
+        if (!IsVisibleInTree()) return true; // the frame queues its actor when the info panel opens
+        if (!CanLoadModel()) return false;
+        var group = ContextualSkinControls.FindGroup(_character.Id.Entry, _character.GetType().Name)?.Id ?? _character.Id.Entry.ToLowerInvariant();
+        var identity = SkinService.CaptureCharacterAppearance(group);
+        if (_boundAppearance == identity && _visualContainer.GetNodeOrNull<Node>("PreviewSprite") != null) return true;
+        // FrameworkModelPreview stages the replacement and keeps the old actor on failure.
+        if (!FrameworkModelPreview.TryRefresh(this, _character)) { QueueRetry(); return false; }
+        _boundAppearance = identity;
+        _retryCount = 0;
+        _visualContainer.Visible = true;
+        return true;
+    }
+
+    private void QueueRetry()
+    {
+        if (_retryQueued || _retryCount >= 5 || !Alive()) return;
+        var delays = new[] { .3, 1, 3, 8, 20 };
+        var generation = _retryGeneration;
+        _retryQueued = true;
+        GetTree().CreateTimer(delays[_retryCount++]).Timeout += () =>
+        {
+            if (!Alive() || generation != _retryGeneration) return;
+            _retryQueued = false;
+            QueueRefresh();
+        };
     }
 
     private bool CanLoadModel(bool requireVisible = true) => CharacterModelPreviewControls.ShouldLoadModel(

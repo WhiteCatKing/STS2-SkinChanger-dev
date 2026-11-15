@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；第三位只在真正上传工坊时提；`workshop\workshop.json` 的 `version` 保持 `1.0.31` 不动（给游戏 SemVer 解析用）。
 
-当前值：`1.0.32.11`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_postrun_native_memory_and_protected_skins.md`。
+当前值：`1.0.32.12`。最新交付与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-16_character_binding_idle_loading.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -228,3 +228,5 @@ Initialize()
 - 版本 1.0.32.10：作者确认上版首次进店问题已解决；补注册 CrusaderSkin 新版自定义钩子模型，修复只有选牌前摇而缺正式出招，并按玩家皮肤限制常驻订阅。真实 DLL/逻辑/CZN/商店离线回归通过，未实机核验；三文件同步四处，提交并推送 main/标签，不上传工坊。
 
 - 版本 1.0.32.11：十字军/贞德相关 12 模块移入 STS2SkinChanger/ProtectedCharacters，后续须遵守该目录 AGENTS.md 并运行 tools/check-protected-characters.ps1。加入解码/缓存预算、低内存/缺失失败冷却、有界遍历和选角文件预读；结束对局不删除已挂载联机 PCK；开局/退出兜底保持。真实 13 选项及专项/既有回归通过，未宣称消除所有原生崩溃；三文件同步四处并推送 main/标签。
+
+- 版本 1.0.32.12：选项变体优先，同源外观标识与选人失败回滚；角色预览始终启用、奥斯提仅骨妹显示；完整依赖图隔离复用；空闲分片文件预读、需求插队、输入暂停，保留开局/退出兜底。详细边界及离线验证见本版本问题记录。

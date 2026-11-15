@@ -23,10 +23,14 @@ internal static class FrameworkModelPreview
     internal static bool IsPreviewPlayer(Player player) => PreviewPlayers.TryGetValue(player, out _);
 
     public static void Refresh(Node selector, CharacterModel character)
+        => TryRefresh(selector, character);
+
+    internal static bool TryRefresh(Node selector, CharacterModel character)
     {
         var container = selector.GetNodeOrNull<Node2D>("VisualContainer");
-        if (container == null || selector is not Control control) return;
+        if (container == null || selector is not Control control) return false;
         var groupId = ContextualSkinControls.FindGroup(character.Id.Entry, character.GetType().Name)?.Id;
+        var identity = groupId == null ? (CharacterAppearanceIdentity?)null : SkinService.CaptureCharacterAppearance(groupId);
         var scenePath = groupId != null
             ? ContextualSkinControls.CanonicalScenePath("creature_visuals/" + character.Id.Entry.ToLowerInvariant())
             : (string)AccessTools.PropertyGetter(typeof(CharacterModel), "VisualsPath").Invoke(character, null)!;
@@ -66,6 +70,7 @@ internal static class FrameworkModelPreview
                 ManagedSlotVisibilityBridge.BindModel(visuals, groupId, SkinService.GetSelectedCreatureRuntimeProvider(groupId));
             foreach (var childControl in DescendantsAndSelf(staged).OfType<Control>())
                 childControl.MouseFilter = Control.MouseFilterEnum.Ignore;
+            identity?.Bind(staged);
             var previous = container.GetNodeOrNull<Node>("PreviewSprite");
             if (previous != null)
             {
@@ -81,10 +86,12 @@ internal static class FrameworkModelPreview
                         $"模型类型={visuals.GetType().Name}；完整模型子节点={visuals.GetChildCount()}。");
             staged = null;
             visuals = null;
+            return true;
         }
         catch (Exception exception)
         {
             ModLog.Warn($"选角小模型加载失败 {character.Id.Entry}/{scenePath}：{exception.GetBaseException().Message}");
+            return false;
         }
         finally
         {

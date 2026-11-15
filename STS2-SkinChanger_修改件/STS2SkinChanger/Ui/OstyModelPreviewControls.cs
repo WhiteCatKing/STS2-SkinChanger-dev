@@ -10,8 +10,8 @@ namespace STS2SkinChanger.Ui;
 /// <summary>
 /// 角色选择界面右侧的「奥斯提预览框」。
 ///
-/// 与角色皮肤预览小人并列，专门显示当前选中的奥斯提外观；所有角色（含以后新增）都显示同一个框、
-/// 同一份选项。内容来源按优先级：
+/// 与角色皮肤预览小人并列，仅骨妹显示当前选中的奥斯提外观。
+/// 内容来源按优先级：
 ///   1. 玩家选了独立奥斯提 Mod 的皮肤 → 直接加载它的 display 资源（例如
 ///      <c>res://osty_defect/display_select.tres</c>）；
 ///   2. 否则加载本体 Mod 的标准奥斯提骨架 <c>res://animations/monsters/osty/osty_skel_data.tres</c>，
@@ -28,13 +28,16 @@ internal static class OstyModelPreviewControls
     internal static bool IsEnabled => CharacterModelPreviewControls.IsEnabled;
 
     // 作者要求：预览框只跟随骨妹；面板自身每帧会把 Visible 置回 true，所以判定必须在面板内部。
-    internal static bool AllowedForCurrentCharacter = true;
+    internal static bool ShouldShowForCharacter(string id) => id.Equals("necrobinder", StringComparison.OrdinalIgnoreCase);
+    internal static void BindCharacter(NCharacterSelectScreen screen, string id) =>
+        screen.SetMeta("sc_osty_owner", ShouldShowForCharacter(id));
+    internal static bool IsAllowed(NCharacterSelectScreen screen) => screen.GetMeta("sc_osty_owner", false).AsBool();
 
     public static void Refresh(NCharacterSelectScreen screen)
     {
         var diagnostic = screen.GetNodeOrNull<Control>($"InfoPanel/{PanelName}");
         // 非主人页面（作者要求：除骨妹外都不显示随从与预览框）即使被再次调用也不显示。
-        if (screen.GetMeta("sts2_skin_companion_hidden", false).AsBool())
+        if (!IsAllowed(screen) || screen.GetMeta("sts2_skin_companion_hidden", false).AsBool())
         {
             Hide(screen);
             screen.GetNodeOrNull<Control>($"InfoPanel/{PanelName}")?.Set("visible", false);
@@ -377,7 +380,7 @@ internal partial class OstyModelPreviewPanel : Control
 
     internal void ShowOsty()
     {
-        if (!OstyModelPreviewControls.AllowedForCurrentCharacter)
+        if (!OstyModelPreviewControls.IsAllowed(_screen))
         {
             Visible = false;
             return;
@@ -563,7 +566,7 @@ internal partial class OstyModelPreviewPanel : Control
         }
 
         var area = GetDefaultLayout();
-        Visible = area != null && OstyModelPreviewControls.IsEnabled && OstyModelPreviewControls.AllowedForCurrentCharacter;
+        Visible = area != null && OstyModelPreviewControls.IsEnabled && OstyModelPreviewControls.IsAllowed(_screen);
         RefreshDockHint();
         if (area is not { } rect || !Visible)
         {

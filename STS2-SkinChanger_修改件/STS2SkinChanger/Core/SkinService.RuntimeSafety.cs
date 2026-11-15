@@ -1,4 +1,5 @@
 using Godot;
+using System.Runtime.CompilerServices;
 
 namespace STS2SkinChanger.Core;
 
@@ -7,6 +8,8 @@ internal static partial class SkinService
     private static readonly ResourceFailureCircuit RuntimeFailures = new();
     private static int _sessionPreparedCount;
     private static long _sessionPreparedBytes;
+    private sealed record SourceAlias(string Path);
+    private static readonly ConditionalWeakTable<Resource, SourceAlias> RuntimeSourceAliases = new();
 
     internal static void PrefetchCharacterChoices(string currentGroup)
     {
@@ -19,9 +22,9 @@ internal static partial class SkinService
                 .SelectMany(group => GetSelectionResourcePackPaths(group, Config.GetSelection(group))).ToList();
             var family = Catalog.Groups.FirstOrDefault(group => group.Id == currentGroup);
             if (family != null)
-                foreach (var option in family.Options.Where(option => option.IsRuntimeProvider).Take(12))
+                foreach (var option in family.Options.Where(option => option.IsRuntimeProvider).Take(48))
                     choices.AddRange(GetSelectionResourcePackPaths(currentGroup, option.Id));
-            CharacterPackPrefetch.Schedule(choices.Distinct(StringComparer.OrdinalIgnoreCase).Take(4).ToArray());
+            CharacterPackPrefetch.Schedule(choices.Distinct(StringComparer.OrdinalIgnoreCase).Take(64).ToArray());
         }
         catch (Exception error) { ModLog.Info("[预读] 跳过不可用的选角资源：" + error.GetBaseException().Message); }
     }
@@ -50,7 +53,8 @@ internal static partial class SkinService
     {
         // A root can decode its whole graph before returning. Recheck the graph estimate at
         // every root, rather than assuming a small allocation just because the root is a .tres.
-        RuntimeLoadSafety.RequireHeadroom(Math.Max(32L * 1024 * 1024, estimatedBytes));
+        if (!sharedDependencies || !ResourceLoader.HasCached(path))
+            RuntimeLoadSafety.RequireHeadroom(Math.Max(32L * 1024 * 1024, estimatedBytes));
         var leaf = new[] { ".ctex", ".png", ".jpg", ".jpeg", ".webp", ".skel", ".spskel" }
             .Any(extension => path.EndsWith(extension, StringComparison.OrdinalIgnoreCase));
         var resource = ResourceLoader.Load<Resource>(path, null,
@@ -60,5 +64,24 @@ internal static partial class SkinService
             resource is Texture2D texture && (texture.GetWidth() <= 0 || texture.GetHeight() <= 0))
             throw new AppearanceResourceUnavailableException("资源无效，停止建模而不向 Spine 传递半成品：" + path);
         return resource;
+    }
+
+    private static void BindRuntimeDependency(string canonical, string alias, Resource resource,
+        List<CanonicalRuntimeResourceOwnershipEntry> bindings)
+    {
+        var previous = ResourceLoader.HasCached(canonical)
+            ? ResourceLoader.Load<Resource>(canonical, null, ResourceLoader.CacheMode.Reuse) : null;
+        RuntimeSourceAliases.Remove(resource);
+        RuntimeSourceAliases.Add(resource, new(alias));
+        if (ReferenceEquals(previous, resource)) return;
+        bindings.Add(new(canonical, alias, resource, previous));
+        resource.TakeOverPath(canonical);
+    }
+
+    private static Resource? TryGetBoundRuntimeDependency(string canonical, string alias)
+    {
+        if (!ResourceLoader.HasCached(canonical)) return null;
+        var cached = ResourceLoader.Load<Resource>(canonical, null, ResourceLoader.CacheMode.Reuse);
+        return cached != null && RuntimeSourceAliases.TryGetValue(cached, out var source) && source.Path == alias ? cached : null;
     }
 }

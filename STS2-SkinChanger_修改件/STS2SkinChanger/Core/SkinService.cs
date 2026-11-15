@@ -1753,53 +1753,11 @@ internal static partial class SkinService
         }
     }
 
-    public static async Task WarmResourcePackFilesAsync(
+    public static Task WarmResourcePackFilesAsync(
         IReadOnlyCollection<string> resourcePackPaths,
         Action<double>? reportProgress = null,
-        CancellationToken cancellationToken = default)
-    {
-        var paths = resourcePackPaths
-            .Where(File.Exists)
-            .Where(path => !CharacterPackPrefetch.IsWarm(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var totalBytes = paths.Sum(path => new FileInfo(path).Length);
-        if (totalBytes <= 0)
-        {
-            reportProgress?.Invoke(1d);
-            return;
-        }
-
-        var completedBytes = 0L;
-        var buffer = GC.AllocateUninitializedArray<byte>(1024 * 1024);
-        foreach (var path in paths)
-        {
-            await using var stream = new FileStream(
-                path,
-                FileMode.Open,
-                System.IO.FileAccess.Read,
-                FileShare.Read | FileShare.Delete,
-                buffer.Length,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var remainingBytes = stream.Length;
-            while (remainingBytes > 0)
-            {
-                var read = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remainingBytes)), cancellationToken).ConfigureAwait(false);
-                if (read == 0)
-                {
-                    throw new EndOfStreamException("预读期间资源包被截断：" + path);
-                }
-
-                completedBytes += read;
-                remainingBytes -= read;
-                reportProgress?.Invoke(Math.Clamp((double)completedBytes / totalBytes, 0d, 1d));
-            }
-            CharacterPackPrefetch.MarkWarm(path);
-        }
-
-        reportProgress?.Invoke(1d);
-    }
-
+        CancellationToken cancellationToken = default) =>
+        CharacterPackPrefetch.WarmAsync(resourcePackPaths, cancellationToken, reportProgress);
     private static void ScheduleRuntimeProviderPackWarm(
         SkinCatalog catalog,
         IEnumerable<string> activeProviders,
@@ -1862,7 +1820,7 @@ internal static partial class SkinService
                 }
             }
 
-            await WarmResourcePackFilesAsync(paths).ConfigureAwait(false);
+            await CharacterPackPrefetch.WarmAsync(paths, demand: false).ConfigureAwait(false);
             lock (Sync)
             {
                 foreach (var path in paths)
@@ -5106,7 +5064,8 @@ internal static partial class SkinService
         // Player -> CharacterModel predicates inherit their caller's identity. Use the same
         // selection overlay as avatar/creature hot reload, not this computer's saved selection
         // for every instance of that character. This does not mount or load any resources.
-        using var scope = player == null ? null : MultiplayerSkinSync.BeginPlayerSelectionScope(player.NetId);
+        using var scope = player == null || FrameworkModelPreview.IsPreviewPlayer(player)
+            ? null : MultiplayerSkinSync.BeginPlayerSelectionScope(player.NetId);
         lock (Sync)
         {
             var catalog = Catalog;
@@ -5889,15 +5848,23 @@ internal static partial class SkinService
         bool takeOverCanonicalPaths = false)
     {
         ArgumentNullException.ThrowIfNull(callback);
+        using var foreground = CharacterPackPrefetch.HoldForeground();
 
         lock (Sync)
         {
             var selection = GetVisualSelection(groupId);
+            var identity = CaptureCharacterAppearance(groupId);
             return WithRuntimeResourcesForSelection(
                 groupId,
                 selection,
                 resourcePaths,
-                callback,
+                resources =>
+                {
+                    if (!identity.IsCurrent) throw new AppearanceResourceUnavailableException("外观请求已过期。");
+                    var result = callback(resources);
+                    if (result is GodotObject rendered) identity.Bind(rendered);
+                    return result;
+                },
                 includeProviderDependencies,
                 takeOverCanonicalPaths);
         }
@@ -5938,6 +5905,8 @@ internal static partial class SkinService
 
         if (RuntimeFailures.IsBlocked(prepared.Key, DateTime.UtcNow))
             throw new AppearanceResourceUnavailableException("该外观资源刚加载失败，30 秒内停止重复解码。");
+        var loadBindings = new List<CanonicalRuntimeResourceOwnershipEntry>();
+        using var loadOwnership = new CanonicalRuntimeResourceOwnershipScope(loadBindings);
         var reused = TryGetRuntimeResourceBundle(prepared.Key, out var resources);
         if (!reused)
         {
@@ -5945,19 +5914,23 @@ internal static partial class SkinService
             resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                RuntimeLoadSafety.RequireHeadroom(prepared.EstimatedBytes);
-                foreach (var pair in prepared.ResourcePaths)
+                RuntimeLoadSafety.RequireHeadroom(prepared.CanBindDependencies ? 32L * 1024 * 1024 : prepared.EstimatedBytes);
+                foreach (var path in prepared.LoadOrder.Count == 0 ? prepared.ResourcePaths.Keys : prepared.LoadOrder)
                 {
-                    var resource = LoadCheckedRuntimeResource(pair.Value, prepared.CanReuseExternalDependencies, prepared.EstimatedBytes);
+                    var alias = prepared.ResourcePaths[path];
+                    var resource = (prepared.CanBindDependencies ? TryGetBoundRuntimeDependency(path, alias) : null) ?? LoadCheckedRuntimeResource(alias,
+                        prepared.CanBindDependencies || prepared.CanReuseExternalDependencies,
+                        prepared.CanBindDependencies ? prepared.RootBytes.GetValueOrDefault(path) : prepared.EstimatedBytes);
 
-                    resources[pair.Key] = resource;
+                    resources[path] = resource;
+                    if (prepared.CanBindDependencies) BindRuntimeDependency(path, alias, resource, loadBindings);
                     if (resource is PackedScene)
                     {
-                        NonCombatSceneIdentity.Register(pair.Value, pair.Key);
-                        NonCombatSceneIdentity.Register(resource.ResourcePath, pair.Key);
+                        NonCombatSceneIdentity.Register(alias, path);
+                        NonCombatSceneIdentity.Register(resource.ResourcePath, path);
                     }
                     RuntimeResourceCache[
-                        RuntimeResourceKey(groupId, selection, pair.Key)] = resource;
+                        RuntimeResourceKey(groupId, selection, path)] = resource;
                 }
 
                 RuntimeResourceBundles[prepared.Key] = new RuntimeResourceBundleState(resources, prepared.EstimatedBytes);
@@ -5988,6 +5961,11 @@ internal static partial class SkinService
                 throw;
             }
         }
+        else if (prepared.CanBindDependencies)
+        {
+            foreach (var pair in resources)
+                BindRuntimeDependency(pair.Key, prepared.ResourcePaths[pair.Key], pair.Value, loadBindings);
+        }
 
         T callbackResult;
         IDisposable? canonicalOwnership = null;
@@ -6003,6 +5981,10 @@ internal static partial class SkinService
             }
 
             callbackResult = callback(resources);
+            if (!CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
+                    MultiplayerSkinSync.GetScopedSelection(groupId), Config.GetSelection(groupId)))
+                loadBindings.RemoveAll(entry => Catalog.GetRuntimeDependencyRestoreGroups(
+                    groupId, [entry.CanonicalPath]).Count == 0);
         }
         catch
         {
@@ -6169,7 +6151,10 @@ internal static partial class SkinService
             overlay.Files.Count,
             overlaySize,
             estimatedBytes,
-            overlay.CanReuseExternalDependencies);
+            overlay.CanReuseExternalDependencies,
+            overlay.LoadOrder,
+            overlay.RootBytes,
+            overlay.CanBindDependencies);
         PreparedRuntimeOverlays[key] = prepared;
         LastPreparedRuntimeOverlays[groupId] = prepared;
         return prepared;
@@ -7747,7 +7732,10 @@ internal static partial class SkinService
         int FileCount,
         long FileSize,
         long EstimatedBytes,
-        bool CanReuseExternalDependencies);
+        bool CanReuseExternalDependencies,
+        IReadOnlyList<string> LoadOrder,
+        IReadOnlyDictionary<string, long> RootBytes,
+        bool CanBindDependencies);
 
     private sealed record RuntimeResourceBundleState(
         Dictionary<string, Resource> Resources, long EstimatedBytes)
@@ -8730,8 +8718,9 @@ internal static partial class SkinService
             return LoadCharacterSelectIcon(characterId, locked);
         }
 
-        var selection = Config.GetSelection(groupId);
-        var key = $"{groupId}|{selection}|{locked}";
+        var selection = GetVisualSelection(groupId);
+        var key = $"{groupId}|{CaptureCharacterAppearance(groupId).Key}|{locked}";
+        if (!locked && VariantPortraits.Resolve(groupId, "select", 1) is { } variantIcon) return variantIcon;
         if (CharacterIconCache.TryGetValue(key, out var cached) && GodotObject.IsInstanceValid(cached))
         {
             return cached;
@@ -8746,11 +8735,11 @@ internal static partial class SkinService
             icon = WithRuntimeResources(groupId, [target],
                 resources => resources.TryGetValue(target, out var resource) ? resource as Texture2D : null);
         }
-        catch
+        catch (Exception error)
         {
+            throw new AppearanceResourceUnavailableException("所选皮肤的选人头像未就绪：" + error.GetBaseException().Message);
         }
 
-        icon ??= LoadCharacterSelectIcon(characterId, locked);
         if (icon != null)
         {
             CharacterIconCache[key] = icon;

@@ -64,6 +64,12 @@ internal static class SkinPreloader
 
         _gamePreloadSettled = true;
         ModLog.Info($"[性能] 游戏预加载已结束（{reason}），开始派发皮肤预加载（队列 {Pending.Count} 个）。");
+        try
+        {
+            SkinLoadingInputObserver.Install();
+            SkinService.PrefetchCharacterChoices("ironclad");
+        }
+        catch (Exception error) { ModLog.Info("空闲预读稍后重试：" + error.GetBaseException().Message); }
     }
 
     /// <summary>
@@ -246,7 +252,7 @@ internal static class SkinPreloader
             CompleteFinishedRequests();
 
             // 串行：上一个请求取回之前不发下一个。缓存命中的路径不占名额，可以在同一 tick 连续跳过。
-            while (!_cancelled && InFlight.Count < MaxInFlight && Pending.Count > 0)
+            while (!_cancelled && CharacterPackPrefetch.CanSpeculateNow && InFlight.Count < MaxInFlight && Pending.Count > 0)
             {
                 var path = Pending.Dequeue();
                 if (InFlight.Contains(path))

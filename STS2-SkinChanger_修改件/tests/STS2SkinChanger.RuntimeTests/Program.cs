@@ -17,6 +17,13 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-preview-binding")
+{
+    StandaloneModelPreviewTests.Run();
+    AppearanceQueueTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-protected-boundaries")
 {
     ManualCharacterVariantTests.Run();
