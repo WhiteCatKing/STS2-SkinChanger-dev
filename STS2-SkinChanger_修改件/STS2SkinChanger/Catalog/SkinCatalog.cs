@@ -1112,12 +1112,25 @@ internal sealed partial class SkinCatalog : IDisposable
                 var hasResourceBackedCosmetics = visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 ||
                                                  partGroupIds.Count > 0;
                 var unservablePackWithVisualPatches = false;
+                var handBackToGameLoader = false;
                 if (mod.RootPath != null)
                 {
                     runtimeImages = DiscoverRuntimeAncientImages(mod).Count;
                     hasResourceBackedCosmetics |= runtimeImages > 0;
 
-                    if (mod.HasDll && visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
+                    // 骨架路径型整包（CznCore 角色框架）自带的外观由它自己的代码写进角色模型，
+                    // 包里没有可覆盖的角色场景；接管它的呈现入口只会让游戏继续画原皮。
+                    handBackToGameLoader = AppliesSkeletonThroughCharacterModel(mod);
+                    if (handBackToGameLoader)
+                    {
+                        unservablePackWithVisualPatches = true;
+                        ModLog.Info(
+                            $"未按皮肤接管 {mod.Name ?? mod.Id}：它把外观接在角色模型的骨架路径上" +
+                            "（BodySkeletonDataPath/NonCombatBodySkeletonPaths），包里没有可覆盖的角色场景；" +
+                            "按皮肤接管只会让游戏继续显示原皮。已交回游戏原加载器，其 DLL 与 PCK 按作者原意完整加载。");
+                    }
+
+                    if (!handBackToGameLoader && mod.HasDll && visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
                         LooksLikeDllSkinProvider(mod))
                     {
                         // 只读取 PE 字符串，不把程序集载入运行时。补丁外观入口但没有资源可呈现
@@ -1168,8 +1181,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
 
                 var servedResourceCount = servedSources.Count + cardAssets + cardPresentations;
-                if (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 || runtimeImages > 0 ||
-                    partGroupIds.Count > 0)
+                if (!handBackToGameLoader && (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 ||
+                                              runtimeImages > 0 || partGroupIds.Count > 0))
                 {
                     providers.Add(new SkinProviderProbe(
                         mod.Id,
@@ -1556,6 +1569,62 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             System.Diagnostics.Debug.WriteLine(
                 $"无法检查 {mod.Id} 是否接管资源管线：{exception.Message}");
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 包是否把外观接在角色模型的骨架路径上（<c>BodySkeletonDataPath</c> /
+    /// <c>NonCombatBodySkeletonPaths</c>：CznCore 角色框架的成员，游戏本体没有）。这类包是整包
+    /// 角色替换，外观由它自己的代码在装载时写进模型，包里不带可覆盖的角色场景；接管它的呈现
+    /// 入口只会让游戏继续画原皮。只读 PE 元数据，不把程序集载入运行时。
+    /// </summary>
+    private static bool AppliesSkeletonThroughCharacterModel(SkinModDescriptor mod)
+    {
+        if (mod.RootPath == null || !mod.HasDll)
+        {
+            return false;
+        }
+
+        string assemblyPath;
+        try
+        {
+            assemblyPath = SkinPackagePaths.Resolve(mod.RootPath, mod.ResourceNamespaceId, ".dll");
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!File.Exists(assemblyPath))
+            {
+                return false;
+            }
+
+            using var stream = File.OpenRead(assemblyPath);
+            using var peReader = new PEReader(stream, PEStreamOptions.LeaveOpen);
+            if (!peReader.HasMetadata)
+            {
+                return false;
+            }
+
+            var reader = peReader.GetMetadataReader();
+            foreach (var memberHandle in reader.MemberReferences)
+            {
+                var name = reader.GetString(reader.GetMemberReference(memberHandle).Name);
+                if (name is "set_BodySkeletonDataPath" or "set_NonCombatBodySkeletonPaths")
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or BadImageFormatException)
+        {
+            return false;
         }
 
         return false;
