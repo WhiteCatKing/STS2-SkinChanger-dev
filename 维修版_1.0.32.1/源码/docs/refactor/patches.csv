@@ -1,0 +1,245 @@
+﻿文件,行号,补丁类,方式,目标类型,目标方法,补丁种类,目标归属,建议模块,备注
+STS2SkinChanger/Core/BackgroundSkinService.cs,3783,BackgroundSkinRoomPatch,attribute,NCombatRoom,SetUpBackground,Postfix,game,background,模块判定: 文件名
+STS2SkinChanger/Core/BackgroundSkinService.cs,3796,FakeMerchantCombatArtPatch,attribute,EncounterModel,CreateBackground,Prefix,game,background,模块判定: 文件名
+STS2SkinChanger/Core/BackgroundSkinService.cs,3814,BackgroundSkinCreatePatch,attribute,EncounterModel,CreateBackground,Postfix,game,background,模块判定: 文件名
+STS2SkinChanger/Core/CombatHudResourceLifecycle.cs,88,CombatUiExitCleanupPatch,attribute,NCombatUi,_ExitTree,Finalizer,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Core/CompanionDisplayNameGuard.cs,132,OstyDisplayNameGuardPatch,attribute,LocString,GetFormattedText,Postfix,game,osty,模块判定: 文件名
+STS2SkinChanger/Core/EventSkinRuntime.cs,110,EventSkinResourceAvailabilityPatch,attribute,EventModel,HasVfx,Prefix,game,event,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/EventSkinRuntime.cs,110,EventSkinResourceAvailabilityPatch,attribute,EventModel,HasPhobiaModePortrait,Prefix,game,event,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/EventSkinRuntime.cs,130,EventSkinTextPatch,attribute,LocTable,GetRawText,Prefix,game,event,模块判定: 文件名
+STS2SkinChanger/Core/EventSkinRuntime.cs,144,EventSkinVfxPatch,attribute,EventModel,CreateVfx,Prefix,game,event,模块判定: 文件名
+STS2SkinChanger/Core/EventSkinRuntime.cs,165,EventSkinPortraitTrackingPatch,attribute,NEventLayout,SetPortrait,Postfix,game,event,模块判定: 文件名
+STS2SkinChanger/Core/FakeMerchantEventFrame.cs,249,FakeMerchantEventFramePatch,attribute,NFakeMerchant,_Ready,Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,187,FrameworkCombatVisualPatch,attribute,CharacterModel,CreateVisuals,Prefix,game,character,模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,253,FrameworkCharacterTrailPatch,attribute,CharacterModel,get_TrailPath,Prefix,game,character,模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,270,FrameworkCardFramePatch,attribute,CardPoolModel,get_FrameMaterialPath,Prefix,game,card,模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,290,FrameworkCardEnergyIconPatch,attribute,CardPoolModel,get_EnergyIconPath,Prefix,game,card,模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,307,FrameworkEnergyIconHelperPatch,attribute,EnergyIconHelper,GetPath,Prefix,game,card,参数签名: string; 模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,327,FrameworkCharacterEnergyColorPatch,attribute,(动态),TargetMethods 全类型扫描,Prefix,unknown,core,目标在运行时枚举; 模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,355,FrameworkCardEnergyColorPatch,attribute,(动态),TargetMethods 全类型扫描,Prefix,unknown,core,目标在运行时枚举; 模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,383,FrameworkEnergyLayersPatch,attribute,NEnergyCounter,_Ready,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,419,FrameworkOrbIconPatch,attribute,OrbModel,get_IconPath,Prefix,game,card,模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,437,FrameworkOrbSpritePatch,attribute,OrbModel,get_SpritePath,Prefix,game,card,模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,455,FrameworkOrbDarkenedColorPatch,attribute,(动态),TargetMethods 全类型扫描,Prefix,unknown,core,目标在运行时枚举; 模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,480,FrameworkRelicPackedIconPatch,attribute,(动态),TargetMethods 全类型扫描,Prefix,unknown,core,目标在运行时枚举; 模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,513,FrameworkRelicOutlinePatch,attribute,(动态),TargetMethods 全类型扫描,Prefix,unknown,core,目标在运行时枚举; 模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,527,FrameworkRelicIconTexturePatch,attribute,RelicModel,get_Icon,Prefix,game,card,模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,544,FrameworkRelicOutlineTexturePatch,attribute,RelicModel,get_IconOutline,Prefix,game,card,模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,561,FrameworkRelicBigIconTexturePatch,attribute,RelicModel,get_BigIcon,Prefix,game,card,模块判定: 目标类型
+STS2SkinChanger/Core/FrameworkSkinRuntimePatches.cs,600,FrameworkEntryAnimationPatch,attribute,(动态),TargetMethods 全类型扫描,Postfix,unknown,core,目标在运行时枚举; 模块判定: Core 目录
+STS2SkinChanger/Core/ManagedCharacterAnimationBridge.cs,220,ManagedCharacterAnimationReadyPatch,attribute,NCreature,_Ready,Postfix,game,character,模块判定: 文件名
+STS2SkinChanger/Core/ManagedCharacterAnimationBridge.cs,230,ManagedCharacterAnimationTriggerPatch,attribute,NCreature,SetAnimationTrigger,Postfix,game,character,模块判定: 文件名
+STS2SkinChanger/Core/ManagedMerchantSettingsBridge.cs,154,ProviderSettingsModInfoPatch,attribute,NModInfoContainer,Fill,Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,4829,GodotScriptPathRegistrationCompatibilityPatch,attribute,(动态),TargetMethod,Prefix,unknown,core,目标在运行时解析; 模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,4876,GodotScriptRegistrationSessionGuard,attribute,(动态),TargetMethod,Finalizer,unknown,core,目标在运行时解析; 模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,4921,ManagedSkinModLoadPatch,attribute,ModManager,TryLoadMod,Prefix+Postfix,game,core,TargetMethod(s) 列出; 模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs,22,MultiplayerMerchantPlayerVisualIsolationPatch,attribute,NMerchantRoom,AfterRoomIsLoaded,Prefix,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs,94,MultiplayerOrbSpriteScopePatch,attribute,OrbModel,CreateSprite,Prefix+Finalizer,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs,135,MultiplayerOrbIconScopePatch,attribute,OrbModel,Icon,Prefix+Finalizer,game,multiplayer,Getter 属性访问器; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs,170,MultiplayerRestSiteCreateScopePatch,attribute,NRestSiteCharacter,Create,Prefix+Finalizer,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs,202,MultiplayerRestSiteReadyScopePatch,attribute,NRestSiteCharacter,_Ready,Prefix+Postfix+Finalizer,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs,226,MultiplayerTreasureHandReadyScopePatch,attribute,NHandImage,_Ready,Prefix+Postfix+Finalizer,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs,249,MultiplayerTreasureHandMoveScopePatch,attribute,NHandImage,SetTextureToFightMove,Prefix+Postfix+Finalizer,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerRoomAppearancePatches.cs,274,MultiplayerTreasureHandExitPatch,attribute,NHandImage,_ExitTree,Postfix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2682,MultiplayerSkinLobbyAttachPatch,attribute,NCharacterSelectScreen,AfterInitialized,Postfix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2689,MultiplayerSkinLobbyTickPatch,attribute,NCharacterSelectScreen,_Process,Postfix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2695,MultiplayerLobbyCharacterChangedPatch,attribute,StartRunLobby,ChangeCharacter,Postfix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2714,MultiplayerSkinRunTickPatch,attribute,NRun,_Process,Postfix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2723,MultiplayerSkinLobbyCleanupPatch,attribute,StartRunLobby,CleanUp,Prefix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2739,MultiplayerSkinRunCleanupPatch,attribute,RunManager,CleanUp,Prefix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2745,SkinChangerMessageIdWritePatch,attribute,MessageTypes,ToId,Prefix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2760,SkinChangerMessageIdReadPatch,attribute,MessageTypes,TryGetMessageType,Prefix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2776,SkinChangerCapabilityTrailerPatch,attribute,InitialGameInfoMessage,Serialize,Postfix,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2776,SkinChangerCapabilityTrailerPatch,attribute,ClientLobbyJoinRequestMessage,Serialize,Postfix,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2776,SkinChangerCapabilityTrailerPatch,attribute,ClientLoadJoinRequestMessage,Serialize,Postfix,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2776,SkinChangerCapabilityTrailerPatch,attribute,ClientRejoinRequestMessage,Serialize,Postfix,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2791,SkinChangerCapabilityReceivePatch,attribute,NetHostGameService,OnPacketReceived,Prefix,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2791,SkinChangerCapabilityReceivePatch,attribute,NetClientGameService,OnPacketReceived,Prefix,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2809,SkinChangerClientConnectionResetPatch,attribute,NetClientGameService,Initialize,Prefix,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2815,SkinChangerHostConnectionResetPatch,attribute,NetHostGameService,StartSteamHost,Prefix,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2815,SkinChangerHostConnectionResetPatch,attribute,NetHostGameService,StartENetHost,Prefix,game,multiplayer,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2827,MultiplayerCreatureVisualScopePatch,attribute,Creature,CreateVisuals,Prefix+Postfix+Finalizer,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/MultiplayerSkinSync.cs,2868,MultiplayerCreatureReadyScopePatch,attribute,NCreature,_Ready,Prefix+Postfix+Finalizer,game,multiplayer,模块判定: 文件名
+STS2SkinChanger/Core/NativeFrameworkAssemblyLoader.cs,102,NativeFrameworkAssemblyLoadPatch,attribute,AssemblyLoadContext,LoadFromAssemblyPath,Prefix,self,core,模块判定: Core 目录
+STS2SkinChanger/Core/OptionalCharacterVfx.cs,8,NecrobinderOptionalHeadReadyPatch,attribute,NNecrobinderVfx,_Ready,Transpiler,game,character,模块判定: 文件名
+STS2SkinChanger/Core/OptionalCharacterVfx.cs,31,NecrobinderOptionalHeadAnimationPatch,attribute,NNecrobinderVfx,UpdateFlameVisibility,Prefix,game,character,模块判定: 文件名
+STS2SkinChanger/Core/ProviderManifestCompatibility.cs,109,LegacyManifestReadCompatibilityPatch,attribute,ModManifest,ReadFromStream,Prefix+Finalizer,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Core/ProviderSettingsControls.cs,49,ProviderSettingsConsolePatch,attribute,DevConsole,.ctor,Postfix,game,core,构造函数; 参数签名: bool; 模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Core/QuitCacheCleanup.cs,11,QuitCacheCleanup,attribute,NGame,Quit,Prefix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Core/QuitTimingDiagnostics.cs,8,QuitTimingDiagnostics,attribute,NGame,Quit,Prefix+Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Core/SkinService.CharacterSkinBundleRuns.cs,173,CharacterSkinBundleNewRunBindingPatch,attribute,RunManager,SetUpNewSingleplayer,Postfix,game,character,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/SkinService.CharacterSkinBundleRuns.cs,173,CharacterSkinBundleNewRunBindingPatch,attribute,RunManager,SetUpNewMultiplayer,Postfix,game,character,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/SkinService.CharacterSkinBundleRuns.cs,186,CharacterSkinBundleSavedRunPatch,attribute,RunManager,SetUpSavedSingleplayer,Prefix,game,character,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/SkinService.CharacterSkinBundleRuns.cs,186,CharacterSkinBundleSavedRunPatch,attribute,RunManager,SetUpSavedMultiplayer,Prefix,game,character,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/SkinService.CharacterSkinBundleRuns.cs,206,CharacterSkinBundleRunSavePatch,attribute,SaveManager,SaveRun,Prefix,game,character,模块判定: 文件名
+STS2SkinChanger/Core/SkinWorkshopService.cs,308,WorkshopRuntimeNoticePatch,attribute,NGame,OnNewModDetected,Prefix,game,workshop,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Core/StatefulCardArtRuntime.cs,241,StatefulCardLocalizationPatch,attribute,LocManager,SetLanguage,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Entry.cs,143,EssentialInitializationPatch,attribute,OneTimeInitialization,ExecuteEssential,Prefix+Postfix+Finalizer,game,multiplayer,模块判定: 目标类型
+STS2SkinChanger/Entry.cs,202,CosmeticLocalizationOwnershipPatch,attribute,ModManager,GetModdedLocTables,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Entry.cs,212,DuplicateModelTypeCompatibilityPatch,attribute,ReflectionHelper,ModTypes,Postfix,game,core,Getter 属性访问器; 模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Entry.cs,379,DuplicateModelInitCompatibilityPatch,attribute,ModelDb,Init,Prefix+Postfix,game,core,TargetMethod(s) 列出; 模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/AncientCompendium.cs,3249,ManagedAncientSceneAnimationPatch,attribute,NAncientEventLayout,InitializeVisuals,Postfix,game,ancient,模块判定: 文件名
+STS2SkinChanger/Ui/AncientCompendium.cs,3277,ManagedAncientStaticBackgroundWindowPatch,attribute,NAncientBgContainer,OnWindowChange,Postfix,game,ancient,模块判定: 文件名
+STS2SkinChanger/Ui/AncientCompendium.cs,3284,AncientSceneResultPatch,attribute,EventModel,CreateBackgroundScene,Prefix+Postfix,game,ancient,模块判定: 文件名
+STS2SkinChanger/Ui/AncientCompendium.cs,3337,AncientRuntimeProviderScopeExitPatch,attribute,NAncientEventLayout,_ExitTree,Postfix,game,ancient,模块判定: 文件名
+STS2SkinChanger/Ui/AncientCompendium.cs,3346,AncientMapIconResultPatch,attribute,AncientEventModel,MapIcon,Postfix,game,ancient,Getter 属性访问器; 模块判定: 文件名
+STS2SkinChanger/Ui/AncientCompendium.cs,3358,AncientMapIconOutlineResultPatch,attribute,AncientEventModel,MapIconOutline,Postfix,game,ancient,Getter 属性访问器; 模块判定: 文件名
+STS2SkinChanger/Ui/AncientCompendium.cs,3370,AncientRunHistoryIconResultPatch,attribute,AncientEventModel,RunHistoryIcon,Postfix,game,ancient,Getter 属性访问器; 模块判定: 文件名
+STS2SkinChanger/Ui/AncientCompendium.cs,3382,AncientRunHistoryIconOutlineResultPatch,attribute,AncientEventModel,RunHistoryIconOutline,Postfix,game,ancient,Getter 属性访问器; 模块判定: 文件名
+STS2SkinChanger/Ui/BackgroundAppearanceScreen.cs,378,BackgroundAppearancePauseMenuPatch,attribute,NPauseMenu,_Ready,Postfix,game,background,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/BackgroundAppearanceScreen.cs,378,BackgroundAppearancePauseMenuPatch,attribute,NPauseMenu,OnSubmenuOpened,Postfix,game,background,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/BestiaryEntranceSwitcher.cs,374,BestiaryEntranceReleasePatch,attribute,NClickableControl,OnReleaseHandler,Prefix,game,monster,模块判定: 文件名
+STS2SkinChanger/Ui/BestiaryEntranceSwitcher.cs,381,BestiaryEntranceForceClickPatch,attribute,NClickableControl,ForceClick,Prefix,game,monster,模块判定: 文件名
+STS2SkinChanger/Ui/BestiaryEntranceSwitcher.cs,388,BestiaryEntrancePushPatch,attribute,NSubmenuStack,Push,Prefix,game,monster,模块判定: 文件名
+STS2SkinChanger/Ui/BestiaryEntranceSwitcher.cs,396,BestiaryEntranceReadyPatch,attribute,NCompendiumSubmenu,_Ready,Postfix,game,monster,模块判定: 文件名
+STS2SkinChanger/Ui/BestiaryEntranceSwitcher.cs,404,BestiaryEntranceOpenedPatch,attribute,NCompendiumSubmenu,OnSubmenuOpened,Postfix,game,monster,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2489,CardLibrarySkinReadyPatch,attribute,NCardLibrary,_Ready,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2495,CardInspectSkinReadyPatch,attribute,NInspectCardScreen,_Ready,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2502,CardInspectSkinDisplayPatch,attribute,NInspectCardScreen,UpdateCardDisplay,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2510,CardLibrarySkinOpenedPatch,attribute,NCardLibrary,OnSubmenuOpened,Prefix+Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2520,CardLibraryAvailabilityFilterPatch,attribute,NCardLibraryGrid,FilterCards,Prefix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2535,CardLibraryPoolSkinPatch,attribute,NCardLibrary,UpdateCardPoolFilter,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2542,CardLibraryInitialPortraitPreloadPatch,attribute,NCardGrid,Columns,Postfix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2542,CardLibraryInitialPortraitPreloadPatch,attribute,NCardGrid,CalculateRowsNeeded,Postfix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2570,CardLibraryRowPortraitPreloadPatch,attribute,NCardLibraryGrid,AssignCardsToRow,Prefix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2582,CardRewardPortraitPreloadPatch,attribute,NCardRewardSelectionScreen,RefreshOptions,Prefix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2595,CardPortraitResultPatch,attribute,CardModel,Portrait,Postfix,game,card,Getter 属性访问器; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2603,CardPreviewModeCapturePatch,attribute,NCard,UpdateVisuals,Prefix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2611,CardBuiltInOverlayPatch,attribute,NCard,ReloadOverlay,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2623,CardLayoutModelRebindPatch,attribute,NCard,set_Model,Prefix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2633,CardLayoutPoolReleasePatch,attribute,NCard,OnFreedToPool,Prefix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2633,CardLayoutPoolReleasePatch,attribute,NCard,OnReturnedFromPool,Prefix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2646,CardLayoutResetPatch,attribute,NCard,Reload,Prefix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2657,CardLayoutBaselineCapturePatch,attribute,NCard,Reload,Postfix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2668,CardLayoutFinalPatch,attribute,NCard,Reload,Prefix+Postfix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2668,CardLayoutFinalPatch,attribute,NCard,UpdateVisuals,Prefix+Postfix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2701,CardTreeReentrySkinPatch,attribute,NCard,_EnterTree,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2709,LocalCardPlayQueuePortraitPatch,attribute,NCardPlayQueue,OnLocalCardPlayed,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSkinControls.cs,2717,CardPlayQueueRebindPortraitPatch,attribute,NCardPlayQueue,UpdateCardBeforeExecution,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSurfaceView.cs,85,TinyCardSelectedSurfacePatch,attribute,NTinyCard,SetCard,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardSurfaceView.cs,92,TinyCardAnonymousSurfacePatch,attribute,NTinyCard,Set,Prefix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardTransformPreload.cs,26,TransformPreviewPortraitPreloadPatch,attribute,NTransformPreview,Initialize,Prefix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardTransformPreload.cs,65,CardTransformVfxPortraitPreloadPatch,attribute,NCardTransformVfx,Create,Prefix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CardTransformPreload.cs,87,CardTransformShineVfxPortraitPreloadPatch,attribute,NCardTransformShineVfx,Create,Prefix+Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2585,InRunCharacterAppearanceRuntimePatch,attribute,NRun,_Ready,Prefix+Postfix,game,character,模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2610,TopBarRoomIconSkinTexturePatch,attribute,NTopBarRoomIcon,UpdateIcon,Transpiler,game,character,模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2631,BossMapPointSkinPresentationPatch,attribute,NBossMapPoint,_Ready,Postfix,game,character,模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2640,CharacterAppearanceCreatureReadyPatch,attribute,NCreature,_Ready,Postfix,game,character,模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2648,CharacterAppearancePlayerLayoutPatch,attribute,NCombatRoom,PositionPlayersAndPets,Prefix,game,character,模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2656,CombatRoomRuntimeProviderScopePatch,attribute,NCombatRoom,Create,Prefix,game,character,模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2665,CombatRoomRuntimeProviderScopeExitPatch,attribute,NCombatRoom,_ExitTree,Postfix,game,character,模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2673,CharacterAppearanceBoundsPatch,attribute,NCreature,UpdateBounds,Postfix,game,character,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2686,CharacterAppearanceOrbPositionPatch,attribute,NCreature,SetOrbManagerPosition,Postfix,game,character,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceScreen.cs,2800,CharacterAppearancePauseMenuPatch,attribute,NPauseMenu,_Ready,Postfix,game,character,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CharacterAppearanceScreen.cs,2800,CharacterAppearancePauseMenuPatch,attribute,NPauseMenu,OnSubmenuOpened,Postfix,game,character,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/CharSelectStageCycle.cs,725,CharSelectStageCyclePatch,attribute,NCharacterSelectScreen,SelectCharacter,Postfix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,3800,RandomCharacterLobbySkinPatch,attribute,NCharacterSelectScreen,OnSubmenuOpened,Prefix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,3814,CharacterSelectionSkinPatch,attribute,NCharacterSelectScreen,SelectCharacter,Prefix+Postfix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,3826,SingleplayerEmbarkSkinSelectorPatch,attribute,NCharacterSelectScreen,StartNewSingleplayerRun,Prefix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,3856,MultiplayerEmbarkSkinSelectorPatch,attribute,NCharacterSelectScreen,StartNewMultiplayerRun,Prefix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,3886,CharacterSkinBundleRunCleanupPatch,attribute,RunManager,CleanUp,Prefix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/ContextualSkinControls.cs,3905,BestiarySelectionSkinPatch,attribute,NBestiary,SelectMonster,Postfix,game,monster,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,3918,BestiaryRuntimeProviderScopePatch,attribute,NBestiary,OnSubmenuClosed,Postfix,game,monster,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,3938,CharacterVisualResultPatch,attribute,CharacterModel,CreateVisuals,Postfix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,3990,MonsterVisualResultPatch,attribute,MonsterModel,CreateVisuals,Prefix+Postfix,game,monster,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4035,MonsterVisualScalePatch,attribute,NCreatureVisuals,SetScaleAndHue,Postfix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4043,CachedSceneResultPatch,attribute,AssetCache,GetScene,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4051,CachedTextureResultPatch,attribute,AssetCache,GetTexture2D,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4059,CharacterSelectIconResultPatch,attribute,CharacterModel,CharacterSelectIcon,Postfix,game,character,Getter 属性访问器; 模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4067,CharacterSelectLockedIconResultPatch,attribute,CharacterModel,CharacterSelectLockedIcon,Postfix,game,character,Getter 属性访问器; 模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4075,CharacterIconResultPatch,attribute,CharacterModel,Icon,Postfix,game,character,Getter 属性访问器; 模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4083,CharacterIconTextureResultPatch,attribute,CharacterModel,IconTexture,Postfix,game,character,Getter 属性访问器; 模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4095,CharacterIconOutlineTextureResultPatch,attribute,CharacterModel,IconOutlineTexture,Postfix,game,character,Getter 属性访问器; 模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4107,CharacterMapMarkerResultPatch,attribute,CharacterModel,MapMarker,Postfix,game,character,Getter 属性访问器; 模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4115,MultiplayerPlayerStateIconScopePatch,attribute,NMultiplayerPlayerState,_Ready,Prefix+Postfix,game,multiplayer,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4137,RemoteLobbyPlayerIconScopePatch,attribute,NRemoteLobbyPlayer,_Ready,Prefix+Postfix,game,multiplayer,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4158,RemoteLobbyPlayerVisualRefreshScopePatch,attribute,NRemoteLobbyPlayer,RefreshVisuals,Prefix+Postfix,game,multiplayer,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4173,MultiplayerVoteIconRefreshPatch,attribute,NMultiplayerVoteContainer,RefreshPlayerVotes,Postfix,game,multiplayer,模块判定: 目标类型
+STS2SkinChanger/Ui/ContextualSkinControls.cs,4180,SkinPopupBackgroundMutePatch,attribute,NMuteInBackgroundHandler,_Notification,Prefix,game,background,模块判定: 目标类型
+STS2SkinChanger/Ui/CreatureIntentDepth.cs,150,CreatureIntentDepthPatch,attribute,NCreature,UpdateIntent,Postfix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/DecimillipedeBestiarySupport.cs,15,DecimillipedeBestiarySetupCleanupPatch,attribute,NBestiaryLayoutDecimillipede,Setup,Prefix,game,monster,模块判定: 文件名
+STS2SkinChanger/Ui/EventCompendiumPreview.cs,282,EventPreviewLifecyclePatch,attribute,NEventLayout,_EnterTree,Prefix,game,event,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/EventCompendiumPreview.cs,282,EventPreviewLifecyclePatch,attribute,NEventLayout,_ExitTree,Prefix,game,event,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/EventCompendiumPreview.cs,282,EventPreviewLifecyclePatch,attribute,NEventOptionButton,_Ready,Prefix,game,event,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/EventCompendiumPreview.cs,282,EventPreviewLifecyclePatch,attribute,NEventOptionButton,OnRelease,Prefix,game,event,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/LoadOrderWarning.cs,403,LoadOrderWarningModalReadyPatch,attribute,NModalContainer,_Ready,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/LoadOrderWarning.cs,409,MainMenuLoadOrderWarningPatch,attribute,NMainMenu,_Ready,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/LoadOrderWarning.cs,415,LoadOrderWarningModalClosedPatch,attribute,NModalContainer,Clear,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/ManagedModListNamePatch.cs,8,ManagedModListNamePatch,attribute,NModMenuRow,_Ready,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,1797,MerchantRoomPrewarmPatch,attribute,NMapScreen,Open,Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,1814,MerchantRoomCreateAppearancePatch,attribute,NMerchantRoom,_Ready,Prefix+Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,1888,MerchantRoomPlayerAppearancePatch,attribute,NMerchantRoom,_Ready,Prefix+Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,1947,MerchantRoomPreviewEnterTreePatch,attribute,NMerchantRoom,_EnterTree,Prefix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,1956,MerchantRoomPreviewExitTreePatch,attribute,NMerchantRoom,_ExitTree,Prefix+Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,1975,FakeMerchantAppearancePatch,attribute,NFakeMerchant,_Ready,Prefix+Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,2022,FakeMerchantPreviewEnterTreePatch,attribute,NFakeMerchant,_EnterTree,Prefix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,2031,FakeMerchantPreviewExitTreePatch,attribute,NFakeMerchant,_ExitTree,Prefix+Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,2050,RestSitePlayerAppearancePatch,attribute,NRestSiteRoom,_Ready,Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,2062,MerchantButtonProviderReadyBridgePatch,attribute,NMerchantButton,_Ready,Prefix+Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,2082,MerchantInventoryProviderReadyBridgePatch,attribute,NMerchantInventory,_Ready,Prefix+Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,2096,MerchantHandProviderReadyBridgePatch,attribute,NMerchantHand,_Ready,Prefix+Postfix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,2115,MerchantPreviewPurchaseBlockPatch,attribute,NMerchantSlot,OnSelected,Prefix,game,merchant,模块判定: 文件名
+STS2SkinChanger/Ui/ModThemeEditor.cs,392,ModThemeEditorReadyPatch,attribute,NMainMenu,_Ready,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/MonsterSkinPriorityControls.cs,811,BestiaryInitialSkinNamePatch,attribute,NBestiary,OnSubmenuOpened,Postfix,game,monster,模块判定: 文件名
+STS2SkinChanger/Ui/PauseMenuEntryToggles.cs,309,PauseMenuEntryTogglesPatch,attribute,NPauseMenu,_Ready,Postfix,game,core,TargetMethod(s) 列出; 模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/PauseMenuEntryToggles.cs,309,PauseMenuEntryTogglesPatch,attribute,NPauseMenu,OnSubmenuOpened,Postfix,game,core,TargetMethod(s) 列出; 模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/ProviderVariantPathPatch.cs,12,ProviderMerchantVariantPathPatch,attribute,CharacterModel,get_MerchantAnimPath,Prefix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/ProviderVariantPathPatch.cs,25,ProviderRestSiteVariantPathPatch,attribute,CharacterModel,get_RestSiteAnimPath,Prefix,game,character,模块判定: 目标类型
+STS2SkinChanger/Ui/RelicSkinResources.cs,42,RelicIconSkinPatch,attribute,RelicModel,Icon,Postfix,game,card,Getter 属性访问器; 模块判定: 文件名
+STS2SkinChanger/Ui/RelicSkinResources.cs,50,RelicIconOutlineSkinPatch,attribute,RelicModel,IconOutline,Postfix,game,card,Getter 属性访问器; 模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardArtView.cs,289,StatefulCardTreeExitPatch,attribute,NCard,_ExitTree,Prefix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardCosmeticPatches.cs,17,StatefulCardTooltipPatch,attribute,CardModel,HoverTips,Postfix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardCosmeticPatches.cs,17,StatefulCardTooltipPatch,attribute,CardModel,ExtraHoverTips,Postfix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardCosmeticPatches.cs,40,StatefulRewardGlowPatch,attribute,NCard,ActivateRewardScreenGlow,Prefix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardCosmeticPatches.cs,50,StatefulInfectionOverlayPatch,attribute,CardModel,CreateOverlay,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardCosmeticPatches.cs,69,StatefulCharacterSceneExitPatch,attribute,NCharacterSelectScreen,BeginRun,Prefix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardCosmeticPatches.cs,84,StatefulCardPlayCosmeticPatch,attribute,Neurosurge,OnPlay,Prefix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardCosmeticPatches.cs,84,StatefulCardPlayCosmeticPatch,attribute,Clash,OnPlay,Prefix,game,card,TargetMethod(s) 列出; 模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardCosmeticPatches.cs,114,StatefulDamageCosmeticPatch,attribute,AbstractModel,AfterDamageGiven,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCardCosmeticPatches.cs,136,StatefulSideTurnCosmeticPatch,attribute,AbstractModel,AfterSideTurnStart,Postfix,game,card,模块判定: 文件名
+STS2SkinChanger/Ui/StatefulCombatEffects.cs,139,StatefulExhaustInitializePatch,attribute,NExhaustPileButton,Initialize,Postfix,game,core,模块判定: 游戏基础设施（框架/启动/存档类，非具体功能）
+STS2SkinChanger/Ui/StatefulCombatEffects.cs,149,StatefulExhaustHidePatch,attribute,NCombatCardPile,AnimOut,Prefix,game,card,模块判定: 目标类型
+STS2SkinChanger/Core/CharSelectTakeoverSuppressor.cs,91,(手动),manual,CharSelectTakeoverSuppressor,,Prefix+Postfix,self,core,所在方法 Install；模块判定: Core 目录
+STS2SkinChanger/Core/CharSelectTakeoverSuppressor.cs,110,(手动),manual,CharSelectTakeoverSuppressor,,Postfix,self,core,所在方法 Install；模块判定: Core 目录
+STS2SkinChanger/Core/CreatureVisualParentBridge.cs,39,(手动),manual,CreatureVisualParentBridge,,Transpiler,self,character,所在方法 Register；模块判定: 目标类型
+STS2SkinChanger/Core/CustomSkeletonLoaderCompat.cs,81,(手动),manual,CustomSkeletonLoaderCompat,,Prefix,self,compat:CustomSkeletonLoader,所在方法 TryInstall；模块判定: 兼容层文件
+STS2SkinChanger/Core/FrameworkCardVisualGuard.cs,42,(手动),manual,FrameworkCardVisualGuard,,Prefix,self,card,所在方法 EnsureInstalled；模块判定: 文件名
+STS2SkinChanger/Core/FrameworkNativeUiPatch.cs,14,(手动),manual,FrameworkNativeUiPatch,,Postfix+Transpiler,self,core,所在方法 Install；模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkNativeUiPatch.cs,20,(手动),manual,FrameworkNativeUiPatch,,Prefix,self,core,所在方法 Install；模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkRegistryCooperation.cs,63,(手动),manual,FrameworkRegistryCooperation,,Prefix+Postfix,self,core,所在方法 MissingMethodException；模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkRegistryCooperation.cs,67,(手动),manual,FrameworkRegistryCooperation,,Prefix,self,core,所在方法 MissingMethodException；模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkRegistryCooperation.cs,69,(手动),manual,FrameworkRegistryCooperation,,Prefix,self,core,所在方法 MissingMethodException；模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkRegistryCooperation.cs,71,(手动),manual,FrameworkRegistryCooperation,,Prefix,self,core,所在方法 MissingMethodException；模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkRegistryCooperation.cs,73,(手动),manual,FrameworkRegistryCooperation,,Postfix,self,core,所在方法 MissingMethodException；模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkRegistrySession.cs,169,(手动),manual,(运行时解析),,Prefix,unknown,core,所在方法 MissingMethodException；模块判定: Core 目录
+STS2SkinChanger/Core/FrameworkRegistrySession.cs,170,(手动),manual,FrameworkRegistrySession,,Finalizer,self,core,所在方法 MissingMethodException；模块判定: Core 目录
+STS2SkinChanger/Core/ManagedCharacterAssetRegistrationGuard.cs,101,(手动),manual,(运行时解析),,Prefix,unknown,character,所在方法 EnsureFrameworkPatchesInstalled；模块判定: 文件名
+STS2SkinChanger/Core/ManagedMerchantSettingsBridge.cs,38,(手动),manual,ManagedMerchantSettingsBridge,,Postfix,self,merchant,所在方法 Session；模块判定: 文件名
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,466,(手动),manual,(运行时解析),,Prefix,unknown,core,所在方法 EnsureScopedMonsterSelectionRouter；模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,478,(手动),manual,(运行时解析),,Postfix,unknown,core,所在方法 EnsureScopedMonsterSelectionRouter；模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,588,(手动),manual,(运行时解析),,Prefix,unknown,core,所在方法 EnsureDirectCharacterSkinPathRouter；模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,3325,(手动),manual,(运行时解析),,Prefix,unknown,core,所在方法 EnsureRunEnvironmentCallbackGuards；模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,3506,(批量安装),manual,(全部 [HarmonyPatch] 类),,,self,core,批量安装入口，所在方法 PatchAllTolerant
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,3541,(手动),manual,(运行时解析),,Prefix,unknown,core,所在方法 PatchProviderCallbacks；模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,3542,(手动),manual,(运行时解析),,Postfix,unknown,core,所在方法 PatchProviderCallbacks；模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,3543,(手动),manual,(运行时解析),,Transpiler,unknown,core,所在方法 PatchProviderCallbacks；模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSkinModLoader.cs,3544,(手动),manual,(运行时解析),,Finalizer,unknown,core,所在方法 PatchProviderCallbacks；模块判定: Core 目录
+STS2SkinChanger/Core/ManagedSlotVisibilityBridge.cs,43,(手动),manual,ManagedSlotVisibilityBridge,,Postfix,self,core,所在方法 BindPreview；模块判定: Core 目录
+STS2SkinChanger/Core/ManualCharacterVariantBridge.cs,64,(手动),manual,ManualCharacterVariantBridge,,Postfix,self,character,所在方法 BindScreen；模块判定: 文件名
+STS2SkinChanger/Core/OstyDefectImpostorCompat.cs,65,(手动),manual,OstyDefectImpostorCompat,,Postfix,self,compat:OstyDefectImpostor,所在方法 Install；模块判定: 兼容层文件
+STS2SkinChanger/Core/PengoTarotFontCompat.cs,81,(手动),manual,PengoTarotFontCompat,,Postfix,self,compat:PengoTarotFont,所在方法 TryInstall；模块判定: 兼容层文件
+STS2SkinChanger/Core/ProviderMenuGateCompat.cs,96,(手动),manual,ProviderMenuGateCompat,,Postfix,self,core,所在方法 PatchGate；模块判定: Core 目录
+STS2SkinChanger/Core/ProviderMenuGateCompat.cs,143,(手动),manual,ProviderMenuGateCompat,,Prefix,self,core,所在方法 PatchOwnSelectionEntryPoints；模块判定: Core 目录
+STS2SkinChanger/Core/ProviderMenuGateCompat.cs,158,(手动),manual,ProviderMenuGateCompat,,Prefix,self,core,所在方法 PatchOwnSelectionEntryPoints；模块判定: Core 目录
+STS2SkinChanger/Core/ScopedSkinBehavior.cs,67,(手动),manual,ScopedSkinBehavior,,Prefix+Postfix+Finalizer,self,core,所在方法 Install；模块判定: Core 目录
+STS2SkinChanger/Core/StatefulCardArtRuntime.cs,126,(手动),manual,StatefulCardArtRuntime,,Prefix,self,card,所在方法 InvalidOperationException；模块判定: 文件名
+STS2SkinChanger/Core/VariantHotkeyPoller.cs,337,(手动),manual,PackHotkeySuppression,,Prefix,self,core,所在方法 Suppress；模块判定: Core 目录
+STS2SkinChanger/Entry.cs,103,(批量安装),manual,(全部 [HarmonyPatch] 类),,,self,core,批量安装入口，所在方法 InstallPatchClasses
+STS2SkinChanger/Ui/EmperorCrabCompat/CombatCrabSkinPatch.cs,66,(手动),manual,CombatCrabSkinPatch,,Prefix+Postfix,self,compat:EmperorCrab,所在方法 Install；模块判定: 兼容层文件
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,89,(手动),manual,HalfHpCrabSkinPatch,,Prefix,self,compat:EmperorCrab,所在方法 InstallAnimationGuards；模块判定: 兼容层文件
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,96,(手动),manual,HalfHpCrabSkinPatch,,Prefix,self,compat:EmperorCrab,所在方法 InstallAnimationGuards；模块判定: 兼容层文件
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,103,(手动),manual,HalfHpCrabSkinPatch,,Prefix,self,compat:EmperorCrab,所在方法 InstallAnimationGuards；模块判定: 兼容层文件
+STS2SkinChanger/Ui/EmperorCrabCompat/HalfHpCrabSkinPatch.cs,216,(手动),manual,HalfHpCrabSkinPatch,,Prefix+Postfix,self,compat:EmperorCrab,所在方法 TryInstallHalfHpPrefix；模块判定: 兼容层文件
+STS2SkinChanger/Ui/EmperorCrabCompat/KaiserCrabSkinRefreshPatch.cs,73,(手动),manual,KaiserCrabSkinRefreshPatch,,Postfix,self,compat:EmperorCrab,所在方法 EnsureInstalled；模块判定: 兼容层文件
+STS2SkinChanger/Ui/EmperorCrabCompat/RitsuLibCardGuardPatch.cs,57,(手动),manual,RitsuLibCardGuardPatch,,Finalizer,self,compat:EmperorCrab,所在方法 Install；模块判定: 兼容层文件
+STS2SkinChanger/Ui/MerchantRuntimeAppearance.cs,1866,(手动),manual,MerchantRoomConcreteReadyPatch,,Postfix,self,merchant,所在方法 Install；模块判定: 文件名

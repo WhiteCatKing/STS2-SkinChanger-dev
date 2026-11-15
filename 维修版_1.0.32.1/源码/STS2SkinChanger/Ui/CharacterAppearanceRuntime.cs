@@ -1,0 +1,2721 @@
+using System.Reflection;
+using Godot;
+using HarmonyLib;
+using MegaCrit.Sts2.Core.Animation;
+using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Bindings.MegaSpine;
+using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Context;
+using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.HoverTips;
+using MegaCrit.Sts2.Core.Nodes.Orbs;
+using MegaCrit.Sts2.Core.Nodes.Relics;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Rooms;
+using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Monsters;
+using MegaCrit.sts2.Core.Nodes.TopBar;
+using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Core;
+using STS2SkinChanger.Core.Safety;
+
+namespace STS2SkinChanger.Ui;
+
+internal enum AppearanceSelectionRequestState
+{
+    Applied,
+    Queued,
+    Failed
+}
+
+internal sealed record AppearanceSelectionRequestResult(
+    AppearanceSelectionRequestState State,
+    string? Error = null);
+
+internal sealed record CreatureAppearanceBinding(
+    SkinGroup Group,
+    string TransformKey,
+    bool UsesMonsterScale,
+    bool CanSelectSkin,
+    bool SupportsIntent,
+    bool SupportsCombatControls);
+
+/// <summary>
+/// Owns live, in-run character visual replacement. A selection is never changed while a game action is
+/// executing: replacing a Spine controller halfway through a card action can strand the action's animation task.
+/// </summary>
+internal static class CharacterAppearanceRuntime
+{
+    internal const string TransformWrapperName = "SkinChangerCharacterTransform";
+    internal const string HealthDisplayWrapperName = "SkinChangerHealthDisplayTransform";
+    internal const string IntentDisplayWrapperName = "SkinChangerIntentDisplayTransform";
+    private const string HealthBoundsProxyName = "SkinChangerHealthBoundsProxy";
+    private const string BaseVisualScaleMeta = "skin_changer_character_base_visual_scale";
+    private const string BaseDefaultScaleMeta = "skin_changer_character_base_default_scale";
+    private const string CurrentScaleMeta = "skin_changer_character_current_scale";
+    private const string CurrentOffsetXMeta = "skin_changer_character_current_offset_x";
+    private const string CurrentOffsetYMeta = "skin_changer_character_current_offset_y";
+    private const string CurrentHealthScaleMeta = "skin_changer_health_current_scale";
+    private const string CurrentHealthOffsetXMeta = "skin_changer_health_current_offset_x";
+    private const string CurrentHealthOffsetYMeta = "skin_changer_health_current_offset_y";
+    private const string CurrentHealthFollowScaleMeta = "skin_changer_health_follow_scale";
+    private const string CurrentHealthFollowMovementMeta = "skin_changer_health_follow_movement";
+    private const string CurrentIntentScaleMeta = "skin_changer_intent_current_scale";
+    private const string CurrentIntentOffsetXMeta = "skin_changer_intent_current_offset_x";
+    private const string CurrentIntentOffsetYMeta = "skin_changer_intent_current_offset_y";
+    private const string CurrentIntentFollowScaleMeta = "skin_changer_intent_follow_scale";
+    private const string CurrentIntentFollowMovementMeta = "skin_changer_intent_follow_movement";
+    private const string CurrentReticleScaleMeta = "skin_changer_reticle_current_scale";
+    private const string CurrentReticleOffsetXMeta = "skin_changer_reticle_current_offset_x";
+    private const string CurrentReticleOffsetYMeta = "skin_changer_reticle_current_offset_y";
+    private const string CurrentReticleFollowScaleMeta = "skin_changer_reticle_follow_scale";
+    private const string CurrentReticleFollowMovementMeta = "skin_changer_reticle_follow_movement";
+    private const string BossMapRefreshGenerationMeta = "skin_changer_boss_map_refresh_generation";
+
+    private static readonly FieldInfo? VisualsField =
+        AccessTools.Field(typeof(NCreature), "<Visuals>k__BackingField");
+    private static readonly FieldInfo? CombatBackgroundField =
+        AccessTools.Field(typeof(NCombatRoom), "<Background>k__BackingField");
+    private static readonly FieldInfo? SpineAnimatorField =
+        AccessTools.Field(typeof(NCreature), "_spineAnimator");
+    private static readonly FieldInfo? SelectionReticleField =
+        AccessTools.Field(typeof(NCreature), "_selectionReticle");
+    private static readonly FieldInfo? SelectionReticleTweenField =
+        AccessTools.Field(typeof(NSelectionReticle), "_currentTween");
+    private static readonly FieldInfo? StateDisplayField =
+        AccessTools.Field(typeof(NCreature), "_stateDisplay");
+    private static readonly FieldInfo? TempScaleField =
+        AccessTools.Field(typeof(NCreature), "_tempScale");
+    private static readonly FieldInfo? RunStateField =
+        AccessTools.Field(typeof(NRun), "_state");
+    private static readonly FieldInfo? RunRoomContainerField =
+        AccessTools.Field(typeof(NRun), "_roomContainer");
+    private static readonly FieldInfo? MapMarkerField =
+        AccessTools.Field(typeof(NMapScreen), "_marker");
+    private static readonly FieldInfo? BossMapUsesSpineField =
+        AccessTools.Field(typeof(NBossMapPoint), "_usesSpine");
+    private static readonly FieldInfo? BossMapAnimatorField =
+        AccessTools.Field(typeof(NBossMapPoint), "_animController");
+    private static readonly FieldInfo? BossMapMaterialField =
+        AccessTools.Field(typeof(NBossMapPoint), "_material");
+    private static readonly FieldInfo? BossMapPlaceholderImageField =
+        AccessTools.Field(typeof(NBossMapPoint), "_placeholderImage");
+    private static readonly FieldInfo? BossMapPlaceholderOutlineField =
+        AccessTools.Field(typeof(NBossMapPoint), "_placeholderOutline");
+    private static readonly MethodInfo? BossMapRefreshColorMethod =
+        AccessTools.Method(typeof(NBossMapPoint), "RefreshColorInstantly");
+    private static readonly MethodInfo? TopBarRoomIconRefreshMethod =
+        AccessTools.Method(typeof(NTopBarRoomIcon), "UpdateIcon");
+    private static readonly FieldInfo? OrbNodesField =
+        AccessTools.Field(typeof(NOrbManager), "_orbs");
+    private static readonly FieldInfo? EnergyCounterField =
+        AccessTools.Field(typeof(NCombatUi), "_energyCounter");
+    private static readonly FieldInfo? StarCounterField =
+        AccessTools.Field(typeof(NCombatUi), "_starCounter");
+    private static readonly MethodInfo? ConnectSpineAnimatorSignalsMethod =
+        AccessTools.Method(typeof(NCreature), "ConnectSpineAnimatorSignals");
+    private static readonly MethodInfo? UpdateBoundsMethod =
+        AccessTools.Method(typeof(NCreature), "UpdateBounds", [typeof(Node)]);
+    private static readonly MethodInfo? UpdatePhobiaModeMethod =
+        AccessTools.Method(typeof(NCreature), "UpdatePhobiaMode");
+    private static readonly MethodInfo? SetOrbManagerPositionMethod =
+        AccessTools.Method(typeof(NCreature), "SetOrbManagerPosition");
+
+    private static PendingSelection? _pendingSelection;
+    private static PendingMonsterRefresh? _pendingMonsterRefresh;
+    private static WeakReference<NCombatRoom>? _playerLayoutRoom;
+    private static readonly HashSet<string> CombatRuntimeGroupIds =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> CombatRuntimeMonsterGroupIds =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> PersistentCombatRuntimeGroupIds =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static long _combatRuntimeScopeLease;
+    private static bool _combatRuntimeScopeActive;
+    private static float _playerLayoutScaling = 1f;
+    private static bool _fullyCenterPlayers;
+
+    internal static event Action<string, bool, string?>? QueuedSelectionFinished;
+
+    private static bool TryGetRunState(NRun? run, out IRunState runState)
+    {
+        runState = null!;
+        if (run is null ||
+            !GodotObject.IsInstanceValid(run) ||
+            RunStateField is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (RunStateField.GetValue(run) is not IRunState value)
+            {
+                return false;
+            }
+
+            runState = value;
+            return true;
+        }
+        catch (TargetException)
+        {
+            // NRun.Instance can be cleared while a deferred UI callback is executing.
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    internal static AppearanceSelectionRequestResult RequestSelection(string groupId, string optionId)
+    {
+        if (!CanApplySelectionNow())
+        {
+            _pendingSelection = new PendingSelection(groupId, optionId, Time.GetTicksMsec());
+            NRun.Instance?
+                .GetNodeOrNull<CharacterAppearanceRuntimeNode>("SkinChangerAppearanceRuntime")?
+                .Wake();
+            return new AppearanceSelectionRequestResult(AppearanceSelectionRequestState.Queued);
+        }
+
+        return ApplySelectionNow(groupId, optionId);
+    }
+
+    internal static string? GetRequestedOption(string groupId) =>
+        _pendingSelection is { } pending &&
+        pending.GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase)
+            ? pending.OptionId
+            : null;
+
+    internal static Player? GetLocalPlayer()
+    {
+        try
+        {
+            return TryGetRunState(NRun.Instance, out var runState)
+                ? LocalContext.GetMe(runState)
+                : null;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("读取当前玩家失败：" + exception.GetBaseException().Message);
+            return null;
+        }
+    }
+
+    internal static bool TryGetPlayerCharacter(ulong playerNetId, out CharacterModel character)
+    {
+        try
+        {
+            if (TryGetRunState(NRun.Instance, out var runState) &&
+                runState.Players.FirstOrDefault(player => player.NetId == playerNetId)
+                    is { } player)
+            {
+                character = player.Character;
+                return true;
+            }
+        }
+        catch
+        {
+            // The run state can be torn down while a UI node is being freed.
+        }
+
+        character = null!;
+        return false;
+    }
+
+    internal static bool PlayerMatchesCharacterSelection(
+        ulong playerNetId,
+        string characterId,
+        string groupId)
+    {
+        try
+        {
+            if (!TryGetRunState(NRun.Instance, out var runState))
+            {
+                return false;
+            }
+
+            var player = runState.Players.FirstOrDefault(candidate =>
+                candidate.NetId == playerNetId);
+            var group = player == null
+                ? null
+                : ContextualSkinControls.FindGroup(
+                    player.Character.Id.Entry,
+                    player.Character.GetType().Name);
+            return player != null &&
+                   player.Character.Id.Entry.Equals(
+                       characterId,
+                       StringComparison.OrdinalIgnoreCase) &&
+                   group?.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase) == true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal static void FocusRuntimeProviderBehaviorsOnRunCharacters(NRun? run = null)
+        => FocusRuntimeProviderBehaviorsOnRunContext(reason: "对局角色", run: run);
+
+    internal static long FocusRuntimeProviderBehaviorsOnRunContext(
+        IEnumerable<string>? additionalGroupIds = null,
+        string reason = "对局",
+        long? expectedScopeLease = null,
+        NRun? run = null,
+        bool refreshCurrentRoom = false)
+    {
+        try
+        {
+            var groupIds = RuntimeProviderScopePolicy.MergeVisibleGroups(
+                    additionalGroupIds,
+                    CombatRuntimeGroupIds)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var activeRun = run ?? NRun.Instance;
+            if (TryGetRunState(activeRun, out var runState))
+            {
+                groupIds.UnionWith(runState.Players
+                    .Select(player => ContextualSkinControls.FindGroup(
+                        player.Character.Id.Entry,
+                        player.Character.GetType().Name)?.Id)
+                    .Where(groupId => groupId != null)
+                    .Cast<string>());
+                var actMonsterGroupIds = ResolveMonsterGroupIds(runState.Act.AllMonsters);
+                groupIds.UnionWith(ResolveCurrentBossGroupIds(runState));
+                var activeCombatMonsterGroupIds = ResolveActiveCombatMonsterGroupIds();
+                var runEnvironmentProviders = SkinService.GetMonsterRunEnvironmentProviders(
+                    "act:" + runState.Act.Id.Entry.ToLowerInvariant(),
+                    actMonsterGroupIds,
+                    _combatRuntimeScopeActive
+                        ? activeCombatMonsterGroupIds
+                        : null);
+
+                if (expectedScopeLease.HasValue)
+                {
+                    return TrackCurrentRoomScopeLease(SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
+                        expectedScopeLease.Value,
+                        groupIds,
+                        runEnvironmentProviders,
+                        reason,
+                        out var scopeLease)
+                        ? scopeLease
+                        : 0, refreshCurrentRoom, activeRun);
+                }
+
+                return TrackCurrentRoomScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                    groupIds,
+                    runEnvironmentProviders,
+                    reason), refreshCurrentRoom, activeRun);
+            }
+
+            if (expectedScopeLease.HasValue)
+            {
+                return TrackCurrentRoomScopeLease(SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
+                    expectedScopeLease.Value,
+                    groupIds,
+                    runEnvironmentProviderIds: [],
+                    reason,
+                    out var scopeLease)
+                    ? scopeLease
+                    : 0, refreshCurrentRoom, activeRun);
+            }
+
+            return TrackCurrentRoomScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                groupIds,
+                runEnvironmentProviderIds: [],
+                reason), refreshCurrentRoom, activeRun);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("收窄当前场景皮肤行为失败：" + exception);
+            return 0;
+        }
+    }
+
+    private static long TrackCurrentRoomScopeLease(long scopeLease, bool refreshCurrentRoom, NRun? run)
+    {
+        // New rooms can claim their provider scope before the outgoing room exits. Only an
+        // explicit hot reload renews the current room's cleanup lease; new-room creation must
+        // never transfer ownership back to an outgoing combat or merchant that is still alive.
+        if (scopeLease != 0 && refreshCurrentRoom)
+        {
+            if (_combatRuntimeScopeActive)
+            {
+                _combatRuntimeScopeLease = scopeLease;
+            }
+
+            if (run != null && RunRoomContainerField?.GetValue(run) is NSceneContainer container)
+            {
+                RoomRuntimeScopeOwnership.RefreshTree(container.CurrentScene, scopeLease);
+            }
+        }
+
+        return scopeLease;
+    }
+
+    private static HashSet<string> ResolveMonsterGroupIds(IEnumerable<MonsterModel> monsters) =>
+        monsters
+            .Select(monster => ContextualSkinControls.FindGroup(
+                monster.Id.Entry,
+                monster.GetType().Name)?.Id)
+            .Where(groupId => groupId != null)
+            .Cast<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static HashSet<string> ResolveCurrentBossGroupIds(IRunState runState)
+    {
+        var encounters = new[]
+        {
+            runState.Act.BossEncounter,
+            runState.Act.SecondBossEncounter
+        };
+        return ResolveMonsterGroupIds(encounters
+            .Where(encounter => encounter != null)
+            .SelectMany(encounter => encounter!.AllPossibleMonsters));
+    }
+
+    private static HashSet<string> ResolveActiveCombatMonsterGroupIds()
+    {
+        if (TryGetActiveCombatRoom(NRun.Instance) is not { } room || !room.IsInsideTree())
+        {
+            return CombatRuntimeMonsterGroupIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return room.CreatureNodes
+            .Where(creature => creature.Entity.Monster != null)
+            .Select(creature => ContextualSkinControls.FindGroup(
+                creature.Entity.ModelId.Entry,
+                creature.Entity.Monster!.GetType().Name)?.Id)
+            .Where(groupId => groupId != null)
+            .Cast<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static NCombatRoom? TryGetActiveCombatRoom(NRun? run)
+    {
+        // NRun exists before _Ready assigns its room container. Its native CombatRoom getter
+        // dereferences that container, so probing NCombatRoom.Instance during run setup throws.
+        return run != null && RunRoomContainerField?.GetValue(run) != null
+            ? run.CombatRoom
+            : null;
+    }
+
+    internal static bool TryGetBossMapAppearance(
+        NBossMapPoint bossPoint,
+        out SkinGroup group,
+        out string title)
+    {
+        group = null!;
+        title = string.Empty;
+        try
+        {
+            if (!TryGetRunState(NRun.Instance, out var runState))
+            {
+                return false;
+            }
+
+            var encounter = bossPoint.Point == runState.Map.SecondBossMapPoint
+                ? runState.Act.SecondBossEncounter
+                : runState.Act.BossEncounter;
+            if (encounter == null)
+            {
+                return false;
+            }
+
+            group = encounter.AllPossibleMonsters
+                .Select(monster => ContextualSkinControls.FindGroup(
+                    monster.Id.Entry,
+                    monster.GetType().Name))
+                .FirstOrDefault(candidate => candidate is { Options.Count: > 0 })!;
+            if (group == null)
+            {
+                return false;
+            }
+
+            title = encounter.Title.GetFormattedText();
+            return true;
+        }
+        catch
+        {
+            group = null!;
+            title = string.Empty;
+            return false;
+        }
+    }
+
+    internal static void FocusRuntimeProviderBehaviorsOnCombatRoom(ICombatRoomVisuals visuals)
+    {
+        _combatRuntimeScopeActive = true;
+        CombatRuntimeGroupIds.Clear();
+        CombatRuntimeMonsterGroupIds.Clear();
+        PersistentCombatRuntimeGroupIds.Clear();
+        foreach (var creature in visuals.Allies.Concat(visuals.Enemies))
+        {
+            var modelType = creature.Monster?.GetType().Name ??
+                            creature.Player?.Character.GetType().Name;
+            var group = ContextualSkinControls.FindGroup(creature.ModelId.Entry, modelType);
+            if (group != null)
+            {
+                CombatRuntimeGroupIds.Add(group.Id);
+                if (creature.Monster != null)
+                {
+                    CombatRuntimeMonsterGroupIds.Add(group.Id);
+                }
+                if (creature.Player != null)
+                {
+                    PersistentCombatRuntimeGroupIds.Add(group.Id);
+                }
+            }
+        }
+
+        _combatRuntimeScopeLease = FocusRuntimeProviderBehaviorsOnRunContext(
+            CombatRuntimeGroupIds,
+            "战斗场景");
+    }
+
+    internal static void AddVisibleCombatRuntimeGroup(string groupId)
+    {
+        if (NRun.Instance == null)
+        {
+            return;
+        }
+
+        var added = CombatRuntimeGroupIds.Add(groupId);
+        CombatRuntimeMonsterGroupIds.Add(groupId);
+        if (!added)
+        {
+            return;
+        }
+
+        _combatRuntimeScopeLease = FocusRuntimeProviderBehaviorsOnRunContext(
+            CombatRuntimeGroupIds,
+            "战斗召唤");
+    }
+
+    internal static void ClearCombatRuntimeGroups()
+    {
+        var combatScopeLease = _combatRuntimeScopeLease;
+        _combatRuntimeScopeLease = 0;
+        _combatRuntimeScopeActive = false;
+        var transientGroups = RuntimeResourceRetentionPolicy.SelectTransientCombatGroups(
+            CombatRuntimeGroupIds,
+            PersistentCombatRuntimeGroupIds);
+        CombatRuntimeGroupIds.Clear();
+        CombatRuntimeMonsterGroupIds.Clear();
+        PersistentCombatRuntimeGroupIds.Clear();
+        SkinService.ReleaseTransientRuntimeResources(transientGroups);
+        if (combatScopeLease != 0)
+        {
+            FocusRuntimeProviderBehaviorsOnRunContext(
+                reason: "对局角色",
+                expectedScopeLease: combatScopeLease);
+        }
+    }
+
+    internal static void RefreshRunMonsterSelection(
+        IEnumerable<string> affectedGroupIds,
+        string reason)
+    {
+        if (NRun.Instance == null)
+        {
+            return;
+        }
+
+        var affected = affectedGroupIds
+            .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (affected.Count == 0)
+        {
+            return;
+        }
+
+        if (!CanApplySelectionNow())
+        {
+            if (_pendingMonsterRefresh == null)
+            {
+                _pendingMonsterRefresh = new PendingMonsterRefresh(
+                    affected,
+                    reason,
+                    Time.GetTicksMsec());
+            }
+            else
+            {
+                _pendingMonsterRefresh.GroupIds.UnionWith(affected);
+                _pendingMonsterRefresh = _pendingMonsterRefresh with { Reason = reason };
+            }
+
+            NRun.Instance?
+                .GetNodeOrNull<CharacterAppearanceRuntimeNode>("SkinChangerAppearanceRuntime")?
+                .Wake();
+            return;
+        }
+
+        _ = ApplyRunAppearanceRefresh(affected, reason);
+    }
+
+    internal static NCreature? GetCurrentCreature(Player? player)
+    {
+        if (player == null)
+        {
+            return null;
+        }
+
+        return NCombatRoom.Instance?.GetCreatureNode(player.Creature);
+    }
+
+    internal static bool ProcessPendingSelection()
+    {
+        if (_pendingSelection == null && _pendingMonsterRefresh == null)
+        {
+            return false;
+        }
+
+        // A queued request must never outlive the moment that queued it. Combat can keep the
+        // executor busy (or leave a stale death-animation task) for the rest of the fight, which
+        // used to keep the request — and the greyed-out picker that comes with it — forever.
+        // Once the wait is implausibly long, apply anyway: a one-frame resource swap is far
+        // cheaper than a selection that silently never happens.
+        var forceApply = PendingWaitedTooLong();
+        if (!forceApply && !CanApplySelectionNow())
+        {
+            return true;
+        }
+
+        if (_pendingSelection is { } pendingSelection)
+        {
+            _pendingSelection = null;
+            var result = ApplySelectionNow(pendingSelection.GroupId, pendingSelection.OptionId);
+            if (forceApply)
+            {
+                ModLog.Warn(
+                    $"外观选择排队过久，已强制应用：{pendingSelection.GroupId}/{pendingSelection.OptionId}，" +
+                    $"结果={result.State}。");
+            }
+
+            QueuedSelectionFinished?.Invoke(
+                pendingSelection.GroupId,
+                result.State == AppearanceSelectionRequestState.Applied,
+                result.Error);
+        }
+
+        if (_pendingMonsterRefresh is { } pendingMonsterRefresh)
+        {
+            _pendingMonsterRefresh = null;
+            _ = ApplyRunAppearanceRefresh(
+                pendingMonsterRefresh.GroupIds,
+                pendingMonsterRefresh.Reason);
+        }
+
+        return _pendingSelection != null || _pendingMonsterRefresh != null;
+    }
+
+    /// <summary>How long a queued appearance change may wait before it is applied regardless.</summary>
+    private const ulong PendingSelectionTimeoutMsec = 2500;
+
+    private static bool PendingWaitedTooLong()
+    {
+        var now = Time.GetTicksMsec();
+        if (_pendingSelection is { } pending &&
+            now - pending.StartedMsec >= PendingSelectionTimeoutMsec)
+        {
+            return true;
+        }
+
+        return _pendingMonsterRefresh is { } refresh &&
+               now - refresh.StartedMsec >= PendingSelectionTimeoutMsec;
+    }
+
+    internal static void ClearPendingSelection()
+    {
+        _pendingSelection = null;
+        _pendingMonsterRefresh = null;
+    }
+
+    internal static bool CanApplySelectionImmediately() => CanApplySelectionNow();
+
+    internal static void OnCreatureReady(NCreature creature)
+    {
+        if (!GodotObject.IsInstanceValid(creature.Visuals))
+        {
+            return;
+        }
+
+        CaptureVisualBaseline(creature.Visuals);
+        if (!TryGetCreatureAppearance(creature, out _))
+        {
+            return;
+        }
+
+        EnsureTransformWrapper(creature);
+        EnsureHealthDisplayWrapper(creature);
+        if (SupportsIntentAppearance(creature))
+        {
+            EnsureIntentDisplayWrapper(creature);
+        }
+        ApplyStoredTransform(creature);
+    }
+
+    internal static void ApplyStoredTransform(NCreature creature)
+    {
+        if (!TryGetCreatureAppearance(creature, out var binding))
+        {
+            return;
+        }
+
+        ApplyPreviewTransform(creature, GetCreatureCombatTransform(creature, binding));
+    }
+
+    internal static CharacterCombatTransform GetCreatureCombatTransform(NCreature creature)
+    {
+        return TryGetCreatureAppearance(creature, out var binding)
+            ? GetCreatureCombatTransform(creature, binding)
+            : new CharacterCombatTransform();
+    }
+
+    internal static CharacterCombatTransform SetCreatureCombatTransform(
+        NCreature creature,
+        CharacterCombatTransform value,
+        bool save = true)
+    {
+        if (!TryGetCreatureAppearance(creature, out var binding))
+        {
+            return new CharacterCombatTransform();
+        }
+
+        if (!MultiplayerSkinSync.CanEditTransformForCreature(creature.Entity))
+        {
+            return GetCreatureCombatTransform(creature, binding);
+        }
+
+        var optionId = MultiplayerSkinSync.GetSelectionForCreature(
+            creature.Entity,
+            binding.Group.Id);
+        if (MultiplayerSkinSync.UsesLocalFallbackControls(creature.Entity))
+        {
+            return MultiplayerSkinSync.SetLocalFallbackTransform(
+                creature.Entity,
+                binding.TransformKey,
+                value);
+        }
+        if (!binding.UsesMonsterScale)
+        {
+            var characterTransform = SkinService.SetCharacterCombatTransform(
+                binding.TransformKey,
+                optionId,
+                value,
+                save);
+            // Use the authoritative local-player lookup for the network advertisement.  The
+            // creature's owner link can briefly be null or carry a stale NetId while a combat
+            // node is being rebuilt; tying the broadcast to that transient link silently loses
+            // otherwise valid slider/drag edits.
+            MultiplayerSkinSync.OnLocalTransformChanged(creature.Entity, binding.Group.Id);
+            return characterTransform;
+        }
+
+        var monsterScale = SkinService.SetSelectedMonsterScale(
+            binding.Group.Id,
+            value.Scale,
+            save: false);
+        var normalized = SkinService.SetCharacterCombatTransform(
+            binding.TransformKey,
+            optionId,
+            value with { Scale = 1f },
+            save);
+        MultiplayerSkinSync.OnLocalTransformChanged(creature.Entity, binding.Group.Id);
+        return normalized with { Scale = monsterScale };
+    }
+
+    internal static void ApplyTransformToKey(string transformKey)
+    {
+        var room = NCombatRoom.Instance;
+        if (room == null)
+        {
+            return;
+        }
+
+        foreach (var creature in room.CreatureNodes.ToArray())
+        {
+            if (TryGetCreatureAppearance(creature, out var binding) &&
+                binding.TransformKey.Equals(transformKey, StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyStoredTransform(creature);
+            }
+        }
+    }
+
+    internal static void ApplyPreviewTransform(
+        NCreature creature,
+        CharacterCombatTransform value)
+    {
+        var wrapper = EnsureTransformWrapper(creature);
+        if (wrapper == null)
+        {
+            return;
+        }
+
+        SetCurrentTransform(wrapper, value);
+        wrapper.Position = new Vector2(value.OffsetX, value.OffsetY);
+        if (TryGetCreatureAppearance(creature, out var binding) && binding.UsesMonsterScale)
+        {
+            ContextualSkinControls.ApplyMonsterScalePreview(creature.Visuals, value.Scale);
+            wrapper.Scale = Vector2.One;
+        }
+        else
+        {
+            wrapper.Scale = Vector2.One * value.Scale;
+        }
+
+        if (AppearanceDiagnostics.Enabled)
+        {
+            AppearanceDiagnostics.Log(
+                "应用变换",
+                $"{AppearanceDiagnostics.Describe(creature)} 键={(TryGetCreatureAppearance(creature, out var b) ? b.TransformKey : "?")} " +
+                $"{AppearanceDiagnostics.Describe(value)} | wrapper=pos{wrapper.Position}/scale{wrapper.Scale} " +
+                $"visuals=scale{creature.Visuals.Scale} 父节点={wrapper.GetParent()?.Name} " +
+                $"visuals父={(creature.Visuals != null ? creature.Visuals.GetParent()?.Name.ToString() : "<null>")}",
+                120);
+        }
+
+        RefreshCreatureAnchors(creature);
+    }
+
+    internal static Node2D? GetTransformWrapper(NCreature? creature)
+    {
+        if (creature == null || !GodotObject.IsInstanceValid(creature))
+        {
+            return null;
+        }
+
+        return creature.GetNodeOrNull<Node2D>(TransformWrapperName);
+    }
+
+    internal static Node2D? GetHealthDisplayWrapper(NCreature? creature)
+    {
+        if (creature == null || !GodotObject.IsInstanceValid(creature))
+        {
+            return null;
+        }
+
+        return creature.GetNodeOrNull<Node2D>(HealthDisplayWrapperName);
+    }
+
+    internal static Node2D? GetIntentDisplayWrapper(NCreature? creature)
+    {
+        if (creature == null || !GodotObject.IsInstanceValid(creature))
+        {
+            return null;
+        }
+
+        return creature.GetNodeOrNull<Node2D>(IntentDisplayWrapperName);
+    }
+
+    internal static NSelectionReticle? GetSelectionReticle(NCreature? creature)
+    {
+        if (creature == null || !GodotObject.IsInstanceValid(creature))
+        {
+            return null;
+        }
+
+        return SelectionReticleField?.GetValue(creature) as NSelectionReticle;
+    }
+
+    internal static void StopSelectionReticleAnimation(NSelectionReticle? reticle)
+    {
+        if (reticle == null || !GodotObject.IsInstanceValid(reticle))
+        {
+            return;
+        }
+
+        if (SelectionReticleTweenField?.GetValue(reticle) is Tween tween &&
+            GodotObject.IsInstanceValid(tween))
+        {
+            tween.Kill();
+        }
+    }
+
+    internal static bool SupportsIntentAppearance(NCreature? creature) =>
+        creature != null &&
+        GodotObject.IsInstanceValid(creature) &&
+        TryGetCreatureAppearance(creature, out var binding) &&
+        binding.SupportsIntent;
+
+    internal static NCreatureStateDisplay? GetStateDisplay(NCreature? creature) =>
+        creature != null && GodotObject.IsInstanceValid(creature)
+            ? StateDisplayField?.GetValue(creature) as NCreatureStateDisplay
+            : null;
+
+    internal static Control? GetHealthBarBounds(NCreature? creature)
+    {
+        var stateDisplay = GetStateDisplay(creature);
+        if (stateDisplay == null || !GodotObject.IsInstanceValid(stateDisplay))
+        {
+            return null;
+        }
+
+        var healthBar = stateDisplay.GetNodeOrNull<NHealthBar>("HealthBar");
+        return healthBar != null && GodotObject.IsInstanceValid(healthBar.HpBarContainer)
+            ? healthBar.HpBarContainer
+            : null;
+    }
+
+    internal static Control? GetModelBounds(NCreature? creature)
+    {
+        if (creature == null ||
+            !GodotObject.IsInstanceValid(creature) ||
+            !GodotObject.IsInstanceValid(creature.Visuals))
+        {
+            return null;
+        }
+
+        return creature.Visuals.GetNodeOrNull<Control>("%Bounds");
+    }
+
+    internal static bool TryGetCreatureAppearance(
+        NCreature creature,
+        out CreatureAppearanceBinding binding)
+    {
+        binding = null!;
+        if (!GodotObject.IsInstanceValid(creature) || creature.Entity == null)
+        {
+            return false;
+        }
+
+        var modelId = creature.Entity.ModelId.Entry;
+        var modelTypeName = creature.Entity.Player?.Character.GetType().Name ??
+                            creature.Entity.Monster?.GetType().Name;
+        var directGroup = ContextualSkinControls.FindGroup(modelId, modelTypeName);
+        if (creature.Entity.PetOwner is { } owner && directGroup == null)
+        {
+            var ownerCharacter = owner.Character;
+            var ownerGroup = ContextualSkinControls.FindGroup(
+                ownerCharacter.Id.Entry,
+                ownerCharacter.GetType().Name);
+            if (ownerGroup != null)
+            {
+                binding = new CreatureAppearanceBinding(
+                    ownerGroup,
+                    $"{ownerGroup.Id}::companion::{modelId}",
+                    UsesMonsterScale: false,
+                    CanSelectSkin: false,
+                    SupportsIntent: false,
+                    SupportsCombatControls: true);
+                return true;
+            }
+        }
+
+        if (directGroup != null)
+        {
+            binding = CreateCreatureAppearanceBinding(
+                directGroup, creature.Entity.IsMonster, creature.Entity.PetOwner != null);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static CreatureAppearanceBinding CreateCreatureAppearanceBinding(
+        SkinGroup group, bool isMonster, bool isCompanion) => new(
+        group,
+        group.Id,
+        UsesMonsterScale: isMonster && !isCompanion,
+        CanSelectSkin: !isCompanion || SkinService.CanSelectCompanionSkin(group.Id),
+        SupportsIntent: isMonster && !isCompanion,
+        SupportsCombatControls: true);
+
+    private static CharacterCombatTransform GetCreatureCombatTransform(
+        NCreature creature,
+        CreatureAppearanceBinding binding)
+    {
+        if (MultiplayerSkinSync.TryGetSyncedTransform(
+                creature.Entity,
+                binding.TransformKey,
+                out var synced))
+        {
+            return synced;
+        }
+
+        // A teammate without a local record must not inherit the local player's numbers: sharing
+        // them moved the teammate's model/health bar exactly like this client's, which is why two
+        // players of the same character ended up with one of the bars pushed off screen.
+        if (MultiplayerSkinSync.UsesLocalFallbackControls(creature.Entity))
+        {
+            return new CharacterCombatTransform();
+        }
+
+        var optionId = MultiplayerSkinSync.GetSelectionForCreature(
+            creature.Entity,
+            binding.Group.Id);
+        var value = SkinService.GetCharacterCombatTransform(binding.TransformKey, optionId);
+        return binding.UsesMonsterScale
+            ? value with { Scale = SkinService.GetSelectedMonsterScale(binding.Group.Id) }
+            : value;
+    }
+
+    internal static void CorrectBoundsForVisualTransforms(NCreature creature, Node boundsContainer)
+    {
+        var wrapper = GetTransformWrapper(creature);
+        if (wrapper == null)
+        {
+            CorrectMonsterBoundsForModelOnlyScale(creature);
+            return;
+        }
+
+        try
+        {
+            var bounds = boundsContainer.GetNode<Control>("%Bounds");
+            var tempScale = TempScaleField?.GetValue(creature) is float value && !Mathf.IsZeroApprox(value)
+                ? value
+                : 1f;
+            var resourceScale = creature.Entity.IsMonster
+                ? ContextualSkinControls.GetAppliedMonsterScaleFactor(creature.Visuals)
+                : 1f;
+            if (Mathf.IsZeroApprox(resourceScale))
+            {
+                resourceScale = 1f;
+            }
+
+            var wrapperScale = wrapper.Scale.X;
+            var baseSize = bounds.Size * creature.Visuals.Scale / tempScale / resourceScale;
+            var baseLocalPosition =
+                (wrapper.GetGlobalTransform().AffineInverse() * bounds.GlobalPosition) /
+                tempScale /
+                resourceScale;
+            var size = baseSize * resourceScale * wrapperScale;
+            var globalPosition = wrapper.GetGlobalTransform() *
+                                 (baseLocalPosition * resourceScale);
+            var currentTransform = GetCurrentTransform(wrapper);
+
+            creature.Hitbox.Size = size;
+            creature.Hitbox.GlobalPosition = globalPosition;
+            if (SupportsIntentAppearance(creature) &&
+                GetSelectionReticle(creature) is { } reticle)
+            {
+                // The game's own rect (already including this mod's model scale/offset) is the
+                // reference frame. Scaling that rect from its top-left corner pushed the frame off
+                // the target for every value other than 100%, which is what made the 选择框 look
+                // "misplaced" and made reset look like it did nothing.
+                var reticleRectPosition = creature.GetGlobalTransform().AffineInverse() * globalPosition;
+                ApplySelectionReticleAndHitbox(
+                    reticle,
+                    creature.Hitbox,
+                    currentTransform,
+                    reticleRectPosition,
+                    size,
+                    wrapper.Position,
+                    creature.GetGlobalTransform());
+            }
+            else if (SelectionReticleField?.GetValue(creature) is Control fallbackReticle)
+            {
+                fallbackReticle.Size = size;
+                fallbackReticle.GlobalPosition = globalPosition;
+                fallbackReticle.PivotOffset = size * 0.5f;
+            }
+
+            // Match NCreature.UpdateBounds: animations pass their current bounds container.
+            // A scene-unique lookup (%IntentPos) would select the root/default stance instead.
+            var intentMarker = boundsContainer.GetNode<Marker2D>("IntentPos");
+            var markerBaseLocal =
+                (wrapper.GetGlobalTransform().AffineInverse() * intentMarker.GlobalPosition) /
+                tempScale /
+                resourceScale;
+            var intentWrapper = SupportsIntentAppearance(creature)
+                ? EnsureIntentDisplayWrapper(creature)
+                : null;
+            if (intentWrapper != null)
+            {
+                // Keep the HBox centred on its marker. Scaling the parent then changes only the intent's
+                // own size; following model scale separately controls how far the marker moves from the
+                // creature origin.
+                creature.IntentContainer.Position = -creature.IntentContainer.Size * 0.5f;
+                ApplyIntentDisplayTransform(intentWrapper, currentTransform, markerBaseLocal);
+            }
+            else
+            {
+                var markerGlobal = wrapper.GetGlobalTransform() *
+                                   (markerBaseLocal * resourceScale);
+                var markerLocal = creature.GetGlobalTransform().AffineInverse() * markerGlobal;
+                creature.IntentContainer.Position =
+                    markerLocal - creature.IntentContainer.Size * 0.5f;
+            }
+
+            var stateDisplay = GetStateDisplay(creature);
+            var healthWrapper = EnsureHealthDisplayWrapper(creature);
+            var healthBounds = EnsureHealthBoundsProxy(creature);
+            if (stateDisplay != null && healthWrapper != null && healthBounds != null)
+            {
+                // The game's health-bar animation writes to the state display's local Position. Keeping our
+                // customization on its parent makes vertical and horizontal movement behave consistently.
+                healthWrapper.Position = Vector2.Zero;
+                healthWrapper.Scale = Vector2.One;
+                healthBounds.Size = baseSize;
+                healthBounds.Scale = Vector2.One;
+                healthBounds.GlobalPosition = creature.GetGlobalTransform() * baseLocalPosition;
+                stateDisplay.SetCreatureBounds(healthBounds);
+                ApplyHealthDisplayTransform(healthWrapper, currentTransform);
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("校正实战外观定位点失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static void CorrectMonsterBoundsForModelOnlyScale(NCreature creature)
+    {
+        if (creature.Entity.IsPlayer || !GodotObject.IsInstanceValid(creature.Visuals))
+        {
+            return;
+        }
+
+        var factor = ContextualSkinControls.GetAppliedMonsterScaleFactor(creature.Visuals);
+        if (Mathf.IsZeroApprox(factor) || Mathf.IsEqualApprox(factor, 1f))
+        {
+            return;
+        }
+
+        try
+        {
+            var size = creature.Hitbox.Size / factor;
+            var globalPosition = creature.GlobalPosition +
+                                 (creature.Hitbox.GlobalPosition - creature.GlobalPosition) / factor;
+            creature.Hitbox.Size = size;
+            creature.Hitbox.GlobalPosition = globalPosition;
+            if (SelectionReticleField?.GetValue(creature) is Control reticle)
+            {
+                reticle.Size = size;
+                reticle.GlobalPosition = globalPosition;
+                reticle.PivotOffset = size * 0.5f;
+            }
+
+            creature.IntentContainer.Position = new Vector2(
+                creature.IntentContainer.Position.X,
+                creature.IntentContainer.Position.Y / factor);
+            GetStateDisplay(creature)?.SetCreatureBounds(creature.Hitbox);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("校正怪物模型缩放后的战斗 UI 失败：" +
+                        exception.GetBaseException().Message);
+        }
+    }
+
+    internal static void CorrectOrbPositionForCharacterTransform(NCreature creature)
+    {
+        if (GetTransformWrapper(creature) == null ||
+            !creature.Entity.IsPlayer ||
+            creature.OrbManager == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var localPosition = creature.GetGlobalTransform().AffineInverse() *
+                                creature.Visuals.OrbPosition.GlobalPosition;
+            creature.OrbManager.Position = localPosition;
+            if (!creature.OrbManager.IsLocal)
+            {
+                creature.OrbManager.Position += Vector2.Up * 50f;
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("校正角色充能球定位点失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    // The native flag only checks for a non-null task, which survives death and revival.
+    // Do not clear that game-owned task: other combat code may still await it.
+    internal static bool HasActiveDeathAnimation(NCreature creature) =>
+        creature.DeathAnimationTask is { IsCompleted: false };
+
+    private static bool CanApplySelectionNow()
+    {
+        try
+        {
+            if (!RunManager.Instance.IsInProgress)
+            {
+                return true;
+            }
+
+            var executor = RunManager.Instance.ActionExecutor;
+            if (executor != null &&
+                (executor.IsRunning || executor.CurrentlyRunningAction != null))
+            {
+                return false;
+            }
+
+            return NCombatRoom.Instance?.CreatureNodes.All(creature =>
+                       !HasActiveDeathAnimation(creature)) != false;
+        }
+        catch
+        {
+            // During run setup/teardown the executor can be unavailable. Waiting one frame is safer than
+            // mutating the mounted resources while the room tree is changing.
+            return false;
+        }
+    }
+
+    private static AppearanceSelectionRequestResult ApplySelectionNow(string groupId, string optionId)
+    {
+        try
+        {
+            var previous = new Dictionary<string, string>(
+                SkinService.Config.Selections,
+                StringComparer.OrdinalIgnoreCase);
+            if (!SkinService.ApplySelection(groupId, optionId))
+            {
+                return new AppearanceSelectionRequestResult(
+                    AppearanceSelectionRequestState.Failed,
+                    SkinService.LastError);
+            }
+
+            var affectedGroups = previous.Keys
+                .Concat(SkinService.Config.Selections.Keys)
+                .Where(key => previous.GetValueOrDefault(key) !=
+                              SkinService.Config.Selections.GetValueOrDefault(key))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            affectedGroups.Add(groupId);
+
+            var refreshErrors = ApplyRunAppearanceRefresh(
+                affectedGroups,
+                "局内外观切换");
+            RefreshCurrentCharacterUi();
+            MultiplayerSkinSync.OnLocalCharacterSelectionChanged(groupId);
+            if (refreshErrors.Count > 0)
+            {
+                var error = string.Join("; ", refreshErrors);
+                ModLog.Warn("皮肤选择已保存，但部分实战外观将在下次创建时生效：" + error);
+                return new AppearanceSelectionRequestResult(
+                    AppearanceSelectionRequestState.Applied,
+                    error);
+            }
+
+            return new AppearanceSelectionRequestResult(AppearanceSelectionRequestState.Applied);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("实战切换角色外观失败：" + exception);
+            return new AppearanceSelectionRequestResult(
+                AppearanceSelectionRequestState.Failed,
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static List<string> RefreshLiveCreatures(IReadOnlySet<string> affectedGroups)
+    {
+        var errors = new List<string>();
+        var room = NCombatRoom.Instance;
+        if (room == null)
+        {
+            return errors;
+        }
+
+        var creatures = room.CreatureNodes.ToArray();
+        var rebuiltPlayerOrPet = false;
+        var affectedPlayers = creatures
+            .Where(creature => creature.Entity.Player != null)
+            .Where(creature =>
+            {
+                var character = creature.Entity.Player!.Character;
+                var group = ContextualSkinControls.FindGroup(
+                    character.Id.Entry,
+                    character.GetType().Name);
+                return group != null && affectedGroups.Contains(group.Id);
+            })
+            .Select(creature => creature.Entity.Player!)
+            .ToHashSet();
+
+        foreach (var creature in creatures)
+        {
+            var modelId = creature.Entity.ModelId.Entry;
+            var typeName = creature.Entity.Player?.Character.GetType().Name ??
+                           creature.Entity.Monster?.GetType().Name;
+            var group = ContextualSkinControls.FindGroup(modelId, typeName);
+            var directlyAffected = group != null && affectedGroups.Contains(group.Id);
+            var ownerAffected = creature.Entity.PetOwner is { } owner &&
+                                affectedPlayers.Contains(owner);
+            if (!directlyAffected && !ownerAffected)
+            {
+                continue;
+            }
+
+            if (HasActiveDeathAnimation(creature))
+            {
+                errors.Add(modelId + ": death animation");
+                continue;
+            }
+
+            if (!TryRebuildCreatureVisuals(creature, out var error))
+            {
+                errors.Add(modelId + ": " + error);
+            }
+            else if (creature.Entity.IsPlayer || creature.Entity.PetOwner != null)
+            {
+                rebuiltPlayerOrPet = true;
+            }
+        }
+
+        if (rebuiltPlayerOrPet)
+        {
+            RefreshPlayerAndPetLayout(room);
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Mod-specific (OstyDefectImpostor): rebuild the summon's body as a plain vanilla body so that
+    /// mod can construct its own body on a node it recognises. It binds a per-creature session in
+    /// <c>NCreature._Ready</c> and only accepts the summon's own node; after our replacement it can
+    /// never construct its body again, so switching to its skin mid-battle used to do nothing until
+    /// the next summon.
+    /// </summary>
+    internal static int RebuildSummonBodyForImpostor(string groupId)
+    {
+        var room = NCombatRoom.Instance;
+        if (room == null || string.IsNullOrWhiteSpace(groupId))
+        {
+            return 0;
+        }
+
+        var rebuilt = 0;
+        foreach (var creature in room.CreatureNodes.ToArray())
+        {
+            if (creature == null || !GodotObject.IsInstanceValid(creature) ||
+                creature.Entity?.PetOwner == null)
+            {
+                continue;
+            }
+
+            var group = ContextualSkinControls.FindGroup(
+                creature.Entity.ModelId.Entry,
+                creature.Entity.Player?.Character.GetType().Name ??
+                creature.Entity.Monster?.GetType().Name);
+            if (group == null || !group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // 独立 Mod 只接受原生 Spine 身体。规范路径 res://scenes/creature_visuals/osty.tscn
+            // 在同一进程里可能早被别的皮肤（midori 的猫壳、提权包、PreloadManager 缓存）
+            // 污染成帧动画场景，压栈顶和刷缓存都救不回来。
+            // 但不能自己实例化身体：那会绕过独立 Mod 挂在 CreateVisuals 上的后置补丁，
+            // 身体会永远停在原版。这里只把原版场景「登记」成规范路径的缓存条目，再走常规通道。
+            if (creature.Entity.Monster is MonsterModel summonMonster)
+            {
+                var summonScenePath = ContextualSkinControls.GetMonsterVisualsPath(summonMonster);
+                SkinService.EnsureGameSceneOnTop(summonScenePath);
+                if (SkinService.ProbeSceneHasSpine(summonScenePath))
+                {
+                    ModLog.Info("[奥斯提] 规范路径已恢复为原生 Spine，按常规通道重建（独立 Mod 的补丁会接管）。");
+                }
+                else
+                {
+                    SkinService.ForceCanonicalSceneFromAlias(summonScenePath);
+                }
+            }
+
+            var rebuiltBody = TryRebuildCreatureVisuals(
+                creature,
+                out var error,
+                ignoreSummonOwnership: true);
+            if (rebuiltBody)
+            {
+                rebuilt++;
+            }
+            else if (!string.IsNullOrEmpty(error))
+            {
+                ModLog.Warn($"[奥斯提] 重建召唤物身体失败：{error}");
+            }
+        }
+
+        if (rebuilt > 0)
+        {
+            ModLog.Info($"[奥斯提] 已为独立 Mod 重建 {rebuilt} 只召唤物的身体（原版骨架），准备让它重建外观。");
+        }
+
+        return rebuilt;
+    }
+    /// <summary>Rebuilds the live summon(s) of one companion group after an in-run switch.</summary>
+    internal static void RefreshCompanionGroup(string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return;
+        }
+
+        var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId };
+        try
+        {
+            // 选「游戏默认」时必须真的回到游戏原版。规范路径 res://scenes/creature_visuals/<id>.tscn
+            // 的场景缓存里可能还留着上一套皮肤（例如 midori 的猫壳），普通重建会直接复用缓存，
+            // 于是「游戏默认」显示的仍是上一套皮肤。这里先按游戏原包把召唤物身体强制还原。
+            if (string.Equals(
+                    SkinService.Config.GetSelection(groupId),
+                    SkinCatalog.BaseOptionId,
+                    StringComparison.OrdinalIgnoreCase) &&
+                RebuildSummonBodyForImpostor(groupId) > 0)
+            {
+                return;
+            }
+
+            var errors = ApplyRunAppearanceRefresh(groups, "随从外观切换");
+            if (errors.Count > 0)
+            {
+                ModLog.Warn("随从外观已保存，但部分实战外观将在下次创建时生效：" +
+                            string.Join("; ", errors));
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新随从实战外观失败：" + exception.GetBaseException().Message);
+        }
+    }
+    private static List<string> ApplyRunAppearanceRefresh(
+        IReadOnlySet<string> affectedGroups,
+        string reason)
+    {
+        FocusRuntimeProviderBehaviorsOnRunContext(affectedGroups, reason, refreshCurrentRoom: true);
+
+        var errors = RefreshLiveCreatures(affectedGroups);
+        if (ResolveActiveCombatMonsterGroupIds().Overlaps(affectedGroups) &&
+            CombatManager.Instance.IsInProgress &&
+            NCombatRoom.Instance != null)
+        {
+            if (!RefreshCurrentCombatBackground())
+            {
+                errors.Add("current combat background");
+            }
+
+            ManagedSkinModLoader.RefreshRunEnvironmentPresentation();
+        }
+
+        RefreshCurrentBossPresentation(affectedGroups);
+        return errors;
+    }
+
+    internal static bool RefreshCurrentCombatBackground()
+    {
+        var room = NCombatRoom.Instance;
+        var combatState = CombatManager.Instance.DebugOnlyGetState();
+        var encounter = combatState?.Encounter;
+        if (!CombatManager.Instance.IsInProgress ||
+            room == null ||
+            !room.IsInsideTree() ||
+            combatState == null ||
+            encounter == null ||
+            CombatBackgroundField == null)
+        {
+            return false;
+        }
+
+        var oldBackground = room.Background;
+        var parent = oldBackground?.GetParent() ?? room.GetNodeOrNull<Control>("%BgContainer");
+        if (parent == null)
+        {
+            return false;
+        }
+
+        NCombatBackground? newBackground = null;
+        try
+        {
+            newBackground = encounter.CreateBackground(
+                combatState.RunState.Act,
+                NCombatRoom.GenerateBackgroundRngForCurrentPoint(combatState.RunState));
+            if (newBackground == null)
+            {
+                throw new InvalidOperationException("CreateBackground returned null");
+            }
+
+            var desiredName = oldBackground?.Name ?? newBackground.Name;
+            newBackground.Name = "SkinChangerPendingCombatBackground";
+
+            parent.AddChild(newBackground);
+            if (oldBackground != null && GodotObject.IsInstanceValid(oldBackground))
+            {
+                parent.MoveChild(newBackground, oldBackground.GetIndex());
+            }
+
+            CombatBackgroundField.SetValue(room, newBackground);
+            if (oldBackground != null && GodotObject.IsInstanceValid(oldBackground))
+            {
+                oldBackground.GetParent()?.RemoveChild(oldBackground);
+                oldBackground.QueueFree();
+            }
+            newBackground.Name = desiredName;
+
+            ModLog.Info($"已按当前遭遇重新加载战斗背景：{encounter.Id.Entry}。");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            if (newBackground != null && GodotObject.IsInstanceValid(newBackground))
+            {
+                newBackground.GetParent()?.RemoveChild(newBackground);
+                newBackground.QueueFree();
+            }
+
+            CombatBackgroundField.SetValue(room, oldBackground);
+            ModLog.Warn(
+                "重新加载当前战斗背景失败，已保留原背景：" +
+                exception.GetBaseException().Message);
+            return false;
+        }
+    }
+
+    internal static bool RefreshPlayerAppearance(ulong playerNetId)
+    {
+        var handRefreshed = MultiplayerTreasureHandAppearance.RefreshPlayer(playerNetId);
+        var room = NCombatRoom.Instance;
+        if (room == null)
+        {
+            return handRefreshed;
+        }
+
+        var rebuilt = false;
+        var failed = false;
+        foreach (var creature in room.CreatureNodes.Where(creature =>
+                     creature.Entity.Player?.NetId == playerNetId ||
+                     creature.Entity.PetOwner?.NetId == playerNetId).ToArray())
+        {
+            if (HasActiveDeathAnimation(creature))
+            {
+                continue;
+            }
+
+            if (TryRebuildCreatureVisuals(creature, out var error))
+            {
+                rebuilt = true;
+            }
+            else
+            {
+                failed = true;
+                ModLog.Warn($"刷新联机玩家 {playerNetId} 的外观失败：{error}");
+            }
+        }
+
+        if (rebuilt)
+        {
+            RefreshPlayerAndPetLayout(room);
+        }
+        return rebuilt && !failed;
+    }
+
+    internal static bool RefreshPlayerTransforms(ulong playerNetId)
+    {
+        var room = NCombatRoom.Instance;
+        if (room == null)
+        {
+            return false;
+        }
+
+        var refreshed = 0;
+        foreach (var creature in room.CreatureNodes.Where(creature =>
+                     creature.Entity.Player?.NetId == playerNetId ||
+                     creature.Entity.PetOwner?.NetId == playerNetId).ToArray())
+        {
+            if (!HasActiveDeathAnimation(creature))
+            {
+                ApplyStoredTransform(creature);
+                refreshed++;
+            }
+        }
+
+        if (refreshed > 0)
+        {
+            // A transform refresh can be the first time a remote player's appearance becomes
+            // available in the HUD (for example when the selection packet arrives just after
+            // combat setup).  Refresh the HUD in the same tick so model and avatar never diverge.
+            ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerNetId);
+        }
+
+        return refreshed > 0;
+    }
+
+    internal static void CapturePlayerAndPetLayout(float scaling, bool fullyCenterPlayers)
+    {
+        var room = NCombatRoom.Instance;
+        if (room == null)
+        {
+            return;
+        }
+
+        _playerLayoutRoom = new WeakReference<NCombatRoom>(room);
+        _playerLayoutScaling = scaling;
+        _fullyCenterPlayers = fullyCenterPlayers;
+    }
+
+    private static void RefreshPlayerAndPetLayout(NCombatRoom room)
+    {
+        try
+        {
+            if (_playerLayoutRoom == null ||
+                !_playerLayoutRoom.TryGetTarget(out var capturedRoom) ||
+                !ReferenceEquals(capturedRoom, room))
+            {
+                return;
+            }
+
+            var playersAndPets = room.CreatureNodes
+                .Where(creature => creature.Entity.IsPlayer || creature.Entity.PetOwner != null)
+                .ToList();
+            if (playersAndPets.Count == 0)
+            {
+                return;
+            }
+
+            // Re-run the game's canonical layout first. This removes position offsets left by the
+            // previously selected provider; Harmony then naturally runs only the newly selected
+            // provider's current positioning postfixes (and keeps player/pet offsets coherent).
+            NCombatRoom.PositionPlayersAndPets(
+                playersAndPets,
+                _playerLayoutScaling,
+                _fullyCenterPlayers);
+            foreach (var creature in playersAndPets)
+            {
+                RefreshCreatureAnchors(creature);
+                if (creature.Entity.Monster is Osty &&
+                    creature.Entity.PetOwner is { } ownerPlayer &&
+                    LocalContext.IsMe(ownerPlayer) &&
+                    room.GetCreatureNode(ownerPlayer.Creature) is { } ownerCreature)
+                {
+                    // Use the same owner/hitbox/HP-based position as the game's summon path.
+                    creature.Position = ownerCreature.Position + NCreature.GetOstyOffsetFromPlayer(creature.Entity);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新实战玩家与宠物位置失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static bool TryRebuildCreatureVisuals(
+        NCreature creature,
+        out string? error,
+        bool ignoreSummonOwnership = false)
+    {
+        error = null;
+        if (VisualsField == null || SpineAnimatorField == null)
+        {
+            error = "game visual fields unavailable";
+            return false;
+        }
+
+        // Rebuilding must isolate the selected player's canonical scene, skeleton, atlas and
+        // provider dependencies as well as the option ID. A selection-only scope lets the local
+        // player's globally mounted skin leak onto another player of the same character.
+        using var multiplayerSelectionScope =
+            MultiplayerSkinSync.BeginCreatureRuntimeScope(creature.Entity);
+
+        var rebuildGroup = ContextualSkinControls.FindGroup(
+            creature.Entity.ModelId.Entry,
+            creature.Entity.Player?.Character.GetType().Name ??
+            creature.Entity.Monster?.GetType().Name);
+        if (!ignoreSummonOwnership && rebuildGroup != null && OstyImpostorCompat.OwnsSummonBody(rebuildGroup.Id))
+        {
+            // Its patch owns this body; rebuilding the node drops the sprite it installed.
+            error = "independent summon mod owns this body";
+            return false;
+        }
+
+        var oldVisuals = creature.Visuals;
+        var desiredVisualName = oldVisuals.Name;
+        var oldAnimator = SpineAnimatorField.GetValue(creature);
+        var parent = oldVisuals.GetParent();
+        var oldVisualIndex = oldVisuals.GetIndex();
+        NCreatureVisuals? newVisuals = null;
+        var movedFormChildren = new List<Node>();
+        try
+        {
+            var playerCharacter = creature.Entity.Player?.Character;
+            var playerGroup = playerCharacter == null
+                ? null
+                : ContextualSkinControls.FindGroup(
+                    playerCharacter.Id.Entry,
+                    playerCharacter.GetType().Name);
+            var managedScenePath = playerCharacter == null
+                ? null
+                : ContextualSkinControls.CanonicalScenePath(
+                    "creature_visuals/" + playerCharacter.Id.Entry.ToLowerInvariant());
+            var rebuiltWithManagedFactory = playerCharacter != null &&
+                                            playerGroup != null &&
+                                            managedScenePath != null &&
+                                            SkinService.TryInstantiateSelectedCharacterCreatureVisuals(
+                                                playerGroup.Id,
+                                                managedScenePath,
+                                                visuals =>
+                                                {
+                                                    ContextualSkinControls
+                                                        .ApplySelectedProviderVisualPostfix(
+                                                            playerCharacter.Id.Entry,
+                                                            playerCharacter.GetType().Name,
+                                                            playerCharacter,
+                                                            ref visuals);
+                                                    NCreatureVisuals? finishedVisuals = visuals;
+                                                    ContextualSkinControls.ApplySelectedCreatureVisualPostfix(
+                                                        creature.Entity, ref finishedVisuals);
+                                                    visuals = finishedVisuals ?? visuals;
+                                                    return visuals;
+                                                },
+                                                out newVisuals);
+            if (!rebuiltWithManagedFactory)
+            {
+                newVisuals = creature.Entity.CreateVisuals() ??
+                             throw new InvalidOperationException("CreateVisuals returned null");
+            }
+
+            if (newVisuals == null)
+            {
+                throw new InvalidOperationException(
+                    "selected character visual factory returned null");
+            }
+            newVisuals.Name = oldVisuals.Name;
+            newVisuals.Position = Vector2.Zero;
+            newVisuals.Visible = oldVisuals.Visible;
+            newVisuals.Modulate = oldVisuals.Modulate;
+            newVisuals.SelfModulate = oldVisuals.SelfModulate;
+            newVisuals.ZIndex = oldVisuals.ZIndex;
+            newVisuals.ZAsRelative = oldVisuals.ZAsRelative;
+
+            // 换肤重建（三个调用点都是"这个分组的选择变了"）：旧骨骼的 Scale/BaseScale 之比属于
+            // **上一只皮肤**——它的呈现补丁写下的骨骼缩放、战损阶段，或者面板里给它存的那份变换。
+            // 把这个比例乘到新皮肤的基准上，就会出现"女仆奥斯提换成 midori 的猫以后猫偏小"，
+            // 只能靠面板「重置」拉回。玩家自己在面板里调过的缩放由下面的 ApplyStoredTransform 按
+            // 当前选择重新应用，所以这里一律回到新皮肤自己的基准。
+            // 例外：游戏自己的临时倍率 _tempScale（缩小甲虫的缩小等，游戏写 Scale = _tempScale × DefaultScale）
+            // 不属于旧皮肤，要乘回新皮肤，否则热换肤会把缩小效果丢掉（11-15 云实测）。
+            var gameTempScale = TempScaleField?.GetValue(creature) is float tempValue && !Mathf.IsZeroApprox(tempValue)
+                ? tempValue
+                : 1f;
+            var runtimeScale = Vector2.One * gameTempScale;
+            var runtimeDefaultScale = 1f;
+
+            AttachReplacementCreatureVisuals(creature, parent, oldVisuals, newVisuals);
+            creature.MoveChild(newVisuals, ReferenceEquals(parent, creature) ? oldVisualIndex : parent.GetIndex());
+
+            // The instance we just attached is the one the player sees, but a factory built it
+            // outside the live create path: providers that finish the model in a
+            // Creature.CreateVisuals postfix (Orchis deletes the native head flame slot) never saw
+            // this tree. Replay that finishing now, in place, before the node is animated.
+            var attachedVisuals = newVisuals;
+            ContextualSkinControls.ApplySelectedCreatureVisualPostfix(creature.Entity, ref attachedVisuals);
+
+            CreatureAnimator? newAnimator = null;
+            if (newVisuals.HasSpineAnimation)
+            {
+                newAnimator = creature.Entity.Player != null
+                    ? GenerateCharacterAnimator(
+                        creature.Entity.Player.Character,
+                        newVisuals.SpineBody!,
+                        creature.Entity)
+                    : creature.Entity.Monster!.GenerateAnimator(newVisuals.SpineBody!);
+                if (creature.Entity.Monster != null)
+                {
+                    newVisuals.SetUpSkin(creature.Entity.Monster);
+                }
+            }
+
+            if (ignoreSummonOwnership)
+            {
+                // 独立召唤物 Mod 要求身体里有原生 %Visuals SpineSprite，否则它会回滚并保留旧外观。
+                // 把重建出来的到底是什么记下来，下次实机就能区分「身体已经是原版」和
+                // 「PreloadManager 缓存里还是上一只皮肤的场景」。
+                var children = string.Join(
+                    "、",
+                    newVisuals.GetChildren().Select(child => $"{child.Name}({child.GetType().Name})"));
+                ModLog.Info(
+                    $"[奥斯提] 重建身体完成：类型={newVisuals.GetType().Name}，" +
+                    $"Spine={newVisuals.HasSpineAnimation}，子节点={children}");
+            }
+
+            VisualsField.SetValue(creature, newVisuals);
+            SpineAnimatorField.SetValue(creature, newAnimator);
+            ConnectSpineAnimatorSignalsMethod?.Invoke(creature, null);
+            UpdatePhobiaModeMethod?.Invoke(creature, null);
+            ReplaySelectedCreatureReady(creature);
+            RestoreDeadCreaturePose(creature, newAnimator);
+            CaptureVisualBaseline(newVisuals);
+            var newBaseScale = newVisuals.GetMeta(BaseVisualScaleMeta, newVisuals.Scale).AsVector2();
+            var newBaseDefaultScale = newVisuals
+                .GetMeta(BaseDefaultScaleMeta, newVisuals.DefaultScale)
+                .AsSingle();
+            newVisuals.Scale = newBaseScale * runtimeScale;
+            newVisuals.DefaultScale = newBaseDefaultScale * runtimeDefaultScale;
+            MigrateFormVfx(oldVisuals, newVisuals, movedFormChildren);
+            ApplyStoredTransform(creature);
+            if (creature.Entity.IsPlayer)
+            {
+                RebuildCurrentOrbVisuals(creature);
+            }
+
+            oldVisuals.GetParent()?.RemoveChild(oldVisuals);
+            newVisuals.Name = desiredVisualName;
+            oldVisuals.QueueFree();
+            CreatureIntentDepth.Apply(creature);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            try
+            {
+                VisualsField.SetValue(creature, oldVisuals);
+                SpineAnimatorField.SetValue(creature, oldAnimator);
+                foreach (var child in movedFormChildren.Where(GodotObject.IsInstanceValid))
+                {
+                    var oldHolder = oldVisuals.GetNodeOrNull<Control>("%FormVfx");
+                    if (oldHolder != null)
+                    {
+                        child.Reparent(oldHolder, keepGlobalTransform: true);
+                    }
+                }
+
+                if (newVisuals != null && GodotObject.IsInstanceValid(newVisuals))
+                {
+                    newVisuals.GetParent()?.RemoveChild(newVisuals);
+                    newVisuals.QueueFree();
+                }
+                if (oldVisuals.GetParent() == null)
+                {
+                    parent.AddChild(oldVisuals);
+                    parent.MoveChild(oldVisuals, oldVisualIndex);
+                }
+                ConnectSpineAnimatorSignalsMethod?.Invoke(creature, null);
+                RefreshCreatureAnchors(creature);
+            }
+            catch (Exception rollbackException)
+            {
+                ModLog.Error("回滚实战角色外观失败：" + rollbackException);
+            }
+
+            error = exception.GetBaseException().Message;
+            ModLog.Error($"重建 {creature.Entity.ModelId.Entry} 的实战外观失败：{exception}");
+            return false;
+        }
+    }
+
+    private static void RestoreDeadCreaturePose(NCreature creature, CreatureAnimator? animator)
+    {
+        // Match NCreature._Ready for a retained dead body, without replaying combat death,
+        // disabling input again, or replacing the game's original death/revival task.
+        if (!creature.Entity.IsDead || animator?.HasTrigger("Dead") != true) return;
+        creature.SetAnimationTrigger("Dead");
+        var track = creature.SpineAnimation.GetCurrentTrack();
+        try { track?.SetTrackTime(track.GetAnimationEnd()); }
+        // Only the beta wrapper implements IDisposable; keep the shared formal-built DLL.
+        finally { ((object?)track as IDisposable)?.Dispose(); }
+    }
+
+    private static void AttachReplacementCreatureVisuals(
+        NCreature creature,
+        Node previousParent,
+        NCreatureVisuals previousVisuals,
+        NCreatureVisuals replacement)
+    {
+        previousParent.RemoveChild(previousVisuals);
+        VisualsField!.SetValue(creature, replacement);
+        // Match initial combat creation: provider NCreatureVisuals._Ready callbacks resolve
+        // their owner through GetParent<NCreature>(). ApplyStoredTransform reparents only
+        // after Ready, animator construction and provider finishing have completed.
+        creature.AddChild(replacement);
+    }
+
+    private static Node2D? EnsureTransformWrapper(NCreature creature)
+    {
+        if (!GodotObject.IsInstanceValid(creature.Visuals))
+        {
+            return null;
+        }
+
+        var wrapper = GetTransformWrapper(creature);
+        if (wrapper == null)
+        {
+            wrapper = new Node2D { Name = TransformWrapperName };
+            var visualIndex = creature.Visuals.GetIndex();
+            creature.AddChild(wrapper);
+            creature.MoveChild(wrapper, Math.Max(0, visualIndex));
+        }
+
+        if (!ReferenceEquals(creature.Visuals.GetParent(), wrapper))
+        {
+            CreatureVisualParentBridge.Register(creature, wrapper);
+            creature.Visuals.Reparent(wrapper, keepGlobalTransform: false);
+        }
+
+        return wrapper;
+    }
+
+    private static Node2D? EnsureHealthDisplayWrapper(NCreature creature)
+    {
+        var stateDisplay = GetStateDisplay(creature);
+        if (stateDisplay == null || !GodotObject.IsInstanceValid(stateDisplay))
+        {
+            return null;
+        }
+
+        var wrapper = GetHealthDisplayWrapper(creature);
+        if (wrapper == null)
+        {
+            wrapper = new Node2D { Name = HealthDisplayWrapperName };
+            var displayIndex = stateDisplay.GetIndex();
+            creature.AddChild(wrapper);
+            creature.MoveChild(wrapper, Math.Max(0, displayIndex));
+        }
+
+        if (!ReferenceEquals(stateDisplay.GetParent(), wrapper))
+        {
+            stateDisplay.Reparent(wrapper, keepGlobalTransform: false);
+        }
+
+        return wrapper;
+    }
+
+    private static Node2D? EnsureIntentDisplayWrapper(NCreature creature)
+    {
+        var intentContainer = creature.IntentContainer;
+        if (intentContainer == null || !GodotObject.IsInstanceValid(intentContainer))
+        {
+            return null;
+        }
+
+        var wrapper = GetIntentDisplayWrapper(creature);
+        if (wrapper == null)
+        {
+            wrapper = new Node2D { Name = IntentDisplayWrapperName };
+            var intentIndex = intentContainer.GetIndex();
+            creature.AddChild(wrapper);
+            creature.MoveChild(wrapper, Math.Max(0, intentIndex));
+        }
+
+        if (!ReferenceEquals(intentContainer.GetParent(), wrapper))
+        {
+            intentContainer.Reparent(wrapper, keepGlobalTransform: false);
+        }
+
+        return wrapper;
+    }
+
+    private static Control? EnsureHealthBoundsProxy(NCreature creature)
+    {
+        var proxy = creature.GetNodeOrNull<Control>(HealthBoundsProxyName);
+        if (proxy != null)
+        {
+            return proxy;
+        }
+
+        proxy = new Control
+        {
+            Name = HealthBoundsProxyName,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            Visible = false
+        };
+        creature.AddChild(proxy);
+        return proxy;
+    }
+
+    private static void SetCurrentTransform(Node2D wrapper, CharacterCombatTransform value)
+    {
+        wrapper.SetMeta(CurrentScaleMeta, value.Scale);
+        wrapper.SetMeta(CurrentOffsetXMeta, value.OffsetX);
+        wrapper.SetMeta(CurrentOffsetYMeta, value.OffsetY);
+        wrapper.SetMeta(CurrentHealthScaleMeta, value.HealthBarScale);
+        wrapper.SetMeta(CurrentHealthOffsetXMeta, value.HealthBarOffsetX);
+        wrapper.SetMeta(CurrentHealthOffsetYMeta, value.HealthBarOffsetY);
+        wrapper.SetMeta(CurrentHealthFollowScaleMeta, value.HealthBarFollowsModelScale);
+        wrapper.SetMeta(CurrentHealthFollowMovementMeta, value.HealthBarFollowsModelMovement);
+        wrapper.SetMeta(CurrentIntentScaleMeta, value.IntentScale);
+        wrapper.SetMeta(CurrentIntentOffsetXMeta, value.IntentOffsetX);
+        wrapper.SetMeta(CurrentIntentOffsetYMeta, value.IntentOffsetY);
+        wrapper.SetMeta(CurrentIntentFollowScaleMeta, value.IntentFollowsModelScale);
+        wrapper.SetMeta(CurrentIntentFollowMovementMeta, value.IntentFollowsModelMovement);
+        wrapper.SetMeta(CurrentReticleScaleMeta, value.SelectionReticleScale);
+        wrapper.SetMeta(CurrentReticleOffsetXMeta, value.SelectionReticleOffsetX);
+        wrapper.SetMeta(CurrentReticleOffsetYMeta, value.SelectionReticleOffsetY);
+        wrapper.SetMeta(CurrentReticleFollowScaleMeta, value.SelectionReticleFollowsModelScale);
+        wrapper.SetMeta(CurrentReticleFollowMovementMeta, value.SelectionReticleFollowsModelMovement);
+    }
+
+    private static CharacterCombatTransform GetCurrentTransform(Node2D wrapper) =>
+        new CharacterCombatTransform(
+            wrapper.GetMeta(CurrentScaleMeta, 1f).AsSingle(),
+            wrapper.GetMeta(CurrentOffsetXMeta, 0f).AsSingle(),
+            wrapper.GetMeta(CurrentOffsetYMeta, 0f).AsSingle())
+        {
+            HealthBarScale = wrapper.GetMeta(CurrentHealthScaleMeta, 1f).AsSingle(),
+            HealthBarOffsetX = wrapper.GetMeta(CurrentHealthOffsetXMeta, 0f).AsSingle(),
+            HealthBarOffsetY = wrapper.GetMeta(CurrentHealthOffsetYMeta, 0f).AsSingle(),
+            HealthBarFollowsModelScale =
+                wrapper.GetMeta(CurrentHealthFollowScaleMeta, false).AsBool(),
+            HealthBarFollowsModelMovement =
+                wrapper.GetMeta(CurrentHealthFollowMovementMeta, true).AsBool(),
+            IntentScale = wrapper.GetMeta(CurrentIntentScaleMeta, 1f).AsSingle(),
+            IntentOffsetX = wrapper.GetMeta(CurrentIntentOffsetXMeta, 0f).AsSingle(),
+            IntentOffsetY = wrapper.GetMeta(CurrentIntentOffsetYMeta, 0f).AsSingle(),
+            IntentFollowsModelScale =
+                wrapper.GetMeta(CurrentIntentFollowScaleMeta, false).AsBool(),
+            IntentFollowsModelMovement =
+                wrapper.GetMeta(CurrentIntentFollowMovementMeta, true).AsBool(),
+            SelectionReticleScale = wrapper.GetMeta(CurrentReticleScaleMeta, 1f).AsSingle(),
+            SelectionReticleOffsetX = wrapper.GetMeta(CurrentReticleOffsetXMeta, 0f).AsSingle(),
+            SelectionReticleOffsetY = wrapper.GetMeta(CurrentReticleOffsetYMeta, 0f).AsSingle(),
+            SelectionReticleFollowsModelScale =
+                wrapper.GetMeta(CurrentReticleFollowScaleMeta, true).AsBool(),
+            SelectionReticleFollowsModelMovement =
+                wrapper.GetMeta(CurrentReticleFollowMovementMeta, true).AsBool()
+        };
+
+    private static void ApplyHealthDisplayTransform(
+        Node2D wrapper,
+        CharacterCombatTransform value)
+    {
+        var movement = value.HealthBarFollowsModelMovement
+            ? new Vector2(value.OffsetX, value.OffsetY)
+            : Vector2.Zero;
+        wrapper.Position = movement +
+                           new Vector2(value.HealthBarOffsetX, value.HealthBarOffsetY);
+        var scale = value.HealthBarScale *
+                    (value.HealthBarFollowsModelScale ? value.Scale : 1f);
+        wrapper.Scale = Vector2.One * scale;
+    }
+
+    private static void ApplyIntentDisplayTransform(
+        Node2D wrapper,
+        CharacterCombatTransform value,
+        Vector2 baseMarkerPosition)
+    {
+        var followedScale = value.IntentFollowsModelScale ? value.Scale : 1f;
+        var movement = value.IntentFollowsModelMovement
+            ? new Vector2(value.OffsetX, value.OffsetY)
+            : Vector2.Zero;
+        wrapper.Position = baseMarkerPosition * followedScale +
+                           movement +
+                           new Vector2(value.IntentOffsetX, value.IntentOffsetY);
+        wrapper.Scale = Vector2.One * value.IntentScale * followedScale;
+    }
+
+    private static void ApplySelectionReticleAndHitbox(
+        NSelectionReticle reticle,
+        Control hitbox,
+        CharacterCombatTransform value,
+        Vector2 modelRectPosition,
+        Vector2 modelRectSize,
+        Vector2 modelOffset,
+        Transform2D creatureTransform)
+    {
+        var modelScale = !Mathf.IsZeroApprox(value.Scale) ? value.Scale : 1f;
+        var followedScale = value.SelectionReticleFollowsModelScale ? modelScale : 1f;
+        var movement = value.SelectionReticleFollowsModelMovement ? modelOffset : Vector2.Zero;
+        // Strip this mod's model transform, then re-apply exactly the parts the player asked to
+        // follow. The reticle's own scale is applied around the rect's centre below.
+        var rectPosition = (modelRectPosition - modelOffset) * (followedScale / modelScale) + movement;
+        var rectSize = modelRectSize * (followedScale / modelScale);
+        var reticleScale = Mathf.IsZeroApprox(value.SelectionReticleScale)
+            ? 1f
+            : value.SelectionReticleScale;
+        var size = rectSize * reticleScale;
+        var position = rectPosition + (rectSize - size) * 0.5f +
+                       new Vector2(value.SelectionReticleOffsetX, value.SelectionReticleOffsetY);
+        var globalPosition = creatureTransform * position;
+
+        // Keep the game's original reticle hierarchy and animation state intact. Only its rectangle,
+        // and the hitbox that drives mouse targeting, are customized.
+        reticle.GlobalPosition = globalPosition;
+        reticle.Size = size;
+        reticle.PivotOffset = size * 0.5f;
+        hitbox.GlobalPosition = globalPosition;
+        hitbox.Size = size;
+        hitbox.PivotOffset = size * 0.5f;
+    }
+
+    private static void CaptureVisualBaseline(NCreatureVisuals visuals)
+    {
+        if (!visuals.HasMeta(BaseVisualScaleMeta))
+        {
+            visuals.SetMeta(BaseVisualScaleMeta, visuals.Scale);
+        }
+
+        if (!visuals.HasMeta(BaseDefaultScaleMeta))
+        {
+            visuals.SetMeta(BaseDefaultScaleMeta, visuals.DefaultScale);
+        }
+    }
+
+    private static void RefreshCreatureAnchors(NCreature creature)
+    {
+        UpdateBoundsMethod?.Invoke(creature, [creature.Visuals]);
+        SetOrbManagerPositionMethod?.Invoke(creature, null);
+    }
+
+    private static void ReplaySelectedCreatureReady(NCreature creature)
+    {
+        var providerIds = GetSelectedCreatureProviderIds(creature);
+        foreach (var providerId in providerIds)
+        {
+            ManagedSkinModLoader.ReplaySelectedCreatureReady(providerId, creature);
+        }
+
+        ReplaySelectedCreatureNodeReady(creature, providerIds);
+        foreach (var providerId in providerIds)
+        {
+            ManagedSkinModLoader.ReplaySelectedCompanionReveal(providerId, creature);
+        }
+    }
+
+    /// <summary>
+    /// Replays provider-owned NCreature._Ready presentation only for this creature's selected
+    /// owner. This is required both for fresh multiplayer creatures and hot replacement: a full
+    /// runtime provider may attach its actual actor after CreateVisuals rather than returning it.
+    /// </summary>
+    internal static void ReplaySelectedCreatureNodeReady(NCreature creature)
+    {
+        // A menu/character-select preview has no combat bounds container. Replaying a pack's
+        // creature-ready callbacks there throws inside NCreature.UpdateBounds (the Joan packs call
+        // HpWear.ApplyVisualScale from it), which logged an error and stuttered on every appearance
+        // switch. Previews get their own, safer replay from FrameworkModelPreview.
+        if (creature is STS2SkinChanger.Core.FrameworkPreviewCreature)
+        {
+            return;
+        }
+
+        ReplaySelectedCreatureNodeReady(creature, GetSelectedCreatureProviderIds(creature));
+    }
+
+    private static void ReplaySelectedCreatureNodeReady(
+        NCreature creature,
+        IReadOnlyList<string> providerIds)
+    {
+        var character = creature.Entity.Player?.Character ?? creature.Entity.PetOwner?.Character;
+        var groupId = character == null ? null : ContextualSkinControls.FindGroup(character.Id.Entry, character.GetType().Name)?.Id;
+        using var modeScope = groupId == null ? null : ManualCharacterVariantBridge.BeginScope(groupId);
+        ManagedSkinModLoader.RestoreUnselectedNodeReadyBehaviors(creature, providerIds);
+        foreach (var providerId in providerIds)
+        {
+            ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, creature);
+        }
+        ManagedSlotVisibilityBridge.BindPlayerScene(creature.Visuals, creature.Entity.Player);
+    }
+
+    private static IReadOnlyList<string> GetSelectedCreatureProviderIds(NCreature creature)
+    {
+        var providerIds = new List<string>();
+        var modelId = creature.Entity.ModelId.Entry;
+        var typeName = creature.Entity.Player?.Character.GetType().Name ??
+                       creature.Entity.Monster?.GetType().Name;
+        var group = ContextualSkinControls.FindGroup(modelId, typeName);
+        if (group != null)
+        {
+            AddSelectedCreatureRuntimeProvider(providerIds, group.Id);
+        }
+
+        // A character skin can own the complete presentation of its pets as well as the player model.
+        // Replaying the owner's provider after the pet's own provider lets a suite skin deliberately
+        // override that companion, while rebuilding the pet still clears the suite when switching away.
+        // Once the pet group selects its own provider, the owner must not touch the pet any more:
+        // a character suite's creature-ready callback also repositions the pet root, which made the
+        // summoned body (health bar included) slide away from where Skin Changer placed it.
+        if (creature.Entity.PetOwner is { } owner && !PetGroupOwnsProvider(group?.Id))
+        {
+            var ownerCharacter = owner.Character;
+            var ownerGroup = ContextualSkinControls.FindGroup(
+                ownerCharacter.Id.Entry,
+                ownerCharacter.GetType().Name);
+            if (ownerGroup != null)
+            {
+                AddSelectedCreatureRuntimeProvider(providerIds, ownerGroup.Id);
+            }
+        }
+
+        return providerIds;
+    }
+
+    /// <summary>
+    /// True when the pet's own group already picks a provider, i.e. the pet's look no longer comes
+    /// from the owning character's skin.
+    /// </summary>
+    private static bool PetGroupOwnsProvider(string? petGroupId)
+    {
+        if (string.IsNullOrEmpty(petGroupId))
+        {
+            return false;
+        }
+
+        var selection = SkinService.Config.GetSelection(petGroupId);
+        return !string.IsNullOrEmpty(selection) &&
+               !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AddSelectedCreatureRuntimeProvider(ICollection<string> providerIds, string groupId)
+    {
+        var providerId = SkinService.GetSelectedCreatureRuntimeProvider(groupId);
+        if (providerId != null && !providerIds.Contains(providerId, StringComparer.OrdinalIgnoreCase))
+        {
+            providerIds.Add(providerId);
+        }
+    }
+
+    private static void RebuildCurrentOrbVisuals(NCreature creature)
+    {
+        try
+        {
+            if (creature.OrbManager == null ||
+                OrbNodesField?.GetValue(creature.OrbManager) is not IEnumerable<NOrb> orbs)
+            {
+                return;
+            }
+
+            foreach (var orb in orbs.ToArray())
+            {
+                if (GodotObject.IsInstanceValid(orb) && orb.Model != null)
+                {
+                    orb.ReplaceOrb(orb.Model);
+                }
+            }
+
+            creature.OrbManager.UpdateVisuals(OrbEvokeType.None);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新角色充能球外观失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static void MigrateFormVfx(
+        NCreatureVisuals oldVisuals,
+        NCreatureVisuals newVisuals,
+        ICollection<Node> movedChildren)
+    {
+        var oldHolder = oldVisuals.GetNodeOrNull<Control>("%FormVfx");
+        var newHolder = newVisuals.GetNodeOrNull<Control>("%FormVfx");
+        if (oldHolder == null || newHolder == null)
+        {
+            return;
+        }
+
+        foreach (var child in oldHolder.GetChildren())
+        {
+            movedChildren.Add(child);
+            child.Reparent(newHolder, keepGlobalTransform: true);
+        }
+    }
+
+    private static Vector2 SafeDivide(Vector2 value, Vector2 divisor) =>
+        new(
+            Mathf.IsZeroApprox(divisor.X) ? 1f : value.X / divisor.X,
+            Mathf.IsZeroApprox(divisor.Y) ? 1f : value.Y / divisor.Y);
+
+    private static CreatureAnimator GenerateCharacterAnimator(
+        object character,
+        object spineBody,
+        object creature)
+    {
+        var methods = character.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .Where(method => method.Name == "GenerateAnimator")
+            .OrderByDescending(method => method.GetParameters().Length)
+            .ToArray();
+        foreach (var method in methods)
+        {
+            var parameters = method.GetParameters();
+            object?[] arguments = parameters.Length switch
+            {
+                2 => [spineBody, creature],
+                1 => [spineBody],
+                _ => []
+            };
+            if (arguments.Length == 0)
+            {
+                continue;
+            }
+
+            if (method.Invoke(character, arguments) is CreatureAnimator animator)
+            {
+                return animator;
+            }
+        }
+
+        throw new MissingMethodException(character.GetType().FullName, "GenerateAnimator");
+    }
+
+    private static void RefreshCurrentCharacterUi()
+    {
+        var player = GetLocalPlayer();
+        var run = NRun.Instance;
+        if (player == null || run == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var portrait = run.GlobalUi.TopBar.Portrait;
+            foreach (var child in portrait.GetChildren())
+            {
+                portrait.RemoveChild(child);
+                child.QueueFree();
+            }
+
+            portrait.AddChild(player.Character.Icon);
+            var groupId = player.Character.Id.Entry.ToLowerInvariant();
+
+            // The HUD keeps whatever Control it was handed, so a variant change has to be painted onto
+            // that instance directly; re-adding the Icon getter alone left the old portrait on screen.
+            VariantPortraits.Paint(portrait, groupId);
+            ModLog.Info(
+                $"已刷新局内左上角角色头像：当前皮肤={SkinService.GetCharacterSelectionOptionId(groupId)}" +
+                $"（{groupId}）。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新实战左上角角色头像失败：" + exception.GetBaseException().Message);
+        }
+
+        try
+        {
+            if (MapMarkerField?.GetValue(NMapScreen.Instance) is TextureRect marker)
+            {
+                marker.Texture = player.Character.MapMarker;
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新地图角色标记失败：" + exception.GetBaseException().Message);
+        }
+
+        RefreshVisibleRelicIcons(run);
+        RefreshCurrentEnergyCounter(player);
+    }
+
+    internal static void RefreshCurrentBossPresentation(IReadOnlySet<string> affectedGroups)
+    {
+        var run = NRun.Instance;
+        if (run is null || !TryGetRunState(run, out var runState))
+        {
+            return;
+        }
+
+        var bossGroupIds = ResolveCurrentBossGroupIds(runState);
+        if (!bossGroupIds.Overlaps(affectedGroups))
+        {
+            return;
+        }
+
+        try
+        {
+            var selectedProviders = bossGroupIds
+                .Select(SkinService.GetSelectedRuntimeProvider)
+                .Where(providerId => providerId != null)
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (NMapScreen.Instance is { } mapScreen)
+            {
+                foreach (var bossPoint in EnumerateDescendants<NBossMapPoint>(mapScreen))
+                {
+                    RefreshBossMapPointPresentation(
+                        bossPoint,
+                        selectedProviders,
+                        refreshNativePresentation: true);
+                }
+            }
+
+            var topBarBossIcon = run.GlobalUi.TopBar.BossIcon;
+            topBarBossIcon.RefreshBossIcon();
+            // Inside a Boss room the game hides BossIcon and displays the separate RoomIcon.
+            // Refresh both through their native logic, including second-Boss and victory rules.
+            TopBarRoomIconRefreshMethod?.Invoke(run.GlobalUi.TopBar.RoomIcon, null);
+            NHoverTipSet.Remove(topBarBossIcon);
+            ModLog.Info(
+                $"已刷新当前阶段 Boss 的地图图标、顶部图标、房间图标和名称；" +
+                $"受影响外观组={string.Join(",", bossGroupIds.Intersect(affectedGroups))}。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "刷新当前阶段 Boss 地图/顶部外观失败：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    internal static void RefreshBossMapPointPresentation(NBossMapPoint bossPoint)
+    {
+        try
+        {
+            var run = NRun.Instance;
+            if (!TryGetRunState(run, out var runState))
+            {
+                return;
+            }
+
+            var selectedProviders = ResolveCurrentBossGroupIds(runState)
+                .Select(SkinService.GetSelectedRuntimeProvider)
+                .Where(providerId => providerId != null)
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            // The original _Ready has already loaded the selected resource overlay. Only the
+            // isolated DLL callback needs replaying here; forcing the native Spine resource a
+            // second time would restart its asynchronous initialization for no visual benefit.
+            RefreshBossMapPointPresentation(
+                bossPoint,
+                selectedProviders,
+                refreshNativePresentation: false);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "初始化 Boss 地图皮肤失败，保留游戏当前图标：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static void RefreshBossMapPointPresentation(
+        NBossMapPoint bossPoint,
+        IEnumerable<string> selectedProviders,
+        bool refreshNativePresentation)
+    {
+        ManagedSkinModLoader.RestoreAllNodeReadyBehaviors(bossPoint);
+        if (refreshNativePresentation &&
+            TryGetRunState(NRun.Instance, out var runState))
+        {
+            RefreshNativeBossMapPoint(bossPoint, runState);
+        }
+
+        foreach (var providerId in selectedProviders)
+        {
+            ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, bossPoint);
+        }
+    }
+
+    internal static void RefreshNativeBossMapPoint(
+        NBossMapPoint bossPoint,
+        IRunState runState)
+    {
+        var encounter = bossPoint.Point == runState.Map.SecondBossMapPoint
+            ? runState.Act.SecondBossEncounter
+            : runState.Act.BossEncounter;
+        if (encounter == null)
+        {
+            return;
+        }
+
+        var spineNode = bossPoint.GetNode<Node2D>("%SpineSprite");
+        var placeholderImage = bossPoint.GetNode<TextureRect>("%PlaceholderImage");
+        var placeholderOutline = bossPoint.GetNode<TextureRect>("%PlaceholderOutline");
+        var generation = bossPoint.GetMeta(BossMapRefreshGenerationMeta, 0L).AsInt64() + 1L;
+        bossPoint.SetMeta(BossMapRefreshGenerationMeta, generation);
+        if (encounter.BossNodeSpineResource is { } skeletonData)
+        {
+            placeholderImage.Visible = false;
+            placeholderOutline.Visible = false;
+            spineNode.Visible = true;
+            var animator = BossMapAnimatorField?.GetValue(bossPoint) as MegaSprite ??
+                           new MegaSprite(spineNode);
+            animator.SetSkeletonDataRes(skeletonData);
+            BossMapAnimatorField?.SetValue(bossPoint, animator);
+            BossMapUsesSpineField?.SetValue(bossPoint, true);
+            if (animator.GetNormalMaterial() is ShaderMaterial material)
+            {
+                BossMapMaterialField?.SetValue(bossPoint, material);
+            }
+
+            bossPoint.RunWhenSpineReady(animator, animationState =>
+            {
+                if (GodotObject.IsInstanceValid(bossPoint) &&
+                    bossPoint.GetMeta(BossMapRefreshGenerationMeta, 0L).AsInt64() == generation)
+                {
+                    if (animator.GetNormalMaterial() is ShaderMaterial readyMaterial)
+                    {
+                        BossMapMaterialField?.SetValue(bossPoint, readyMaterial);
+                    }
+
+                    animationState.SetAnimation("animation");
+                    BossMapRefreshColorMethod?.Invoke(bossPoint, null);
+                }
+            });
+            return;
+        }
+
+        spineNode.Visible = false;
+        placeholderImage.Texture = PreloadManager.Cache.GetAsset<Texture2D>(
+            encounter.BossNodePath + ".png");
+        placeholderOutline.Texture = PreloadManager.Cache.GetAsset<Texture2D>(
+            encounter.BossNodePath + "_outline.png");
+        placeholderImage.Visible = true;
+        placeholderOutline.Visible = true;
+        BossMapPlaceholderImageField?.SetValue(bossPoint, placeholderImage);
+        BossMapPlaceholderOutlineField?.SetValue(bossPoint, placeholderOutline);
+        BossMapUsesSpineField?.SetValue(bossPoint, false);
+        BossMapRefreshColorMethod?.Invoke(bossPoint, null);
+    }
+
+    private static void RefreshVisibleRelicIcons(NRun run)
+    {
+        foreach (var relic in EnumerateDescendants<NRelic>(run))
+        {
+            try
+            {
+                // Assigning the existing model invokes the game's private Reload method even
+                // when the model reference itself did not change. This refreshes both small and
+                // large icons immediately after a framework character skin switch.
+                relic.Model = relic.Model;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    "刷新框架遗物图标失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static IEnumerable<TNode> EnumerateDescendants<TNode>(Node root)
+        where TNode : Node
+    {
+        foreach (var child in root.GetChildren())
+        {
+            if (child is TNode match)
+            {
+                yield return match;
+            }
+
+            foreach (var descendant in EnumerateDescendants<TNode>(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    private static void RefreshCurrentEnergyCounter(Player player)
+    {
+        var combatUi = NCombatRoom.Instance?.Ui;
+        if (combatUi != null) RefreshEnergyCounter(combatUi, player);
+    }
+
+    internal static void RefreshEnergyCounter(NCombatUi combatUi, Player player)
+    {
+        try
+        {
+            using var hudBinding = CombatHudResourceLifecycle.BeforeEnergyCounterReplacement(combatUi);
+            ReplaceEnergyCounterCore(combatUi, player);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新实战能量界面失败，未释放无法安全交接的原控件：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static void ReplaceEnergyCounterCore(NCombatUi combatUi, Player player)
+    {
+        if (EnergyCounterField?.GetValue(combatUi) is not NEnergyCounter oldCounter)
+        {
+            return;
+        }
+
+        NEnergyCounter? newCounter = null;
+        NStarCounter? starCounter = null;
+        var oldIndex = oldCounter.GetIndex();
+        var oldDetached = false;
+        try
+        {
+            newCounter = NEnergyCounter.Create(player);
+            if (newCounter == null)
+            {
+                return;
+            }
+
+            var desiredName = oldCounter.Name;
+            newCounter.Name = desiredName;
+            newCounter.Visible = oldCounter.Visible;
+            newCounter.Modulate = oldCounter.Modulate;
+            newCounter.SelfModulate = oldCounter.SelfModulate;
+            combatUi.EnergyCounterContainer.AddChild(newCounter);
+            combatUi.EnergyCounterContainer.MoveChild(newCounter, oldIndex);
+            if (StarCounterField?.GetValue(combatUi) is NStarCounter currentStarCounter)
+            {
+                starCounter = currentStarCounter;
+                starCounter.Reparent(newCounter, keepGlobalTransform: true);
+            }
+
+            EnergyCounterField.SetValue(combatUi, newCounter);
+            oldCounter.GetParent()?.RemoveChild(oldCounter);
+            oldDetached = true;
+            newCounter.Name = desiredName;
+            oldCounter.QueueFree();
+        }
+        catch (Exception exception)
+        {
+            EnergyCounterField.SetValue(combatUi, oldCounter);
+            if (starCounter != null &&
+                GodotObject.IsInstanceValid(starCounter) &&
+                GodotObject.IsInstanceValid(oldCounter))
+            {
+                starCounter.Reparent(oldCounter, keepGlobalTransform: true);
+            }
+
+            if (oldDetached && GodotObject.IsInstanceValid(oldCounter))
+            {
+                combatUi.EnergyCounterContainer.AddChild(oldCounter);
+                combatUi.EnergyCounterContainer.MoveChild(oldCounter, oldIndex);
+            }
+
+            if (newCounter != null && GodotObject.IsInstanceValid(newCounter))
+            {
+                newCounter.GetParent()?.RemoveChild(newCounter);
+                newCounter.QueueFree();
+            }
+
+            ModLog.Warn("刷新实战能量计数器失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private sealed record PendingSelection(string GroupId, string OptionId, ulong StartedMsec);
+
+    private sealed record PendingMonsterRefresh(HashSet<string> GroupIds, string Reason, ulong StartedMsec);
+}
+
+internal partial class CharacterAppearanceRuntimeNode : Node
+{
+    public override void _Ready() => SetProcess(false);
+
+    public void Wake() => SetProcess(true);
+
+    public override void _Process(double delta)
+    {
+        if (!CharacterAppearanceRuntime.ProcessPendingSelection())
+        {
+            SetProcess(false);
+        }
+    }
+
+    public override void _ExitTree() =>
+        CharacterAppearanceRuntime.ClearPendingSelection();
+}
+
+// 常驻·共享：角色 / 随从 / 怪物 / 局内界面 —— 挂局内外观运行时节点并接联机同步。详见 docs/refactor/resident-patches.md
+[HarmonyPatch(typeof(NRun), nameof(NRun._Ready))]
+internal static class InRunCharacterAppearanceRuntimePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NRun __instance) =>
+        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters(__instance);
+
+    private static void Postfix(NRun __instance)
+    {
+        // Children added from an NRun._Ready postfix are not guaranteed to receive their own
+        // _Ready callback in every Godot build. Attach explicitly; the node below still owns
+        // per-frame ticking and teardown once the run is live.
+        MultiplayerSkinSync.AttachToRun();
+        if (__instance.GetNodeOrNull<CharacterAppearanceRuntimeNode>("SkinChangerAppearanceRuntime") == null)
+        {
+            __instance.AddChild(new CharacterAppearanceRuntimeNode
+            {
+                Name = "SkinChangerAppearanceRuntime",
+                ProcessMode = Node.ProcessModeEnum.Always
+            });
+        }
+    }
+}
+
+// 常驻·共享：Boss / 房间图标 —— 接管顶栏房间图标的贴图加载。详见 docs/refactor/resident-patches.md
+[HarmonyPatch(typeof(NTopBarRoomIcon), "UpdateIcon")]
+internal static class TopBarRoomIconSkinTexturePatch
+{
+    [HarmonyTranspiler]
+    private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+    {
+        var compressedLoader = AccessTools.Method(typeof(AssetCache), nameof(AssetCache.GetCompressedTexture2D));
+        var textureLoader = AccessTools.Method(typeof(AssetCache), nameof(AssetCache.GetTexture2D));
+        foreach (var instruction in instructions)
+        {
+            // TextureRect accepts any Texture2D. Use the same managed lookup as BossIcon,
+            // retaining the game's room selection, visibility and tooltip behavior unchanged.
+            if (instruction.Calls(compressedLoader))
+            {
+                instruction.operand = textureLoader;
+            }
+            yield return instruction;
+        }
+    }
+}
+
+// 常驻·共享：怪物 / Boss 提供者 —— 地图 Boss 点的皮肤呈现。详见 docs/refactor/resident-patches.md
+[HarmonyPatch(typeof(NBossMapPoint), nameof(NBossMapPoint._Ready))]
+internal static class BossMapPointSkinPresentationPatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NBossMapPoint __instance) =>
+        CharacterAppearanceRuntime.RefreshBossMapPointPresentation(__instance);
+}
+
+// 常驻·共享：角色 / 随从 / 怪物 —— 生物就绪时记录视觉缩放基准并套变换外壳。详见 docs/refactor/resident-patches.md
+[HarmonyPatch(typeof(NCreature), nameof(NCreature._Ready))]
+internal static class CharacterAppearanceCreatureReadyPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCreature __instance) =>
+        CharacterAppearanceRuntime.OnCreatureReady(__instance);
+}
+
+// 常驻·共享：角色与随从 —— 记录原生排布快照。详见 docs/refactor/resident-patches.md
+[HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom.PositionPlayersAndPets))]
+internal static class CharacterAppearancePlayerLayoutPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(float scaling, bool fullyCenterPlayers) =>
+        CharacterAppearanceRuntime.CapturePlayerAndPetLayout(scaling, fullyCenterPlayers);
+}
+
+// 常驻·共享：角色 / 宠物 / 怪物 —— 进战斗房时扫描双方并建运行时范围。详见 docs/refactor/resident-patches.md
+[HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom.Create))]
+internal static class CombatRoomRuntimeProviderScopePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(ICombatRoomVisuals visuals) =>
+        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnCombatRoom(visuals);
+}
+
+// 常驻·共享：角色 / 宠物 / 怪物 —— 离开战斗房时收尾同一份范围。详见 docs/refactor/resident-patches.md
+[HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom._ExitTree))]
+internal static class CombatRoomRuntimeProviderScopeExitPatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix() => CharacterAppearanceRuntime.ClearCombatRuntimeGroups();
+}
+
+// 常驻·共享：角色 / 随从 / 怪物 —— 按变换更新命中框，含纯怪物缩放分支。详见 docs/refactor/resident-patches.md
+[HarmonyPatch]
+internal static class CharacterAppearanceBoundsPatch
+{
+    private static MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NCreature), "UpdateBounds", [typeof(Node)]);
+
+    // Establish our model/UI transforms before authors apply their final visibility guards.
+    // Running last discarded e.g. top-edge clamping by rebuilding the intent's local position.
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(NCreature __instance, Node boundsContainer) =>
+        CharacterAppearanceRuntime.CorrectBoundsForVisualTransforms(__instance, boundsContainer);
+}
+
+// 常驻·共享：角色呈现 / 本体外观编辑 —— 跟随生物设置充能球位置。详见 docs/refactor/resident-patches.md
+[HarmonyPatch]
+internal static class CharacterAppearanceOrbPositionPatch
+{
+    private static MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NCreature), "SetOrbManagerPosition");
+
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCreature __instance) =>
+        CharacterAppearanceRuntime.CorrectOrbPositionForCharacterTransform(__instance);
+}
+
+

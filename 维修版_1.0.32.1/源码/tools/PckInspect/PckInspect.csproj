@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../STS2SkinChanger/Pck/PckArchive.cs" Link="PckArchive.cs" />
+    <!-- PckArchive 写包要过写盘熔断（DiskGuard），连带它依赖的两个安全件。 -->
+    <Compile Include="../../STS2SkinChanger/Core/Safety/DiskGuard.cs" Link="Safety/DiskGuard.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/Safety/CircuitBreaker.cs" Link="Safety/CircuitBreaker.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/Safety/SafetyLog.cs" Link="Safety/SafetyLog.cs" />
+  </ItemGroup>
+</Project>

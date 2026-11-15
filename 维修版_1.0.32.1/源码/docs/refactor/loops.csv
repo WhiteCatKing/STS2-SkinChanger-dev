@@ -1,0 +1,8 @@
+﻿位置,文件,行号,所在方法,循环头,退出条件,退出样本,建议模块
+STS2SkinChanger/Core/BackgroundSkinService.cs:573,STS2SkinChanger/Core/BackgroundSkinService.cs,573,ListLayersInDirectory,while (true),有 break/return,                    break;,background
+STS2SkinChanger/Core/BackgroundSkinService.cs:2127,STS2SkinChanger/Core/BackgroundSkinService.cs,2127,ListLayerPaths,while (true),有 break/return,                    break;,background
+STS2SkinChanger/Core/BackgroundSkinService.cs:3671,STS2SkinChanger/Core/BackgroundSkinService.cs,3671,ListGameBackgroundTitles,while (true),有 break/return,                    break;,background
+STS2SkinChanger/Core/SkinService.cs:1792,STS2SkinChanger/Core/SkinService.cs,1792,WarmResourcePackFilesAsync,while (true),有 break/return,                    break;,core
+STS2SkinChanger/Core/SkinService.cs:9346,STS2SkinChanger/Core/SkinService.cs,9346,ApplyMonsterCategoryPriorityToSelections,while (true),有 break/return,                    return entries.First,core
+STS2SkinChanger/Core/SkinService.EventPriorities.cs:154,STS2SkinChanger/Core/SkinService.EventPriorities.cs,154,BuildEventPrioritySelectionUpdates,while (true),有 break/return,        },event
+STS2SkinChanger/Core/StartupWatchdog.cs:91,STS2SkinChanger/Core/StartupWatchdog.cs,91,Watch,while (true),有 break/return,                return;,core

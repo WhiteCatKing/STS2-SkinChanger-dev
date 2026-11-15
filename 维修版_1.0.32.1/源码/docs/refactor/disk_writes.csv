@@ -1,0 +1,81 @@
+﻿位置,行号,文件,所在方法,查找方式,写的是什么,上限,建议模块,代码
+STS2SkinChanger/Core/CharacterSkinBundleRunState.cs:41,41,STS2SkinChanger/Core/CharacterSkinBundleRunState.cs,Save,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,character,Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+STS2SkinChanger/Core/CharacterSkinBundleRunState.cs:43,43,STS2SkinChanger/Core/CharacterSkinBundleRunState.cs,Save,new FileStream(,日志,⚠ 无,character,"using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))"
+STS2SkinChanger/Core/CharacterSkinBundleRunState.cs:48,48,STS2SkinChanger/Core/CharacterSkinBundleRunState.cs,Save,File.Move,日志,⚠ 无,character,"File.Move(temporary, path, overwrite: true);"
+STS2SkinChanger/Core/CharacterSkinBundleRunState.cs:49,49,STS2SkinChanger/Core/CharacterSkinBundleRunState.cs,Save,File.Copy,日志,⚠ 无,character,"try { File.Copy(path, path + "".bak"", overwrite: true); }"
+STS2SkinChanger/Core/DebugSnapshot.cs:74,74,STS2SkinChanger/Core/DebugSnapshot.cs,PollWatch,File.Delete,日志,⚠ 无,core,System.IO.File.Delete(WatchPath);
+STS2SkinChanger/Core/DebugSnapshot.cs:110,110,STS2SkinChanger/Core/DebugSnapshot.cs,PollWatch,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,System.IO.Directory.CreateDirectory(directory);
+STS2SkinChanger/Core/DebugSnapshot.cs:144,144,STS2SkinChanger/Core/DebugSnapshot.cs,PollWatch,File.AppendAllText,日志,⚠ 无,core,"System.IO.File.AppendAllText(file, builder.ToString());"
+STS2SkinChanger/Core/DebugSnapshot.cs:204,204,STS2SkinChanger/Core/DebugSnapshot.cs,OnFrame,File.Delete,其他/未分类,⚠ 无,core,System.IO.File.Delete(RequestPath);
+STS2SkinChanger/Core/DebugSnapshot.cs:233,233,STS2SkinChanger/Core/DebugSnapshot.cs,PollPick,File.Delete,其他/未分类,⚠ 无,core,System.IO.File.Delete(PickPath);
+STS2SkinChanger/Core/DebugSnapshot.cs:293,293,STS2SkinChanger/Core/DebugSnapshot.cs,OnPostDraw,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,System.IO.Directory.CreateDirectory(directory);
+STS2SkinChanger/Core/GitHubFolderSwap.cs:30,30,STS2SkinChanger/Core/GitHubFolderSwap.cs,InvalidOperationException,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(modsDirectory);
+STS2SkinChanger/Core/GitHubFolderSwap.cs:83,83,STS2SkinChanger/Core/GitHubFolderSwap.cs,Disable,File.Move,其他/未分类,⚠ 无,core,"try { File.Move(file, file + GitHubModsPolicy.DisabledSuffix, overwrite: true); }"
+STS2SkinChanger/Core/GitHubFolderSwap.cs:188,188,STS2SkinChanger/Core/GitHubFolderSwap.cs,CopyDirectory,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(destination);
+STS2SkinChanger/Core/GitHubFolderSwap.cs:194,194,STS2SkinChanger/Core/GitHubFolderSwap.cs,CopyDirectory,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+STS2SkinChanger/Core/GitHubFolderSwap.cs:195,195,STS2SkinChanger/Core/GitHubFolderSwap.cs,CopyDirectory,File.Copy,其他/未分类,⚠ 无,core,"File.Copy(file, target, overwrite: true);"
+STS2SkinChanger/Core/GitHubInstallLedger.cs:133,133,STS2SkinChanger/Core/GitHubInstallLedger.cs,GitHubInstallLedgerState,Directory.CreateDirectory,目录创建（不写数据）,文件内另有上限常量,core,if (directory is { Length: > 0 }) Directory.CreateDirectory(directory);
+STS2SkinChanger/Core/GitHubInstallLedger.cs:135,135,STS2SkinChanger/Core/GitHubInstallLedger.cs,GitHubInstallLedgerState,File.WriteAllText,其他/未分类,文件内另有上限常量,core,"File.WriteAllText(temp, json);"
+STS2SkinChanger/Core/GitHubInstallLedger.cs:136,136,STS2SkinChanger/Core/GitHubInstallLedger.cs,GitHubInstallLedgerState,File.Move,其他/未分类,文件内另有上限常量,core,"File.Move(temp, path, overwrite: true);"
+STS2SkinChanger/Core/GitHubSkinCatalog.cs:111,111,STS2SkinChanger/Core/GitHubSkinCatalog.cs,Save,Directory.CreateDirectory,目录创建（不写数据）,MaxCacheBytes,core,if (directory is { Length: > 0 }) Directory.CreateDirectory(directory);
+STS2SkinChanger/Core/GitHubSkinCatalog.cs:113,113,STS2SkinChanger/Core/GitHubSkinCatalog.cs,Save,File.WriteAllText,缓存,MaxEntries,core,"File.WriteAllText(temp, json);"
+STS2SkinChanger/Core/GitHubSkinCatalog.cs:114,114,STS2SkinChanger/Core/GitHubSkinCatalog.cs,Save,File.Move,缓存,MaxEntries,core,"File.Move(temp, path, overwrite: true);"
+STS2SkinChanger/Core/GitHubSkinClient.cs:123,123,STS2SkinChanger/Core/GitHubSkinClient.cs,InvalidDataException,Directory.CreateDirectory,目录创建（不写数据）,MaxDownloadBytes,core,if (directory is { Length: > 0 }) Directory.CreateDirectory(directory);
+STS2SkinChanger/Core/GitHubSkinClient.cs:128,128,STS2SkinChanger/Core/GitHubSkinClient.cs,InvalidDataException,File.Create,下载,MaxDownloadBytes,core,await using (var output = File.Create(part))
+STS2SkinChanger/Core/GitHubSkinClient.cs:139,139,STS2SkinChanger/Core/GitHubSkinClient.cs,InvalidDataException,File.Move,下载,MaxDownloadBytes,core,"File.Move(part, destination, overwrite: true);"
+STS2SkinChanger/Core/GitHubSkinClient.cs:143,143,STS2SkinChanger/Core/GitHubSkinClient.cs,InvalidDataException,File.Delete,其他/未分类,文件内另有上限常量,core,try { if (File.Exists(part)) File.Delete(part); } catch (IOException) { }
+STS2SkinChanger/Core/GitHubSkinService.cs:236,236,STS2SkinChanger/Core/GitHubSkinService.cs,InvalidOperationException,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(root);
+STS2SkinChanger/Core/GitHubSkinService.cs:266,266,STS2SkinChanger/Core/GitHubSkinService.cs,Extract,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(destination);
+STS2SkinChanger/Core/GitHubSkinService.cs:280,280,STS2SkinChanger/Core/GitHubSkinService.cs,InvalidDataException,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+STS2SkinChanger/Core/GitHubSkinService.cs:627,627,STS2SkinChanger/Core/GitHubSkinService.cs,TryDeleteFile,File.Delete,日志,⚠ 无,core,try { if (File.Exists(path)) File.Delete(path); }
+STS2SkinChanger/Core/MlmLaunchPlanSync.cs:166,166,STS2SkinChanger/Core/MlmLaunchPlanSync.cs,JsonArray,File.WriteAllText,其他/未分类,⚠ 无,core,"File.WriteAllText(path, root.ToJsonString(JsonOptions) + System.Environment.NewLine, new UTF8Encoding(false));"
+STS2SkinChanger/Core/ModThemePresets.cs:119,119,STS2SkinChanger/Core/ModThemePresets.cs,Save,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_path))!);
+STS2SkinChanger/Core/ModThemePresets.cs:123,123,STS2SkinChanger/Core/ModThemePresets.cs,Save,File.WriteAllText,配置,⚠ 无,core,"File.WriteAllText(temp, JsonSerializer.Serialize(new PresetFile { Version = 1, Presets = next }, Options));"
+STS2SkinChanger/Core/ModThemePresets.cs:124,124,STS2SkinChanger/Core/ModThemePresets.cs,Save,File.Move,其他/未分类,⚠ 无,core,"File.Move(temp, _path, true);"
+STS2SkinChanger/Core/ModThemePresets.cs:126,126,STS2SkinChanger/Core/ModThemePresets.cs,Save,File.Delete,其他/未分类,⚠ 无,core,finally { if (File.Exists(temp)) File.Delete(temp); }
+STS2SkinChanger/Core/ModThemePresets.cs:128,128,STS2SkinChanger/Core/ModThemePresets.cs,Save,File.Copy,其他/未分类,⚠ 无,core,"try { File.Copy(_path, _path + "".bak"", true); }"
+STS2SkinChanger/Core/ModThemeSettings.cs:143,143,STS2SkinChanger/Core/ModThemeSettings.cs,Save,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+STS2SkinChanger/Core/ModThemeSettings.cs:147,147,STS2SkinChanger/Core/ModThemeSettings.cs,Save,File.WriteAllText,配置,⚠ 无,core,"File.WriteAllText(temp, JsonSerializer.Serialize(settings.Normalize(), Options));"
+STS2SkinChanger/Core/ModThemeSettings.cs:148,148,STS2SkinChanger/Core/ModThemeSettings.cs,Save,File.Move,配置,⚠ 无,core,"File.Move(temp, path, true);"
+STS2SkinChanger/Core/ModThemeSettings.cs:150,150,STS2SkinChanger/Core/ModThemeSettings.cs,Save,File.Delete,配置,⚠ 无,core,finally { if (File.Exists(temp)) File.Delete(temp); }
+STS2SkinChanger/Core/ModThemeSettings.cs:151,151,STS2SkinChanger/Core/ModThemeSettings.cs,Save,File.Copy,配置,⚠ 无,core,"try { File.Copy(path, path + "".bak"", true); }"
+STS2SkinChanger/Core/OnlineSkinCache.cs:142,142,STS2SkinChanger/Core/OnlineSkinCache.cs,CancellationTokenSource,Directory.CreateDirectory,目录创建（不写数据）,文件内另有上限常量,core,Directory.CreateDirectory(_sessionDirectory);
+STS2SkinChanger/Core/OnlineSkinCache.cs:790,790,STS2SkinChanger/Core/OnlineSkinCache.cs,OperationCanceledException,Directory.CreateDirectory,目录创建（不写数据）,文件内另有上限常量,core,Directory.CreateDirectory(outputDirectory);
+STS2SkinChanger/Core/OnlineSkinCache.cs:1228,1228,STS2SkinChanger/Core/OnlineSkinCache.cs,InvalidDataException,PckArchive.Write,覆盖包 PCK,文件内另有上限常量,core,"PckArchive.Write(outputPath, preparedFiles);"
+STS2SkinChanger/Core/OverlayCacheStore.cs:58,58,STS2SkinChanger/Core/OverlayCacheStore.cs,BeginSession,Directory.CreateDirectory,目录创建（不写数据）,文件内另有上限常量,core,System.IO.Directory.CreateDirectory(DirectoryPath);
+STS2SkinChanger/Core/OverlayCacheStore.cs:59,59,STS2SkinChanger/Core/OverlayCacheStore.cs,BeginSession,File.WriteAllText,日志,文件内另有上限常量,core,"File.WriteAllText(StampFile, stamp);"
+STS2SkinChanger/Core/OverlayCacheStore.cs:104,104,STS2SkinChanger/Core/OverlayCacheStore.cs,ReservePath,Directory.CreateDirectory,目录创建（不写数据）,文件内另有上限常量,core,System.IO.Directory.CreateDirectory(DirectoryPath);
+STS2SkinChanger/Core/OverlayCacheStore.cs:165,165,STS2SkinChanger/Core/OverlayCacheStore.cs,DeleteAll,File.Delete,其他/未分类,文件内另有上限常量,core,File.Delete(file);
+STS2SkinChanger/Core/SkinChangerPaths.cs:33,33,STS2SkinChanger/Core/SkinChangerPaths.cs,WriteCache,Storage.WriteCache,缓存,⚠ 无,core,"if (!Storage.WriteCache(path, write)) throw new OperationCanceledException(""Skin Changer is quitting."");"
+STS2SkinChanger/Core/SkinChangerStorage.cs:66,66,STS2SkinChanger/Core/SkinChangerStorage.cs,IOException,Directory.CreateDirectory,目录创建（不写数据）,文件内另有上限常量,core,Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+STS2SkinChanger/Core/SkinChangerStorage.cs:68,68,STS2SkinChanger/Core/SkinChangerStorage.cs,IOException,File.Move,配置,文件内另有上限常量,core,"File.Move(source, destination);"
+STS2SkinChanger/Core/SkinChangerStorage.cs:105,105,STS2SkinChanger/Core/SkinChangerStorage.cs,IOException,Directory.CreateDirectory,目录创建（不写数据）,文件内另有上限常量,core,Directory.CreateDirectory(CacheDirectory);
+STS2SkinChanger/Core/SkinChangerStorage.cs:106,106,STS2SkinChanger/Core/SkinChangerStorage.cs,IOException,new FileStream(,缓存,文件内另有上限常量,core,"_lease = new FileStream(Path.Combine(CacheDirectory, "".active""), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);"
+STS2SkinChanger/Core/SkinChangerStorage.cs:116,116,STS2SkinChanger/Core/SkinChangerStorage.cs,IOException,Directory.CreateDirectory,目录创建（不写数据）,文件内另有上限常量,core,Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+STS2SkinChanger/Core/SkinChangerStorage.cs:220,220,STS2SkinChanger/Core/SkinChangerStorage.cs,CleanSessionRoot,new FileStream(,缓存,文件内另有上限常量,core,"try { using var probe = new FileStream(lease, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }"
+STS2SkinChanger/Core/SkinChangerStorage.cs:245,245,STS2SkinChanger/Core/SkinChangerStorage.cs,CleanFile,File.Delete,缓存,文件内另有上限常量,core,try { File.Delete(file); report.RemovedFiles++; }
+STS2SkinChanger/Core/SkinConfig.cs:291,291,STS2SkinChanger/Core/SkinConfig.cs,Save,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+STS2SkinChanger/Core/SkinConfig.cs:293,293,STS2SkinChanger/Core/SkinConfig.cs,Save,new FileStream(,配置,⚠ 无,core,"using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))"
+STS2SkinChanger/Core/SkinConfig.cs:300,300,STS2SkinChanger/Core/SkinConfig.cs,Save,File.Move,其他/未分类,⚠ 无,core,"File.Move(temporaryPath, path, overwrite: true);"
+STS2SkinChanger/Core/SkinConfig.cs:303,303,STS2SkinChanger/Core/SkinConfig.cs,Save,File.Copy,日志,⚠ 无,core,"File.Copy(path, path + "".bak"", overwrite: true);"
+STS2SkinChanger/Core/SkinService.CharacterSkinBundles.cs:528,528,STS2SkinChanger/Core/SkinService.CharacterSkinBundles.cs,DeleteCharacterSkinBundleRunSnapshot,File.Delete,日志,⚠ 无,character,File.Delete(path);
+STS2SkinChanger/Core/SkinService.cs:775,775,STS2SkinChanger/Core/SkinService.cs,RemoveOnlineSessionProvider,File.Delete,覆盖包 PCK,文件级: 8 GB,core,File.Delete(overlayPath);
+STS2SkinChanger/Core/SkinService.cs:4196,4196,STS2SkinChanger/Core/SkinService.cs,InvalidOperationException,SkinChangerPaths.WriteCache,覆盖包 PCK,文件级: 8 GB,core,"SkinChangerPaths.WriteCache(overlayPath, () => PckArchive.Write(overlayPath, newFiles));"
+STS2SkinChanger/Core/SkinService.cs:6118,6118,STS2SkinChanger/Core/SkinService.cs,GetOrPrepareRuntimeOverlay,SkinChangerPaths.WriteCache,覆盖包 PCK,文件级: 8 GB,core,"SkinChangerPaths.WriteCache(overlayPath, () => PckArchive.Write(overlayPath, overlay.Files));"
+STS2SkinChanger/Core/SkinService.cs:7437,7437,STS2SkinChanger/Core/SkinService.cs,MountArchiveOverlay,Directory.CreateDirectory,目录创建（不写数据）,文件级: 8 GB,core,System.IO.Directory.CreateDirectory(
+STS2SkinChanger/Core/SkinService.cs:7439,7439,STS2SkinChanger/Core/SkinService.cs,MountArchiveOverlay,PckArchive.WriteFromArchives,覆盖包 PCK,文件级: 8 GB,core,"PckArchive.WriteFromArchives(overlayPath, sources);"
+STS2SkinChanger/Core/SkinService.cs:7655,7655,STS2SkinChanger/Core/SkinService.cs,TryDelete,File.Delete,其他/未分类,文件级: 8 GB,core,File.Delete(path);
+STS2SkinChanger/Core/SkinService.cs:8451,8451,STS2SkinChanger/Core/SkinService.cs,EnsureGameSceneOnTop,SkinChangerPaths.WriteCache,覆盖包 PCK,文件级: 8 GB,core,"SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));"
+STS2SkinChanger/Core/SkinService.cs:8574,8574,STS2SkinChanger/Core/SkinService.cs,LoadGameSceneViaAlias,SkinChangerPaths.WriteCache,覆盖包 PCK,文件级: 8 GB,core,"SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));"
+STS2SkinChanger/Core/SkinService.cs:8626,8626,STS2SkinChanger/Core/SkinService.cs,InstantiateGameCreatureVisuals,SkinChangerPaths.WriteCache,覆盖包 PCK,文件级: 8 GB,core,"SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));"
+STS2SkinChanger/Core/SkinWorkshopService.Community.cs:51,51,STS2SkinChanger/Core/SkinWorkshopService.Community.cs,CancellationTokenSource,SkinChangerPaths.WriteCache,缓存,⚠ 无,workshop,"}, path, SkinChangerPaths.WriteCache);"
+STS2SkinChanger/Core/SkinWorkshopService.cs:116,116,STS2SkinChanger/Core/SkinWorkshopService.cs,CancellationTokenSource,SkinChangerPaths.WriteCache,缓存,⚠ 无,workshop,"await Task.Run(() => SkinChangerPaths.WriteCache(metadataPath, () => File.WriteAllText(metadataPath, JsonSerializer.Serialize(details))));"
+STS2SkinChanger/Core/SkinWorkshopService.cs:165,165,STS2SkinChanger/Core/SkinWorkshopService.cs,Cover,SkinChangerPaths.WriteCache,缓存,⚠ 无,workshop,"await Task.Run(() => SkinChangerPaths.WriteCache(cachePath, () =>"
+STS2SkinChanger/Core/SkinWorkshopService.cs:167,167,STS2SkinChanger/Core/SkinWorkshopService.cs,Cover,File.WriteAllBytes,缓存,⚠ 无,workshop,"File.WriteAllBytes(cachePath, bytes);"
+STS2SkinChanger/Core/StartupWatchdog.cs:150,150,STS2SkinChanger/Core/StartupWatchdog.cs,WriteReport,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,core,Directory.CreateDirectory(root);
+STS2SkinChanger/Core/StartupWatchdog.cs:152,152,STS2SkinChanger/Core/StartupWatchdog.cs,WriteReport,File.WriteAllText,日志,⚠ 无,core,"File.WriteAllText(path, builder.ToString(), new UTF8Encoding(false));"
+STS2SkinChanger/Core/WorkshopCommunityCatalog.cs:18,18,STS2SkinChanger/Core/WorkshopCommunityCatalog.cs,InvalidDataException,Directory.CreateDirectory,目录创建（不写数据）,⚠ 无,workshop,Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+STS2SkinChanger/Core/WorkshopCommunityCatalog.cs:20,20,STS2SkinChanger/Core/WorkshopCommunityCatalog.cs,InvalidDataException,File.WriteAllText,缓存,⚠ 无,workshop,"File.WriteAllText(temp, json);"
+STS2SkinChanger/Core/WorkshopCommunityCatalog.cs:21,21,STS2SkinChanger/Core/WorkshopCommunityCatalog.cs,InvalidDataException,File.Move,缓存,⚠ 无,workshop,"File.Move(temp, cachePath, overwrite: true);"
+STS2SkinChanger/Pck/PckArchive.cs:288,288,STS2SkinChanger/Pck/PckArchive.cs,WriteEntries,Directory.CreateDirectory,目录创建（不写数据）,文件内另有上限常量,core,Directory.CreateDirectory(System.IO.Path.GetDirectoryName(outputPath)!);
+STS2SkinChanger/Pck/PckArchive.cs:290,290,STS2SkinChanger/Pck/PckArchive.cs,WriteEntries,new BinaryWriter(,其他/未分类,文件内另有上限常量,core,"using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false);"

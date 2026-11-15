@@ -1,0 +1,10 @@
+﻿位置,文件,行号,所在方法,会调用,备注,建议模块
+STS2SkinChanger/Core/DebugSnapshot.cs:44,STS2SkinChanger/Core/DebugSnapshot.cs,44,ProcessFrame += OnFrame,直接调用: ,每帧钩子（未直接命中重建/挂载/写盘，供人工判断）,core
+STS2SkinChanger/Core/MultiplayerSkinSync.cs:2675,STS2SkinChanger/Core/MultiplayerSkinSync.cs,2675,_Process,"Tick → RefreshMultiplayerPlayerIcons, RefreshPlayerAppearance, RefreshPlayerTransforms, RefreshSessionRuntimeProviders",每帧钩子会触发重建/挂载/刷新/写盘,multiplayer
+STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs:2573,STS2SkinChanger/Ui/CharacterAppearanceRuntime.cs,2573,_Process,ProcessPendingSelection → ApplySelectionNow,每帧钩子会触发重建/挂载/刷新/写盘,character
+STS2SkinChanger/Ui/ProviderToolbarCanvas.cs:42,STS2SkinChanger/Ui/ProviderToolbarCanvas.cs,42,_Process,直接调用: UpdateCanvas,每帧钩子（未直接命中重建/挂载/写盘，供人工判断）,ui-common
+STS2SkinChanger/Ui/SkinWorkshopPanel.Introduction.cs:37,STS2SkinChanger/Ui/SkinWorkshopPanel.Introduction.cs,37,ProcessFrame += UpdateHover,"直接调用: Tick, UpdateHover",每帧钩子（未直接命中重建/挂载/写盘，供人工判断）,workshop
+STS2SkinChanger/Ui/StatefulCardArtView.cs:263,STS2SkinChanger/Ui/StatefulCardArtView.cs,263,_Process,直接调用: UpdateVisuals,每帧钩子（未直接命中重建/挂载/写盘，供人工判断）,card
+STS2SkinChanger/Ui/StatefulCombatEffects.cs:47,STS2SkinChanger/Ui/StatefulCombatEffects.cs,47,_Process,直接调用: ,每帧钩子（未直接命中重建/挂载/写盘，供人工判断）,ui-common
+STS2SkinChanger/Ui/StatefulCombatEffects.cs:122,STS2SkinChanger/Ui/StatefulCombatEffects.cs,122,_Process,直接调用: ,每帧钩子（未直接命中重建/挂载/写盘，供人工判断）,ui-common
+STS2SkinChanger/Ui/StatefulCombatEffects.cs:165,STS2SkinChanger/Ui/StatefulCombatEffects.cs,165,_Process,直接调用: ,每帧钩子（未直接命中重建/挂载/写盘，供人工判断）,ui-common
