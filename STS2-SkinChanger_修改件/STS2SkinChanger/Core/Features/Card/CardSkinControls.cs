@@ -2508,8 +2508,18 @@ internal static class CardInspectSkinReadyPatch
 internal static class CardInspectSkinDisplayPatch
 {
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NInspectCardScreen __instance) =>
+    private static void Postfix(NInspectCardScreen __instance)
+    {
+        // UpdateCardDisplay writes BigPortrait AFTER NCard.UpdateVisuals, overwriting the
+        // selected skin with the game's large portrait. Restore the same winner used by
+        // the grid here, after that final write, including upgrade/arrow navigation.
+        if (__instance.GetNodeOrNull<NCard>("Card") is { Model: not null } card)
+        {
+            CardSkinControls.ApplySelectedPortraitToNode(card, ExternalCardVisualBridge.GetOwnership(card));
+            ExternalCardVisualBridge.SynchronizeProvider(card);
+        }
         CardInspectSkinControls.Sync(__instance);
+    }
 }
 
 [FeaturePatch(FeatureIds.Card)]
