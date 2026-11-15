@@ -5051,8 +5051,11 @@ internal sealed partial class SkinCatalog : IDisposable
             ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             : GetIsolatedRelicProviderPaths(selected);
 
+        var traversedDependencies = 0;
         while (queue.TryDequeue(out var resource))
         {
+            if (++traversedDependencies > 8192)
+                throw new AppearanceResourceUnavailableException("皮肤资源依赖超过 8192 项，已停止展开。");
             // Exported Godot scenes/resources are commonly binary .scn/.res payloads behind a
             // text .remap file. Their external resource paths remain readable in the binary
             // string table, so scan both the source and every payload instead of stopping at the

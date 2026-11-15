@@ -294,11 +294,13 @@ internal static partial class ContextualSkinControls
         CharacterModel character,
         string groupId)
     {
+        SkinService.PrefetchCharacterChoices(groupId);
         var generation = screen.GetMeta(CharacterRefreshGenerationMeta, 0L).AsInt64() + 1L;
         screen.SetMeta(CharacterRefreshGenerationMeta, generation);
         Callable.From(() =>
         {
             if (!GodotObject.IsInstanceValid(screen) ||
+                !screen.IsInsideTree() ||
                 screen.GetMeta(CharacterRefreshGenerationMeta, 0L).AsInt64() != generation)
             {
                 return;
@@ -1736,27 +1738,34 @@ internal static partial class ContextualSkinControls
         var progressValue = 0;
         var packPaths = SkinService.IsSameManualVariantSource(groupId, optionId)
             ? [] : SkinService.GetSelectionResourcePackPaths(groupId, optionId);
+        var warmCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var warmStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         var warmTask = SkinService.WarmResourcePackFilesAsync(
             packPaths,
             progress => Interlocked.Exchange(
                 ref progressValue,
-                (int)Math.Round(progress * 78d)));
+                (int)Math.Round(progress * 78d)), warmCancellation.Token);
 
         Action poll = null!;
         poll = () =>
         {
             if (!GodotObject.IsInstanceValid(screen) ||
+                !screen.IsInsideTree() ||
                 screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() != generation)
             {
+                warmCancellation.Cancel();
+                warmCancellation.Dispose();
                 return;
             }
 
             UpdateCharacterLoadingOverlay(overlay, optionName, Volatile.Read(ref progressValue));
-            if (!warmTask.IsCompleted)
+            if (!warmTask.IsCompleted && System.Diagnostics.Stopwatch.GetElapsedTime(warmStarted).TotalSeconds < 10)
             {
                 ScheduleNextFrame(screen, poll);
                 return;
             }
+            warmCancellation.Cancel();
+            warmCancellation.Dispose();
 
             if (warmTask.IsFaulted)
             {
@@ -2050,6 +2059,12 @@ internal static partial class ContextualSkinControls
                     characterSelectTextures);
                 RefreshLocalLobbyAvatar(screen);
                 CharacterModelPreviewControls.Refresh(screen, character);
+                return;
+            }
+            catch (AppearanceResourceUnavailableException exception)
+            {
+                // A failed native dependency must not be retried through the generic fallback.
+                ModLog.Warn("[资源保护] 已停止本次选角重建，保留可用展示：" + exception.Message);
                 return;
             }
             catch (Exception exception)
@@ -2600,16 +2615,18 @@ internal static partial class ContextualSkinControls
         // own full-screen layer is selected. A normal Skin Changer rebuild always owns this host.
         container.Visible = true;
 
+        var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+        try
+        {
+            if (isolatedResources != null) RebindCharacterSceneResources(background, isolatedResources);
+        }
+        catch { background.Free(); throw; }
+
+        // Keep the current background until its replacement was instantiated and bound.
         foreach (var child in container.GetChildren())
         {
             container.RemoveChildSafely(child);
             child.QueueFreeSafely();
-        }
-
-        var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
-        if (isolatedResources != null)
-        {
-            RebindCharacterSceneResources(background, isolatedResources);
         }
 
         background.Name = character.Id.Entry + "_bg";
@@ -2743,14 +2760,8 @@ internal static partial class ContextualSkinControls
 
     private static IEnumerable<Node> EnumerateNodes(Node root)
     {
-        yield return root;
-        foreach (var child in root.GetChildren())
-        {
-            foreach (var descendant in EnumerateNodes(child))
-            {
-                yield return descendant;
-            }
-        }
+        return BoundedTraversal.Walk(root, node => GodotObject.IsInstanceValid(node)
+            ? node.GetChildren() : Enumerable.Empty<Node>()).Where(GodotObject.IsInstanceValid);
     }
 
     private static void RefreshCharacterButtonIcon(

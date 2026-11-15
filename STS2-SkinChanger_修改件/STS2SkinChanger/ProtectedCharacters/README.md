@@ -1,0 +1,17 @@
+# 十字军、贞德及其变体兼容边界
+
+此目录由用户要求归拢，保留原有命名空间、类型、FeaturePatch 标记和对外接口。文件移动不改变运行时发现方式，也不新增重复的 Harmony 初始化。
+
+| 能力 | 保护模块 |
+| --- | --- |
+| 十字军正式出招、低血量/房间钩子与玩家选择限制 | CrusaderHookBridge（ProviderModelDiscovery 负责实际补注册） |
+| 十字军 Default/Aggressor/Banneret/Templar/Infernal | ProviderVariantOptions、ProviderVariantPathPatch；原状态机/映射由提供者执行 |
+| 贞德两包、四种调色变体、同身份程序集行为代执行 | ProviderSettingsVariantOptions、VariantPackCapabilities、ProviderMenuGateCompat |
+| 贞德选人/局内头像、战损阶段、点击形态 | VariantPortraits、CharSelectStageCycle、CharSelectPackRebindCompat、CharSelectTakeoverSuppressor |
+| 作者快捷键与下拉选项一致性 | VariantHotkeyBridge、VariantHotkeyPoller（保留已有停用标记状态） |
+
+不能把两个贞德包按程序集简单名混为同一选择：SFW 包只取自身资源，不能继承另一包的玩家战损行为；菜单/头像的同源代执行与玩家作用域有不同规则。十字军不能只验证选牌前摇，必须验证 BeforeCardPlayed -> CardPlay/Smite。
+
+共享资源管线留在原位置，在本目录之外调用这些接口；本次安全改动不得用 Free/Dispose 删除活跃资源，不得关闭二进制依赖的深度隔离，也不得把旧 UI 预览当成战斗 NCreature 重放。
+
+回归入口 tools/check-protected-characters.ps1：真实十字军 DLL 正式出招和切走限制、真实三包目录/变体、手动变体/作用域/动画发现，以及资源预算和失败熔断。该检查验证托管合同和实际包数据，不等价于实机动画渲染。

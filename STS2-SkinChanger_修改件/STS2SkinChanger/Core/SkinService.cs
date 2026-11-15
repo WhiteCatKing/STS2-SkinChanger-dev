@@ -766,21 +766,10 @@ internal static partial class SkinService
                          key.Contains(cacheMarker, StringComparison.OrdinalIgnoreCase)).ToArray())
             {
                 RuntimeResourceBundles.Remove(key);
-                var overlayPath = PreparedRuntimeOverlays[key].OverlayPath;
                 PreparedRuntimeOverlays.Remove(key);
-                if (overlayPath != null)
-                {
-                    try
-                    {
-                        File.Delete(overlayPath);
-                    }
-                    catch (Exception exception)
-                    {
-                        ModLog.Info(
-                            "联机皮肤运行缓存仍被 Godot 占用，将在下次启动时清理：" +
-                            exception.GetBaseException().Message);
-                    }
-                }
+                // Leaving a run removes session choices, not Godot's mounted PCK directory.
+                // Even after the player disappears, delayed UI/Spine loads can reference it.
+                // Keep the immutable file until the next session's safe cache cleanup.
             }
         }
     }
@@ -1200,6 +1189,8 @@ internal static partial class SkinService
                 RuntimeResourceCache.Clear();
                 PreparedRuntimeOverlays.Clear();
                 RuntimeResourceBundles.Clear();
+                _sessionPreparedCount = 0;
+                _sessionPreparedBytes = 0;
                 CardPortraitCache.Clear();
                 ExternalCardProviderIdentityPaths.Clear();
                 BaselineRelicAtlasCache.Clear();
@@ -1769,6 +1760,7 @@ internal static partial class SkinService
     {
         var paths = resourcePackPaths
             .Where(File.Exists)
+            .Where(path => !CharacterPackPrefetch.IsWarm(path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var totalBytes = paths.Sum(path => new FileInfo(path).Length);
@@ -1789,17 +1781,20 @@ internal static partial class SkinService
                 FileShare.Read | FileShare.Delete,
                 buffer.Length,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
-            while (true)
+            var remainingBytes = stream.Length;
+            while (remainingBytes > 0)
             {
-                var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                var read = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remainingBytes)), cancellationToken).ConfigureAwait(false);
                 if (read == 0)
                 {
-                    break;
+                    throw new EndOfStreamException("预读期间资源包被截断：" + path);
                 }
 
                 completedBytes += read;
+                remainingBytes -= read;
                 reportProgress?.Invoke(Math.Clamp((double)completedBytes / totalBytes, 0d, 1d));
             }
+            CharacterPackPrefetch.MarkWarm(path);
         }
 
         reportProgress?.Invoke(1d);
@@ -5941,36 +5936,57 @@ internal static partial class SkinService
             trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
         }
 
+        if (RuntimeFailures.IsBlocked(prepared.Key, DateTime.UtcNow))
+            throw new AppearanceResourceUnavailableException("该外观资源刚加载失败，30 秒内停止重复解码。");
         var reused = TryGetRuntimeResourceBundle(prepared.Key, out var resources);
         if (!reused)
         {
+            TrimRuntimeResidency();
             resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
-            foreach (var pair in prepared.ResourcePaths)
+            try
             {
-                var resource = ResourceLoader.Load<Resource>(
-                    pair.Value,
-                    null,
-                    ResourceLoader.CacheMode.IgnoreDeep);
-                if (resource == null)
+                RuntimeLoadSafety.RequireHeadroom(prepared.EstimatedBytes);
+                foreach (var pair in prepared.ResourcePaths)
                 {
-                    // 单个资源缺失不能把整次重建拖进原生层：Spine/Godot 在半加载的 .ctex 上
-                    // 会以 "Parameter "mem" is null." 崩掉整个进程，所以这里只跳过并记日志；
-                    // 真正缺到场景/骨架时后续查找会抛托管异常，由调用方回滚到旧模型。
-                    ModLog.Warn($"[实战外观] 跳过缺失的独立皮肤资源：{pair.Value}（分组={groupId}）");
-                    continue;
+                    var resource = LoadCheckedRuntimeResource(pair.Value, prepared.CanReuseExternalDependencies, prepared.EstimatedBytes);
+
+                    resources[pair.Key] = resource;
+                    if (resource is PackedScene)
+                    {
+                        NonCombatSceneIdentity.Register(pair.Value, pair.Key);
+                        NonCombatSceneIdentity.Register(resource.ResourcePath, pair.Key);
+                    }
+                    RuntimeResourceCache[
+                        RuntimeResourceKey(groupId, selection, pair.Key)] = resource;
                 }
 
-                resources[pair.Key] = resource;
-                if (resource is PackedScene)
-                {
-                    NonCombatSceneIdentity.Register(pair.Value, pair.Key);
-                    NonCombatSceneIdentity.Register(resource.ResourcePath, pair.Key);
-                }
-                RuntimeResourceCache[
-                    RuntimeResourceKey(groupId, selection, pair.Key)] = resource;
+                RuntimeResourceBundles[prepared.Key] = new RuntimeResourceBundleState(resources, prepared.EstimatedBytes);
+                TrimRuntimeResidency(prepared.Key);
             }
-
-            RuntimeResourceBundles[prepared.Key] = new RuntimeResourceBundleState(resources);
+            catch (Exception error)
+            {
+                RuntimeFailures.Fail(prepared.Key, DateTime.UtcNow);
+                foreach (var pair in prepared.ResourcePaths)
+                    RuntimeResourceCache.Remove(RuntimeResourceKey(groupId, selection, pair.Key));
+                if (error is AppearanceResourceUnavailableException)
+                {
+                    // Drop only optional ownership; active scenes keep their own references.
+                    RuntimeResourceBundles.Clear();
+                    RuntimeResourceCache.Clear();
+                    GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
+                }
+                // Loading failed before the callback's finally existed; still restore any
+                // foreign canonical groups temporarily bridged by this immutable pack.
+                try
+                {
+                    if (prepared.RestoreGroups.Count > 0) MountOverlay(prepared.RestoreGroups);
+                }
+                catch (Exception restoreError)
+                {
+                    ModLog.Warn("资源失败后的外部路径恢复未完成：" + restoreError.GetBaseException().Message);
+                }
+                throw;
+            }
         }
 
         T callbackResult;
@@ -5987,6 +6003,11 @@ internal static partial class SkinService
             }
 
             callbackResult = callback(resources);
+        }
+        catch
+        {
+            RuntimeFailures.Fail(prepared.Key, DateTime.UtcNow);
+            throw;
         }
         finally
         {
@@ -6099,6 +6120,7 @@ internal static partial class SkinService
 
         RuntimeResourceBundles.Remove(key);
 
+        RuntimeLoadSafety.RequireHeadroom(64L * 1024 * 1024);
         var generation = ++_overlayGeneration;
         var aliasToken = $"{_sessionId}/{generation:D3}";
         var overlay = isolateRelicCanonicalPaths
@@ -6117,6 +6139,12 @@ internal static partial class SkinService
         var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
             groupId,
             overlay.CanonicalDependencyPaths);
+        var estimatedBytes = RuntimeLoadSafety.EstimateTextureBytes(overlay.Files);
+        if (estimatedBytes > RuntimeLoadSafety.MaximumSingleLoadBytes)
+            throw new AppearanceResourceUnavailableException("单次外观解码预算超过 1536 MiB，已停止加载。");
+        if (_sessionPreparedCount >= 256 ||
+            _sessionPreparedBytes + overlay.Files.Values.Sum(data => (long)data.Length) > 2L * 1024 * 1024 * 1024)
+            throw new AppearanceResourceUnavailableException("本次会话独立资源包达到上限，停止创建新包以保护引擎。");
         string? overlayPath = null;
         long overlaySize = 0;
         if (overlay.Files.Count > 0)
@@ -6125,6 +6153,8 @@ internal static partial class SkinService
             overlayPath = System.IO.Path.Combine(directory, $"{generation:D3}.pck");
             SkinChangerPaths.WriteCache(overlayPath, () => PckArchive.Write(overlayPath, overlay.Files));
             overlaySize = new FileInfo(overlayPath).Length;
+            _sessionPreparedCount++;
+            _sessionPreparedBytes += overlaySize;
         }
 
         var prepared = new PreparedRuntimeOverlay(
@@ -6137,7 +6167,9 @@ internal static partial class SkinService
             overlay.CanonicalDependencyPaths.ToHashSet(StringComparer.OrdinalIgnoreCase),
             restoreGroups.ToHashSet(StringComparer.OrdinalIgnoreCase),
             overlay.Files.Count,
-            overlaySize);
+            overlaySize,
+            estimatedBytes,
+            overlay.CanReuseExternalDependencies);
         PreparedRuntimeOverlays[key] = prepared;
         LastPreparedRuntimeOverlays[groupId] = prepared;
         return prepared;
@@ -6178,6 +6210,7 @@ internal static partial class SkinService
             bundle.Resources.Values.All(resource =>
                 GodotObject.IsInstanceValid(resource)))
         {
+            bundle.LastUse = Stopwatch.GetTimestamp();
             resources = bundle.Resources;
             return true;
         }
@@ -7712,10 +7745,15 @@ internal static partial class SkinService
         IReadOnlySet<string> CanonicalDependencyPaths,
         IReadOnlySet<string> RestoreGroups,
         int FileCount,
-        long FileSize);
+        long FileSize,
+        long EstimatedBytes,
+        bool CanReuseExternalDependencies);
 
     private sealed record RuntimeResourceBundleState(
-        Dictionary<string, Resource> Resources);
+        Dictionary<string, Resource> Resources, long EstimatedBytes)
+    {
+        public long LastUse { get; set; } = Stopwatch.GetTimestamp();
+    }
 
     private sealed class IsolatedCardOverlayState(string ownerId)
     {
@@ -7758,7 +7796,9 @@ internal static partial class SkinService
                      .Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                      .ToArray())
         {
-            PreparedRuntimeOverlays.Remove(key);
+            // Immutable prepared files survive selection changes. Their key includes provider,
+            // variant/resource state and framework identity; deleting them here generated a new
+            // alias pack and decoded the same large texture again on every menu return.
             RuntimeResourceBundles.Remove(key);
         }
     }
@@ -9363,8 +9403,11 @@ internal static partial class SkinService
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var excludedFullProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, string> desiredSelections;
+        var priorityPasses = 0;
         while (true)
         {
+            if (++priorityPasses > entries.Count + 1)
+                throw new AppearanceResourceUnavailableException("皮肤优先级计算未收敛，已停止本次应用。");
             desiredSelections = managedGroupIds.ToDictionary(
                 groupId => groupId,
                 groupId =>

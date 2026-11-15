@@ -81,6 +81,7 @@ internal static class SkinPreloader
     /// </summary>
     internal static void CancelAll()
     {
+        CharacterPackPrefetch.Cancel();
         _cancelled = true;
         if (Pending.Count == 0 && InFlight.Count == 0)
         {
@@ -260,6 +261,7 @@ internal static class SkinPreloader
                 }
 
                 // useSubThreads: false —— 不把外部依赖再拆成子任务投进线程池（与游戏 AssetLoadingSession 一致）。
+                RuntimeLoadSafety.RequireHeadroom(64L * 1024 * 1024);
                 var error = ResourceLoader.LoadThreadedRequest(path, "", useSubThreads: false);
                 if (error != Error.Ok)
                 {
@@ -270,6 +272,12 @@ internal static class SkinPreloader
 
                 InFlight.Add(path);
             }
+        }
+        catch (AppearanceResourceUnavailableException exception)
+        {
+            Pending.Clear();
+            Known.Clear();
+            ModLog.Warn("[性能] 内存不足，已丢弃尚未派发的预加载：" + exception.Message);
         }
         catch (Exception exception)
         {

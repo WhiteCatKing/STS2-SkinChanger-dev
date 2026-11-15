@@ -17,6 +17,26 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-protected-boundaries")
+{
+    ManualCharacterVariantTests.Run();
+    ScopedSkinBehaviorTests.Run();
+    AnimatorPatchDiscoveryTests.Run();
+    CharacterCatalogOwnershipTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-runtime-safety")
+{
+    RuntimeSafetyTests.Run();
+    return;
+}
+if (args.Length >= 3 && args[0] == "--test-protected-characters")
+{
+    ProtectedCharacterTests.Run(args[1], args.Skip(2).ToArray());
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--test-crusader-hooks")
 {
     CrusaderHookTests.Run(args[1]);

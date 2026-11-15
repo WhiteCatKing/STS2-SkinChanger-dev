@@ -1,3 +1,4 @@
+// 受保护兼容模块：十字军/贞德及同包变体。修改前阅读本目录 AGENTS.md 和 README.md。
 using Godot;
 using STS2SkinChanger.Catalog;
 

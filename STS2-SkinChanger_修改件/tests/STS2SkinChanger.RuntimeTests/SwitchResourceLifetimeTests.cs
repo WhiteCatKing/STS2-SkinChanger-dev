@@ -51,6 +51,10 @@ internal static class SwitchResourceLifetimeTests
             File.WriteAllBytes(replacement, new byte[10]);
             AccessTools.Method(typeof(OverlayCacheStore), "TrimToLimit").Invoke(null, [0L]);
             Require(File.Exists(replacement), "Even budget pressure must not remove an active archive.");
+            Require(!PatchProcessor.GetOriginalInstructions(AccessTools.Method(typeof(SkinService), "RemoveOnlineSessionProvider"))
+                .Select(instruction => instruction.operand).OfType<MethodInfo>()
+                .Any(method => method.DeclaringType == typeof(File) && method.Name == "Delete"),
+                "Leaving a run must not delete mounted online session archives.");
             Console.WriteLine("Switch resource lifetime passed: 500 actual scope disposals, foreign restore, pinned-file pruning and no native-name reuse.");
         }
         finally
