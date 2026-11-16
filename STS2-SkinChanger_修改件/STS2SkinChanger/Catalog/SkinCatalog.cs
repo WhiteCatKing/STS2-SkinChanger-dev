@@ -872,7 +872,12 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public static SkinCatalog Build(string gamePckPath, IEnumerable<SkinModDescriptor> mods)
     {
-        var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods));
+        // CznStyleUI is a UI application, including frames/icons that resemble card art.
+        // Its initializer and entire PCK must stay owned by the native loader.
+        // Match manifest identity so duplicate installations keep the same boundary.
+        var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods))
+            .Where(mod => !string.Equals(mod.ResourceNamespaceId, "CznStyleUI", StringComparison.OrdinalIgnoreCase))
+            .ToList();
         var gameArchive = PckArchive.Open(gamePckPath);
         var baselineIndexes = new List<PckResourceIndex>();
         var cosmeticIndexes = new List<PckResourceIndex>();
@@ -951,7 +956,12 @@ internal sealed partial class SkinCatalog : IDisposable
         IEnumerable<SkinModDescriptor> mods,
         string? gamePckPath = null)
     {
-        var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods));
+        // CznStyleUI is a UI application, including frames/icons that resemble card art.
+        // Its initializer and entire PCK must stay owned by the native loader.
+        // Match manifest identity so duplicate installations keep the same boundary.
+        var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods))
+            .Where(mod => !string.Equals(mod.ResourceNamespaceId, "CznStyleUI", StringComparison.OrdinalIgnoreCase))
+            .ToList();
         var providers = new List<SkinProviderProbe>();
         var importedToSource = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var baselineIndexes = new List<PckResourceIndex>();

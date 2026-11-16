@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.33`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.33.8`（工坊公开 `1.0.33`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
+当前值：`1.0.33.9`（工坊公开 `1.0.33`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -254,3 +254,5 @@ Initialize()
 - 1.0.33.7：MLM 清单 first 优先级及 Entry 最前顺序拒绝，交给 MLM 原生加载错误流程；一键整理回到 MLM 之后，已加载皮肤后必须重启。对应问题记录包含真实 MLM 排序/错误识别验证。
 
 - 1.0.33.8：MLM 排序要求直接展示在错误正文；立即持久恢复自己的优先级并在原一键整理后定位第 2 位，保留依赖校验和其他开关/偏好。已备份修复本机旧 ignorePriority 标记，个人配置未进 Git。
+
+- 1.0.33.9：CznStyleUI 整体 UI 包保持原生加载，参见 STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_czn_style_ui_native_loading.md。

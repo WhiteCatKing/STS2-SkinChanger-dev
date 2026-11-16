@@ -30,6 +30,7 @@ internal static class CznCompatibilityTests
         var tiphera = Path.Combine(workshop, "3799519206");
         Require(ProviderGameplayContentPolicy.DefinesNewContent(tiphera, "CznTipheraCharacter"), "Tiphera must retain gameplay ownership.");
         descriptors.Add(new("CznTipheraCharacter", "Tiphera", Path.Combine(tiphera, "CznTipheraCharacter.pck"), true, tiphera, true));
+        CheckStyleUi(gamePack, workshop);
         var probes = SkinCatalog.ProbeSkinProviders(descriptors, gamePack);
         foreach (var descriptor in descriptors.Where(d => !d.AffectsGameplay))
             Require(probes.Any(p => p.Id == descriptor.Id && p.VisualGroupCount > 0), "Provider not recognized: " + descriptor.Id);
@@ -49,6 +50,20 @@ internal static class CznCompatibilityTests
         Require(SkinPreloader.IsImmutableResourcePath("res://sts2_skin_runtime/session/001/body.tres"), "Private immutable paths remain eligible.");
         Require(!SkinPreloader.IsImmutableResourcePath("res://sts2_skin_runtime/../body.tres"), "Private path escape rejected.");
         Console.WriteLine("CZN compatibility passed: five real skin declarations/probes, gameplay exclusion, shared-event ownership and immutable preloading.");
+    }
+
+    internal static void CheckStyleUi(string gamePack, string workshop)
+    {
+        var uiRoot = Path.Combine(workshop, "3771060891");
+        var ui = new SkinModDescriptor("CznStyleUI::copy", "CZN Style UI", Path.Combine(uiRoot, "CznStyleUI.pck"),
+            false, uiRoot, true, "CznStyleUI");
+        Require(!SkinCatalog.ProbeSkinProviders([ui], gamePack).Any(),
+            "The real UI overhaul must retain its native initializer and complete PCK, including duplicate installations.");
+        using (var uiCatalog = SkinCatalog.Build(gamePack, [ui]))
+            Require(uiCatalog.PckCardOptions.Count == 0 && uiCatalog.CardGroups.Count == 0 &&
+                !uiCatalog.Groups.Any(g => g.Options.Any(o => o.EffectiveProviderId == ui.Id)),
+                "UI overhaul must not appear in appearance dropdowns.");
+        Console.WriteLine("CznStyleUI native loader ownership passed: real PCK, duplicate manifest identity, no card or appearance options.");
     }
 
     private static void CheckCorePatchContract(string dll)

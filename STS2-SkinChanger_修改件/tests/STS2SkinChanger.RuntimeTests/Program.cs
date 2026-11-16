@@ -99,6 +99,12 @@ if (args.Length == 1 && args[0] == "--test-switch-resource-lifetime")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--test-czn-style-ui")
+{
+    CznCompatibilityTests.CheckStyleUi(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--test-czn-compatibility")
 {
     CznCompatibilityTests.Run(args[1], args[2]);
