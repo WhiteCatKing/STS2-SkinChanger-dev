@@ -1052,6 +1052,8 @@ internal static class MerchantRuntimeAppearance
             // drawing its own shop, so its room and its screens are never touched.
             PartTakeoverVisualScope.Reconcile(room, GroupId);
 
+            ReplayPrivateMerchantRoomAppearance(room);
+
             return true;
         }
         catch (Exception exception)
@@ -1362,6 +1364,27 @@ internal static class MerchantRuntimeAppearance
             {
                 replacement.Free();
             }
+        }
+    }
+
+    // These providers attach to the room, not the button or inventory. Replaying only child
+    // _Ready callbacks leaves their option selectable but invisible. Run the author's room
+    // callback after replacement nodes are committed; the old button/hand must already be gone.
+    internal static void ReplayPrivateMerchantRoomAppearance(NMerchantRoom room)
+    {
+        var selection = SkinService.GetDisplayedSelection(GroupId);
+        var option = SkinService.Catalog?.Groups.FirstOrDefault(group => group.Id == GroupId)?
+            .Options.FirstOrDefault(item => item.Id == selection);
+        if (option?.UsesPrivateMerchantRoomCallback != true) return;
+        try
+        {
+            EnsureSelectedMerchantProviderActive(GroupId, option.EffectiveProviderId);
+            ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(room,
+                ManagedSkinModLoader.ResolveBehaviorProviderId(option.EffectiveProviderId));
+        }
+        catch (Exception error)
+        {
+            ModLog.Warn("私有商人房间外观应用失败，保留原商人：" + error.GetBaseException().Message);
         }
     }
 
@@ -1917,6 +1940,7 @@ internal static class MerchantRoomPlayerAppearancePatch
             // The catalogue preview runs the same scene with the same packages, so the merchant's
             // figure and the button's layout follow the selection here as well.
             PartTakeoverVisualScope.Reconcile(__instance, MerchantRuntimeAppearance.GroupId);
+            MerchantRuntimeAppearance.ReplayPrivateMerchantRoomAppearance(__instance);
             return;
         }
 

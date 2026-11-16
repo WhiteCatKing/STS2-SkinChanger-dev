@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.33`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.33.2`（工坊公开 `1.0.33`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_vakuu_vanilla_easter_egg_preview.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
+当前值：`1.0.33.3`（工坊公开 `1.0.33`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_private_neow_merchant_discovery.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -242,3 +242,5 @@ Initialize()
 - 1.0.33.1：修复可战损贞德第二/三档遗漏调色页而退回原色，保护区 StagePalettePages 按所选包补齐并继承当前权重；四变体 24 次档位循环和真实三档调色资源纳入保护回归。
 
 - 1.0.33.2：恢复瓦库原图默认预览，新增仅瓦库可选的官方彩蛋，沿用默认菱形/黄色样式；选择可保存，分类不自动选中彩蛋，外部散图及原生进度保留。
+
+2026-11-17 内测 1.0.33.3：修复雪霁改一代涅奥替换商人漏识别，接入私有 Spine/商店房间回调，详见 [问题记录](STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_private_neow_merchant_discovery.md)。公开版仍为 1.0.33。

@@ -5991,6 +5991,7 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        AddPrivateMerchantRuntimeOptions(indexes, groups);
         AddPckRuntimeProviderOptions(indexes, baselines, groups, knownGroupIds, knownCharacterGroupIds);
         AddPrivateCompanionVisualOptions(indexes, groups, knownGroupIds);
         AddDirectCharacterRuntimeProviderOptions(
@@ -9463,6 +9464,7 @@ internal sealed record SkinOption(
     /// recognize the package's own art and its own patches for that group.
     /// </summary>
     public string? ProviderRootPath { get; init; }
+    public bool UsesPrivateMerchantRoomCallback { get; init; }
 }
 
 internal sealed record RuntimeMonsterVisualMode(

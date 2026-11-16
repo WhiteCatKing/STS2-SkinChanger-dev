@@ -38,6 +38,12 @@ internal static class MerchantLifecycleTests
                 "Selected merchant must initialize before building its first visual.");
             var activation = Calls(AccessTools.Method(typeof(MerchantRuntimeAppearance), "EnsureSelectedMerchantProviderActive"));
             Require(activation.Any(m => m.Name == "TryActivateDeferredProvider"), "Re-focusing alone must not stand in for completed initialization.");
+            var roomReplay = Array.FindIndex(refresh, m => m.Name == "ReplayPrivateMerchantRoomAppearance");
+            Require(roomReplay >= 0 && refresh.Take(roomReplay).Count(m => m.Name == "RemoveChild") >= 2,
+                "Room-only merchant callback must see committed new nodes, not outgoing merchant nodes.");
+            Require(Calls(AccessTools.Method(typeof(MerchantRoomPlayerAppearancePatch), "Postfix"))
+                .Any(m => m.Name == "ReplayPrivateMerchantRoomAppearance"),
+                "Compendium preview must replay the selected room-only merchant without native run initialization.");
             var owner = AccessTools.Method(typeof(ManagedSkinModLoader), "IsMerchantSkinProvider");
             Require((bool)owner.Invoke(null, ["ATA_Merchant", "ATA_Merchant"])!, "Keep the selected merchant active.");
             foreach (var old in new[] { "Merchant2CuteII", "Merchant2CuteIIB", "OtherMerchant" })
