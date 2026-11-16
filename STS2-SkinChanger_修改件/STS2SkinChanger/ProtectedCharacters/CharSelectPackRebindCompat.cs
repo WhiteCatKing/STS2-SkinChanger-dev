@@ -38,6 +38,20 @@ internal static class CharSelectPackRebindCompat
             return;
         }
 
+        // This provider's SelectCharacter postfix expects the removed characterModel argument.
+        // Its parameterless reattach method is a no-op; reuse its actual Attach entry instead.
+        if (groupId == "silent" && ManagedSkinModLoader.GetActiveProviderAssembly(providerId) is { } active &&
+            active.GetName().Name == "silentKaguyaHpWear" &&
+            STS2SkinChanger.Ui.CharacterSelectScreenAccess.Background(screen)?.GetNodeOrNull<Control>("silent_bg") is { } background)
+        {
+            try { ReattachFoxBackground(active, background); }
+            catch (Exception exception)
+            {
+                ModLog.Warn("[选角重挂] 狐猎背景重挂失败：" + exception.GetBaseException().Message);
+            }
+            return;
+        }
+
         var throttleKey = providerId!;
         var now = System.Environment.TickCount64;
         if (LastCall.TryGetValue(throttleKey, out var previous) && now - previous < ThrottleMilliseconds)
@@ -100,13 +114,32 @@ internal static class CharSelectPackRebindCompat
         }
     }
 
+    internal static (MethodInfo Attach, FieldInfo Profile)? FoxAttachContract(Assembly assembly)
+    {
+        if (assembly.GetName().Name != "silentKaguyaHpWear") return null;
+        var core = assembly.GetType("BattleWear.CharSelectCore");
+        var profile = core?.GetField("Silent", StaticFlags);
+        var attach = profile == null ? null : core!.GetMethod("Attach", StaticFlags, null,
+            [typeof(Control), profile.FieldType], null);
+        return attach?.ReturnType == typeof(void) && profile != null ? (attach, profile) : null;
+    }
+
+    internal static bool ReattachFoxBackground(Assembly assembly, Control background)
+    {
+        if (FoxAttachContract(assembly) is not { } contract) return false;
+        // The author retains menu ownership checks, click handling, seven-stage state and head interaction.
+        contract.Attach.Invoke(null, [background, contract.Profile.GetValue(null)]);
+        return true;
+    }
+
     /// <summary>
     /// 只处理「皮肤包自己会做点击切换」的这一族：它们的程序集名以 <c>HpWear</c> 结尾，
     /// 且我们的选择里存的就是这个程序集名。
     /// </summary>
     private static bool IsWearDriverProvider(string providerId)
     {
-        return providerId.EndsWith("HpWear", StringComparison.OrdinalIgnoreCase);
+        return (ManagedSkinModLoader.GetActiveProviderAssembly(providerId)?.GetName().Name ?? providerId)
+            .EndsWith("HpWear", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
