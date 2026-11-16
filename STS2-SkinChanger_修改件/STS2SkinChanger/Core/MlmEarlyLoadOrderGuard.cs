@@ -10,18 +10,21 @@ namespace STS2SkinChanger.Core;
 // closed. Do not defer it to the main menu: game type scanning has already failed by then.
 internal static class MlmEarlyLoadOrderGuard
 {
+    internal static string? LastRejection { get; private set; }
     internal static void Check()
     {
         var violations = FindViolations(ModManager.Mods);
-        if (violations.Count == 0) return;
+        if (violations.Count == 0) { LastRejection = null; return; }
         RestoreOwnDeclaredPriority();
-        throw new InvalidOperationException(Message(violations));
+        LastRejection = Message(violations);
+        throw new InvalidOperationException(LastRejection);
     }
 
     // A user can explicitly ignore a manifest priority when dragging in MLM. Re-enable only
     // our own declaration after an unsafe order is rejected, so its native Organize button
-    // can repair that order too. MLM owns saving this organization on the next user action.
-    internal static void RestoreOwnDeclaredPriority()
+    // can repair that order too. Persist through MLM now: its error-screen restart does not
+    // save pending organization changes, which previously restored ignorePriority=true.
+    internal static void RestoreOwnDeclaredPriority(Action<object>? persist = null)
     {
         try
         {
@@ -30,7 +33,17 @@ internal static class MlmEarlyLoadOrderGuard
             var overlay = manager?.GetType("ModLaunchManager.ManagerOverlay", false);
             if (overlay == null) return;
             if (AccessTools.Field(overlay, "_organization")?.GetValue(null) is { } organization)
+            {
+                var ignored = AccessTools.Property(organization.GetType(), "Mods")?.GetValue(organization) is IDictionary rows &&
+                    rows[Entry.ModId] is { } row && AccessTools.Property(row.GetType(), "IgnorePriority")?.GetValue(row) is true;
                 AccessTools.Method(organization.GetType(), "SetIgnorePriority")?.Invoke(organization, [Entry.ModId, false]);
+                if (ignored)
+                {
+                    if (persist != null) persist(organization);
+                    else if (manager?.GetType("ModLaunchManager.ModOrganizationStore", false) is { } store)
+                        AccessTools.Method(store, "Save")?.Invoke(null, [organization]);
+                }
+            }
             if (AccessTools.Field(overlay, "_plan")?.GetValue(null) is { } plan &&
                 AccessTools.Property(plan.GetType(), "Entries")?.GetValue(plan) is IEnumerable entries)
                 foreach (var entry in entries)
@@ -66,10 +79,10 @@ internal static class MlmEarlyLoadOrderGuard
     }
 
     internal static string Message(IReadOnlyList<string> violations) =>
-        "皮肤切换器加载顺序错误：必须位于所有皮肤 Mod 之前，也必须先于被 MLM 隔离加载的共享框架。" +
-        "请返回 Mod Launch Manager，点击「一键整理」，或将「皮肤切换器-Skin Changer」移到 MLM 本体下方（第 2 位）。" +
-        "如果本次已经加载过其他模组，请保存正确顺序后重启游戏，不要忽略错误继续启动。\n" +
-        "Skin Changer must load before skin mods and isolated shared frameworks. Return to MLM and use Organize, " +
-        "or move Skin Changer directly below Mod Launch Manager. Save the order and restart before continuing.\n" +
+        "【必须调整加载顺序】想正常使用皮肤切换器，必须把它紧挨着放在 Mod Launch Manager（MLM）正下方，排在第 2 位。\n" +
+        "正确顺序：第 1 位 Mod Launch Manager → 第 2 位 皮肤切换器-Skin Changer → 其他框架和皮肤 Mod。\n" +
+        "请点「重启」返回 MLM，点击「一键整理」，确认上述顺序后保存并重新启动游戏。" +
+        "本次已经加载过其他模组，不要点「忽略并继续」；继续运行无法正常使用皮肤切换器。\n" +
+        "REQUIRED: place Skin Changer directly below MLM (position 2). Restart to MLM, use Organize, verify the order, save and restart. Do not ignore this error and continue.\n" +
         "已提前加载 / Already loaded: " + string.Join("、", violations);
 }

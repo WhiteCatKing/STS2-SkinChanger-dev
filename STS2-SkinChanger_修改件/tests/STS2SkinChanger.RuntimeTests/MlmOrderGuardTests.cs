@@ -40,6 +40,7 @@ internal static class MlmOrderGuardTests
             Require(failure?.Message.Contains("一键整理") == true && failure.Message.Contains("第 2 位") && failure.Message.Contains("重启"),
                 "Bad order must stop at Entry before framework/skin initialization and explain native MLM repair.");
             var native = Assembly.LoadFrom(managerPath);
+            MlmLauncherUiCompat.Install(native);
             var loc = native.GetType("ModLaunchManager.MlmLocManager", true)!;
             AccessTools.Field(loc, "_preferencesLoaded").SetValue(null, true);
             var preferences = AccessTools.Field(loc, "_preferences").GetValue(null)!;
@@ -50,6 +51,10 @@ internal static class MlmOrderGuardTests
             Require(declared?.ToString() == "First", "MLM cannot read the priority declaration before loading Skin Changer DLL.");
             var stepType = native.GetType("ModLaunchManager.DeferredModLoader+StepResult", true)!;
             var step = Activator.CreateInstance(stepType, [self, 4, 10, TimeSpan.Zero, failure])!;
+            var overlayType = native.GetType("ModLaunchManager.ManagerOverlay", true)!;
+            var details = (string)AccessTools.Method(overlayType, "BuildLoadErrorDetails").Invoke(null, [step])!;
+            Require(details.StartsWith("【必须调整加载顺序】") && details.Contains("MLM）正下方") && details.Contains("第 2 位"),
+                "MLM error panel must display the placement requirement prominently, not buried in generic technical details.");
             Require((bool)AccessTools.Method(native.GetType("ModLaunchManager.ManagerOverlay", true)!, "HasLoadError").Invoke(null, [step])!,
                 "The actual MLM load-error path must recognize our initializer guard.");
             var planType = native.GetType("ModLaunchManager.LaunchPlan", true)!;
@@ -62,21 +67,58 @@ internal static class MlmOrderGuardTests
             AccessTools.Property(entryType, "IgnorePriority").SetValue(contentEntry, true);
             var planField = AccessTools.Field(native.GetType("ModLaunchManager.ManagerOverlay", true)!, "_plan");
             var oldPlan = planField.GetValue(null);
+            var organizationField = AccessTools.Field(overlayType, "_organization");
+            var oldOrganization = organizationField.GetValue(null);
             try
             {
                 planField.SetValue(null, plan);
-                MlmEarlyLoadOrderGuard.RestoreOwnDeclaredPriority();
+                var organization = Activator.CreateInstance(native.GetType("ModLaunchManager.ModOrganizationDocument", true)!)!;
+                AccessTools.Method(organization.GetType(), "SetIgnorePriority").Invoke(organization, [Entry.ModId, true]);
+                AccessTools.Method(organization.GetType(), "SetIgnorePriority").Invoke(organization, ["UnrelatedContent", true]);
+                organizationField.SetValue(null, organization);
+                string? saved = null;
+                MlmEarlyLoadOrderGuard.RestoreOwnDeclaredPriority(value => saved = System.Text.Json.JsonSerializer.Serialize(value, value.GetType()));
                 Require(!(bool)AccessTools.Property(entryType, "IgnorePriority").GetValue(scEntry)! &&
                          (bool)AccessTools.Property(entryType, "IgnorePriority").GetValue(contentEntry)!,
                     "Repair must re-enable only our declared priority, retaining unrelated user preferences.");
+                Require(saved != null, "Clearing a persisted ignorePriority must save now, before MLM's restart action loses the in-memory repair.");
+                var reopened = System.Text.Json.JsonSerializer.Deserialize(saved!, organization.GetType())!;
+                Require(!(bool)AccessTools.Method(reopened.GetType(), "IgnoresPriority").Invoke(reopened, [Entry.ModId])! &&
+                         (bool)AccessTools.Method(reopened.GetType(), "IgnoresPriority").Invoke(reopened, ["UnrelatedContent"])!,
+                    "Restart must retain our priority repair and unrelated preferences.");
             }
-            finally { planField.SetValue(null, oldPlan); }
+            finally { planField.SetValue(null, oldPlan); organizationField.SetValue(null, oldOrganization); }
             var result = AccessTools.Method(planType, "AutoSortDependencies").Invoke(plan, [true, null])!;
             Require((bool)AccessTools.Property(result.GetType(), "Success").GetValue(result)!, "Native one-click organize failed.");
             var entries = ((IEnumerable)AccessTools.Property(planType, "Entries").GetValue(plan)!).Cast<object>().ToArray();
             string Id(object entry) => (string)AccessTools.Property(entryType, "Id").GetValue(entry)!;
             Require(Id(entries[0]) == "ModLaunchManager" && Id(entries[1]) == Entry.ModId,
                 "Native one-click organizer must keep MLM first and place Skin Changer second.");
+            // Reproduce the user's persisted ignore flag: the old direct sorter leaves us late.
+            AccessTools.Property(entryType, "IgnorePriority").SetValue(scEntry, true);
+            var list = (IList)AccessTools.Property(planType, "Entries").GetValue(plan)!;
+            list.Remove(scEntry); list.Add(scEntry);
+            var autoSort = AccessTools.Method(planType, "AutoSortDependencies");
+            autoSort.Invoke(plan, [true, null]); // the real button uses this full-organize path
+            Require(list.IndexOf(scEntry) > 1, "Negative control must retain the user's late/ignored priority.");
+            var repaired = AccessTools.Method(typeof(MlmLauncherUiCompat), "Organize").MakeGenericMethod(result.GetType())
+                .Invoke(null, [plan, true, null])!;
+            Require((bool)AccessTools.Property(result.GetType(), "Success").GetValue(repaired)! && list.IndexOf(scEntry) == 1 &&
+                    list[0] == entries[0], "One-click repair must pin SC below MLM even when native priority is ignored or bypassed.");
+            var installed = Harmony.GetPatchInfo(AccessTools.Method(overlayType, "AutoSortPlan"));
+            Require(installed?.Transpilers.Any(patch => patch.PatchMethod.DeclaringType == typeof(MlmLauncherUiCompat)) == true,
+                "The actual UI button must use the repair wrapper, not only a directly tested helper.");
+            var organize = AccessTools.Method(typeof(MlmLauncherUiCompat), "Organize").MakeGenericMethod(result.GetType());
+            self.manifest!.dependencies = [new ModDependency("UnrelatedContent")];
+            var dependencyConflict = organize.Invoke(null, [plan, false, null])!;
+            Require(AccessTools.Property(result.GetType(), "Success").GetValue(dependencyConflict) is false &&
+                    list.IndexOf(contentEntry) < list.IndexOf(scEntry), "Pinning must not break a genuine manifest dependency.");
+            self.manifest.dependencies = [];
+            AccessTools.Property(entryType, "Enabled").SetValue(scEntry, false);
+            organize.Invoke(null, [plan, true, null]);
+            Require(AccessTools.Property(entryType, "Enabled").GetValue(scEntry) is false && list.IndexOf(scEntry) > 1,
+                "A disabled Skin Changer must not be enabled or pinned by the organizer.");
+            AccessTools.Property(entryType, "Enabled").SetValue(scEntry, true);
             var ordered = entries.Select(entry => (Mod)AccessTools.Property(entryType, "Mod").GetValue(entry)!).ToList();
             Require(MlmEarlyLoadOrderGuard.FindViolations(ordered, gamePack).Count == 0, "Correctly sorted order was still blocked.");
             Require(MlmEarlyLoadOrderGuard.FindViolations([manager, content, self], gamePack).Count == 0, "Unrelated content before us must not trigger a skin order error.");
