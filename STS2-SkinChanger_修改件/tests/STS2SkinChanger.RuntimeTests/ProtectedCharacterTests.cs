@@ -24,6 +24,8 @@ internal static class ProtectedCharacterTests
             var group = catalog.Groups.Single(group => group.Id == "ironclad");
             foreach (var provider in descriptors)
             {
+                if (provider.Id == "JoanofArcIroncladHpwear")
+                    JoanStagePaletteTests.Run(Path.Combine(provider.RootPath!, "JoanofArcIroncladHpwear.dll"));
                 var options = group.Options.Where(option => option.EffectiveProviderId == provider.Id).ToArray();
                 var minimum = provider.Id == "CrusaderSkin" ? 5 : 4;
                 if (options.Length < minimum) throw new Exception("Protected variants missing: " + provider.Id);
@@ -37,6 +39,13 @@ internal static class ProtectedCharacterTests
                             throw new Exception("Joan stage capability crossed package boundary: " + selection.Id);
                         if (wear)
                         {
+                            foreach (var stage in Enumerable.Range(1, 3))
+                                foreach (var file in new[] { "index.png", "1.png", "2.png", "3.png" })
+                                {
+                                    var data = catalog.ReadProviderFile("ironclad", selection.Id, $"palette/s{stage}_charselect/{file}");
+                                    if (data is not { Length: > 24 } || data[0] != 0x89 || data[1] != (byte)'P')
+                                        throw new Exception("Missing selected-package stage palette: " + selection.Id + "/" + stage + "/" + file);
+                                }
                             var stageRoots = Enumerable.Range(1, 3).Select(stage =>
                                 $"res://joanofarcironcladhpwear/s{stage}_charselect_data.tres").ToArray();
                             var stages = catalog.BuildRuntimeResourceOverlay("ironclad", selection.Id, stageRoots, "protected-stages/001", true);

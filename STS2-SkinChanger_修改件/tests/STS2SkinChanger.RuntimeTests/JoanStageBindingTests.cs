@@ -32,6 +32,8 @@ internal static class JoanStageBindingTests
             "One click must be consumed once and preserve the author's wear toggle.");
         var palette = Calls(AccessTools.Method(cycle, "ReapplyPalette"));
         Require(palette.Any(m => m.Name == "TryGetExecutorContract"), "Palette execution must respect same-contract package resolution.");
+        Require(palette.Any(m => m.DeclaringType == typeof(StagePalettePages) && m.Name == "Ensure"),
+            "Every stage swap must complete the selected stage's palette page before native ApplyNow.");
         Console.WriteLine("Joan stage boundary passed: selected-package isolation, rebuilt palette, exclusive click and wear toggle.");
     }
     private static MethodInfo[] Calls(MethodInfo method) => PatchProcessor.GetOriginalInstructions(method)

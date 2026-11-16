@@ -495,8 +495,8 @@ internal static class CharSelectStageCycle
 
     /// <summary>
     /// The pack re-applies its palette right after its own skeleton swap; doing the swap from here has
-    /// to do the same or the new stage art shows untinted. Only the package whose code is running has a
-    /// palette at all, so this is best effort.
+    /// to do the same or the new stage art shows untinted. Complete any missing stage page before
+    /// applying the current native weights; startup may only have exposed the SFW first stage.
     /// </summary>
     private static void ReapplyPalette(
         ProviderSettingsVariantOptions.SettingsVariantContract contract,
@@ -517,6 +517,8 @@ internal static class CharSelectStageCycle
                     continue;
                 }
 
+                StagePalettePages.Ensure(contract, type, ReadSkeletonPath(spine));
+
                 var method = type.GetMethod(
                     "ApplyNow",
                     System.Reflection.BindingFlags.Static |
@@ -529,9 +531,9 @@ internal static class CharSelectStageCycle
                 return;
             }
         }
-        catch
+        catch (Exception exception)
         {
-            // The stage art is already on screen; the tint is a bonus.
+            ModLog.Warn("战损档调色未完成：" + exception.GetBaseException().Message);
         }
     }
 
