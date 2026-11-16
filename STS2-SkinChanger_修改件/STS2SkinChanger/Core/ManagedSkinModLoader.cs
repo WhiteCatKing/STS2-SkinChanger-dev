@@ -849,7 +849,7 @@ internal static class ManagedSkinModLoader
         }
     }
 
-    private static SkinModDescriptor[] GetProviderProbeDescriptors(IEnumerable<Mod> mods) =>
+    internal static SkinModDescriptor[] GetProviderProbeDescriptors(IEnumerable<Mod> mods) =>
         mods.Where(IsProviderLoadCandidate)
             .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
             .Select(ToDescriptor)
