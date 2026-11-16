@@ -43,7 +43,7 @@ internal static partial class SkinService
     private static List<EventSkinPriorityEntry> GetAncientPriorityEntries() =>
         EventSkinPriorityPolicy.Entries(
             Config.AncientSkinPriorities.Priorities.GetValueOrDefault(AncientRegionKey) ?? [],
-            GetAncientGroups().SelectMany(g => g.Options).Select(o => o.Id));
+            GetAncientGroups().SelectMany(g => g.Options).Where(o => o.Id != VakuuVanillaArt.EasterEggId).Select(o => o.Id));
 
     public static IReadOnlyList<EventPriorityOptionState> GetAncientPriorityOptions()
     {
@@ -51,6 +51,7 @@ internal static partial class SkinService
         {
             var groups = GetAncientGroups();
             var options = groups.SelectMany(g => g.Options)
+                .Where(o => o.Id != VakuuVanillaArt.EasterEggId)
                 .DistinctBy(o => o.Id, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(o => o.Id, StringComparer.OrdinalIgnoreCase);
 

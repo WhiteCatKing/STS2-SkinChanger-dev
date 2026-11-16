@@ -2086,12 +2086,18 @@ internal partial class AncientCompendiumScreen : NSubmenu
         var baseIndex = _skinDropdown.ItemCount;
         _skinDropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
         _skinDropdown.SetItemMetadata(baseIndex, SkinCatalog.BaseOptionId);
+        if (isAncient && group.Id == "vakuu" && group.Options.Any(option => option.Id == VakuuVanillaArt.EasterEggId))
+        {
+            var easterIndex = _skinDropdown.ItemCount;
+            _skinDropdown.AddItem(ModLocalization.GameDefaultEasterEgg());
+            _skinDropdown.SetItemMetadata(easterIndex, VakuuVanillaArt.EasterEggId);
+        }
         // Event regions and the ancient category have their own skin-priority screens; the
         // remaining groups here (merchants, companions) are chosen directly and keep the
         // catalogue order.
         var (options, priority) = SkinService.GetSkinListForDisplay(group.Id, group.Options);
         SkinChoiceDimming.Bind(_skinDropdown, priority);
-        foreach (var option in options)
+        foreach (var option in options.Where(option => option.Id != VakuuVanillaArt.EasterEggId))
         {
             var index = _skinDropdown.ItemCount;
             _skinDropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
@@ -2572,6 +2578,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
             }
 
             var preview = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+            var selected = group == null ? SkinCatalog.BaseOptionId : SkinService.GetDisplayedSelection(group.Id);
+            if (VakuuVanillaArt.PathFor(ancient.Id.Entry, selected) != null)
+                VakuuVanillaArt.Apply(preview, selected);
             preview.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
             var previewHost = new Control
             {

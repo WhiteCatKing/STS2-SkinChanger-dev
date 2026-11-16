@@ -4,7 +4,7 @@
   "title": "Skin Changer",
   "statementHeading": "Statement",
   "version": "1.0.33",
-  "internalTestVersion": "1.0.33.1",
+  "internalTestVersion": "1.0.33.2",
   "featureUpdate": "[h2]Update 1.0.33[/h2]\n[list]\n[*]Improved synchronization of skin choices, character-select backgrounds, previews, portraits and in-run models.\n[*]Improved CZN skin compatibility, Crusader combat animations, Joan of Arc variants and damage stages, and merchant/rest-site appearance switching. Fixed enlarged card artwork and Vakuu static-image backgrounds, including the alternate art branch.\n[*]Added idle-time file prefetching with selected-skin priority and bounded resource caches. Startup timeout and exit safeguards are retained.\n[/list]",
   "cardPriorityUpdate": "",
   "multiplayerUpdate": "",

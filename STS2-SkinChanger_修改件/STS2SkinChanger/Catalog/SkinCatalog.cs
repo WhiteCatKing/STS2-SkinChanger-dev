@@ -176,6 +176,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // Otherwise a DLL that independently supplies several Ancient pictures looks like one
         // inseparable multi-group runtime merely because its PCK also contains per-Ancient icons.
         AddImageRuntimeProviderOptions(mods);
+        AddVakuuVanillaArtOption();
         // Only the character table of an actual character appearance has a skin-owned lifetime.
         // A visual provider can also add events, cards or other gameplay text; those tables must
         // remain mounted regardless of which cosmetic option is selected.

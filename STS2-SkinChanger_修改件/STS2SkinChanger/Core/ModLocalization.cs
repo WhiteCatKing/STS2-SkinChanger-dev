@@ -1680,6 +1680,7 @@ internal static partial class ModLocalization
 
     public static string DisplayOptionName(string name)
     {
+        if (name == VakuuVanillaArt.EasterEggId) return GameDefaultEasterEgg();
         var labels = CardPortraitModePacks[CurrentLanguage];
         return ReplaceSuffix(name, DefaultVariantMarker, Get(ModText.DefaultVariant))
             ?? ReplaceSuffix(name, DifferentialVariantMarker, labels.Differential)
