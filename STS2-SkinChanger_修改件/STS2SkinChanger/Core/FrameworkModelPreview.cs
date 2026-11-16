@@ -44,7 +44,6 @@ internal static class FrameworkModelPreview
             visuals = CreateVisuals(character, groupId, scenePath, player.Creature);
             CznPresentationBridge.ApplyPreviewBody(visuals, character, groupId);
             LegacyDefectPresentationCompat.ApplyPreviewBody(visuals, groupId);
-            IndependentFoolSkinCompat.ApplyPreview(visuals, groupId);
 
             // Packs finish their model in a Creature.CreateVisuals postfix (Orchis removes the
             // vanilla flame). The preview is built outside the combat creature path, so replay the
@@ -70,6 +69,9 @@ internal static class FrameworkModelPreview
             CharacterAppearanceRuntime.ReplaySelectedCreatureNodeReady(owner);
             if (groupId != null)
                 ManagedSlotVisibilityBridge.BindModel(visuals, groupId, SkinService.GetSelectedCreatureRuntimeProvider(groupId));
+            // NCreatureVisuals assigns Body during Ready. Replace/hide it only after the model
+            // entered the tree and native/selected finishing completed, before capture begins.
+            IndependentFoolSkinCompat.ApplyPreview(visuals, groupId);
             foreach (var childControl in DescendantsAndSelf(staged).OfType<Control>())
                 childControl.MouseFilter = Control.MouseFilterEnum.Ignore;
             identity?.Bind(staged);

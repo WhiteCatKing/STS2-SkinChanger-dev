@@ -5182,10 +5182,20 @@ internal sealed partial class SkinCatalog : IDisposable
                 // Spine resolves every page name relative to the atlas resource. Once the atlas
                 // lives in this fresh alias namespace, all of its sibling pages must live there
                 // too; a canonical page from the mounted provider cannot satisfy that path.
+                // A skin may replace the page and skeleton while keeping the game's atlas.
+                // The atlas owner then supplies only the page name, not the selected page bytes.
+                // Resolve the same logical texture in the selection before freezing this dependency.
+                var selectedTexture = textureAsset;
+                var textureIndex = index;
+                if (TryResolveSelected(textureAsset.SourcePath, null, out var overrideTexture, out var overrideIndex))
+                {
+                    selectedTexture = overrideTexture;
+                    textureIndex = overrideIndex;
+                }
                 IncludeResource(
                     textureAsset.SourcePath,
-                    textureAsset,
-                    index,
+                    selectedTexture,
+                    textureIndex,
                     requiresAliasedLocation: true);
             }
         }

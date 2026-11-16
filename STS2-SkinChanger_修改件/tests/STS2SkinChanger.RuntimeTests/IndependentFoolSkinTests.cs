@@ -37,6 +37,33 @@ internal static class IndependentFoolSkinTests
         }
         Require(!catalog.GetSelectedDirectCharacterRuntimeProviders(
             new Dictionary<string, string> { ["fool"] = SkinCatalog.BaseOptionId }).Any(), "Default must activate none.");
+        var body = catalog.BuildRuntimeResourceOverlay("fool", "NailongFool",
+            ["res://scenes/creature_visuals/fool.tscn"], "naiwa-body", true);
+        using (var pack = STS2SkinChanger.Pck.PckArchive.Open(Path.Combine(workshop, "3838744026", "NailongFool.assets")))
+        {
+            var texture = pack.Paths.Single(p => p.Contains("/_imported/fool.png-"));
+            var bytes = pack.ReadFile(texture);
+            Require(body.Files.Values.Any(b => b.AsSpan().SequenceEqual(bytes)), "Real Naiwa body texture must reach the isolated scene graph.");
+            Require(body.SourceAliases.ContainsKey(texture) &&
+                !body.SourceAliases.Keys.Any(p => p.StartsWith("res://.godot/imported/fool.png-", StringComparison.Ordinal)),
+                "Inherited atlas must bind to the selected texture payload, not an additional vanilla page.");
+            var menu = catalog.BuildRuntimeResourceOverlay("fool", "NailongFool",
+                ["res://scenes/screens/char_select/char_select_bg_fool.tscn"], "naiwa-menu", true);
+            var menuTexture = pack.Paths.Single(p => p.Contains("/_imported/character_select_fool_bg.png-"));
+            var menuBytes = pack.ReadFile(menuTexture);
+            Require(menu.Files.Values.Any(b => b.AsSpan().SequenceEqual(menuBytes)),
+                "Real Naiwa character-select atlas must retain the selected texture too.");
+            var vanilla = catalog.BuildRuntimeResourceOverlay("fool", SkinCatalog.BaseOptionId,
+                ["res://scenes/creature_visuals/fool.tscn"], "naiwa-default", true);
+            Require(!vanilla.Files.Values.Any(b => b.AsSpan().SequenceEqual(bytes)), "Default must restore vanilla texture ownership.");
+        }
+        var previewCalls = PatchProcessor.GetOriginalInstructions(AccessTools.Method(typeof(FrameworkModelPreview), "TryRefresh"))
+            .Select(i => i.operand).OfType<MethodBase>().ToList();
+        var replacement = previewCalls.FindIndex(m => m.DeclaringType == typeof(IndependentFoolSkinCompat) && m.Name == "ApplyPreview");
+        Require(replacement > previewCalls.FindIndex(m => m.Name == "ApplyRuntimeSpine") &&
+            replacement > previewCalls.FindIndex(m => m.Name == "ReplaySelectedCreatureNodeReady") &&
+            replacement < previewCalls.FindIndex(m => m.Name == "BeginCapture"),
+            "Static replacement/hiding must occur after Ready finishing, before capture; Body is unavailable before Ready.");
         var assembly = Assembly.LoadFrom(Path.Combine(workshop, "3838744026", "NailongFool.dll"));
         IndependentFoolSkinCompat.Prepare(assembly);
         var mount = AccessTools.Method(assembly.GetType("NailongFool.NailongFoolMod"), "MountAssets");

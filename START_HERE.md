@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.33`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.33.14`（工坊公开 `1.0.33`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
+当前值：`1.0.33.15`（工坊公开 `1.0.33`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -266,3 +266,5 @@ Initialize()
 - 1.0.33.13：鸡煲娘化小预览使用作者 CharacterScene，保持战斗 Ready 跳过保护。
 
 - 1.0.33.14：三个独立愚者皮肤（Fool_Waifu/NailongFool/FoolSkinStatic）识别与选中运行合同，见 docs/issues/ISSUE_2026-11-17_three_fool_skin_packages.md。
+
+- 1.0.33.15：图集页保持所选皮肤纹理所有权；单图预览在 Ready 后替换与隐藏原身体。
