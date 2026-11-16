@@ -70,6 +70,7 @@ internal static partial class SkinService
     private static void BindRuntimeDependency(string canonical, string alias, Resource resource,
         List<CanonicalRuntimeResourceOwnershipEntry> bindings)
     {
+        PrivateMerchantResourceIdentity.Register(resource, canonical);
         var previous = ResourceLoader.HasCached(canonical)
             ? ResourceLoader.Load<Resource>(canonical, null, ResourceLoader.CacheMode.Reuse) : null;
         RuntimeSourceAliases.Remove(resource);

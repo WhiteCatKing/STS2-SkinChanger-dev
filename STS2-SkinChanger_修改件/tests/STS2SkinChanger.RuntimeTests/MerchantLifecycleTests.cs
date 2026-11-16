@@ -8,10 +8,12 @@ using STS2SkinChanger.Ui;
 internal static class MerchantLifecycleTests
 {
     private static string _scenePath = "";
+    private static bool _preview;
 
     internal static void Run()
     {
         var harmony = new Harmony("sc.tests.merchant-lifecycle");
+        var silence = AuditLogSilencer.Install();
         try
         {
             harmony.Patch(AccessTools.PropertyGetter(typeof(Node), "SceneFilePath"), prefix: Patch(nameof(GetPath)));
@@ -51,6 +53,22 @@ internal static class MerchantLifecycleTests
             Require(!(bool)owner.Invoke(null, ["ATA_Merchant", null])!, "Original selection must not keep an old merchant active.");
             var roomType = typeof(MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom).Assembly
                 .GetType(MerchantRoomConcreteReadyPatch.StandardTypeName, true)!;
+            harmony.Patch(AccessTools.Method(typeof(MerchantRuntimeAppearance), "IsMerchantPreviewRoot"), prefix: Patch(nameof(Preview)));
+            MerchantRoomConcreteReadyPatch.Install(harmony);
+            foreach (var name in new[] { MerchantRoomConcreteReadyPatch.StandardTypeName, MerchantRoomConcreteReadyPatch.BlitzTypeName })
+            {
+                var concrete = roomType.Assembly.GetType(name, true)!;
+                var ready = AccessTools.Method(concrete, "_Ready");
+                Require(Harmony.GetPatchInfo(ready)!.Prefixes.Any(patch => patch.PatchMethod.DeclaringType == typeof(MerchantRoomConcreteReadyPatch)),
+                    "Concrete room Ready must be gated too; skipping only base Ready leaves derived gameplay running.");
+                var room = RuntimeHelpers.GetUninitializedObject(concrete); GC.SuppressFinalize(room);
+                _preview = true;
+                Require(!(bool)AccessTools.Method(typeof(MerchantRoomConcreteReadyPatch), "Prefix").Invoke(null, [room])!,
+                    "Preview must skip concrete inventory/map/run initialization.");
+                _preview = false;
+                Require((bool)AccessTools.Method(typeof(MerchantRoomConcreteReadyPatch), "Prefix").Invoke(null, [room])!,
+                    "Live concrete shops must retain native Ready.");
+            }
             for (var i = 0; i < 200; i++)
             {
                 var room = (MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom)RuntimeHelpers.GetUninitializedObject(roomType);
@@ -68,13 +86,14 @@ internal static class MerchantLifecycleTests
             Console.WriteLine("Merchant lifecycle passed: 200 authored shop/rest scene identities, initialization-before-build and outgoing-provider isolation.");
             Console.WriteLine("Initial shop entry passed: 200 distinct rooms, duplicate Ready rejection and retained inventory refresh boundary.");
         }
-        finally { harmony.UnpatchAll(harmony.Id); }
+        finally { harmony.UnpatchAll(harmony.Id); silence.UnpatchAll(silence.Id); }
     }
 
     private static MethodBase[] Calls(MethodBase method) => PatchProcessor.GetOriginalInstructions(method)
         .Select(i => i.operand).OfType<MethodBase>().ToArray();
     private static HarmonyMethod Patch(string name) => new(typeof(MerchantLifecycleTests), name);
     private static bool GetPath(ref string __result) { __result = _scenePath; return false; }
+    private static bool Preview(ref bool __result) { __result = _preview; return false; }
     private static bool SetPath(string value) { _scenePath = value; return false; }
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 }

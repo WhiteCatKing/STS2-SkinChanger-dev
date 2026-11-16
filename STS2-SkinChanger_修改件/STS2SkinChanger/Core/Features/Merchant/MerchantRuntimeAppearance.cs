@@ -1379,6 +1379,9 @@ internal static class MerchantRuntimeAppearance
         try
         {
             EnsureSelectedMerchantProviderActive(GroupId, option.EffectiveProviderId);
+            var assembly = ManagedSkinModLoader.GetActiveProviderAssembly(option.EffectiveProviderId) ??
+                ManagedSkinModLoader.GetActiveProviderAssembly(ManagedSkinModLoader.ResolveBehaviorProviderId(option.EffectiveProviderId));
+            if (assembly != null) PrivateMerchantResourceIdentity.Install(assembly);
             ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(room,
                 ManagedSkinModLoader.ResolveBehaviorProviderId(option.EffectiveProviderId));
         }
@@ -1897,7 +1900,8 @@ internal static class MerchantRoomConcreteReadyPatch
                 continue;
             }
 
-            harmony.Patch(ready, postfix: new HarmonyMethod(typeof(MerchantRoomConcreteReadyPatch)
+            harmony.Patch(ready, prefix: new HarmonyMethod(typeof(MerchantRoomConcreteReadyPatch), nameof(Prefix)) { priority = Priority.First },
+                postfix: new HarmonyMethod(typeof(MerchantRoomConcreteReadyPatch)
                 .GetMethod(nameof(Postfix), System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)));
             patched++;
         }
@@ -1907,6 +1911,9 @@ internal static class MerchantRoomConcreteReadyPatch
             : $"[商人] 已为 {patched} 个具体商店房间挂上 _Ready 补丁。");
     }
 
+    private static bool Prefix(NMerchantRoom __instance) =>
+        !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
+
     private static void Postfix(NMerchantRoom __instance)
     {
         if (!GodotObject.IsInstanceValid(__instance))
@@ -1914,6 +1921,11 @@ internal static class MerchantRoomConcreteReadyPatch
             return;
         }
 
+        if (MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
+        {
+            MerchantRuntimeAppearance.ReplayPrivateMerchantRoomAppearance(__instance);
+            return;
+        }
         MerchantRuntimeAppearance.ScopePartTakeover(__instance);
         MerchantRuntimeAppearance.QueueInitialMerchantAppearance(__instance);
     }

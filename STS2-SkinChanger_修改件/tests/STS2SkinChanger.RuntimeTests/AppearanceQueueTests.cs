@@ -78,6 +78,16 @@ internal static class AppearanceQueueTests
             var bind = AccessTools.Method(typeof(SkinService), "BindRuntimeDependency");
             var reuse = AccessTools.Method(typeof(SkinService), "TryGetBoundRuntimeDependency");
             var a = FakeResource(); var b = FakeResource();
+            foreach (var merchantPath in new[] { PrivateMerchantResourceIdentity.Body, PrivateMerchantResourceIdentity.Hand })
+            {
+                var liveMerchant = FakeResource(); var nextMerchant = FakeResource();
+                var livePath = "private/live/" + merchantPath[6..];
+                bind.Invoke(null, [merchantPath, livePath, liveMerchant, list]);
+                bind.Invoke(null, [merchantPath, "private/next/" + merchantPath[6..], nextMerchant, list]);
+                Require(liveMerchant.ResourcePath == livePath &&
+                        PrivateMerchantResourceIdentity.ReadPath(liveMerchant) == merchantPath,
+                    "Actual cache displacement must preserve the author's merchant target identity without changing its alias.");
+            }
             const string canonical = "res://same.spskel";
             a.TakeOverPath(canonical);
             Require(reuse.Invoke(null, [canonical, "private/a"]) == null, "An untagged public cache must not be borrowed.");
