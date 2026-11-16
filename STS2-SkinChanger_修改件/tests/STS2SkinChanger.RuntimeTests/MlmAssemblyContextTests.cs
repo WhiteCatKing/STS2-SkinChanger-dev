@@ -64,7 +64,7 @@ internal static class MlmAssemblyContextTests
                 var cold = (IDictionary)field.GetValue(null)!;
                 Require((bool)AccessTools.Property(decisionType, "UseGameContext").GetValue(cold[framework])!,
                     "A cold load plan must be prepared through MLM before correcting the framework.");
-                Require(all.All(mod => mod.assemblies.Count == 0), "Policy preparation must not initialize provider/framework modules.");
+                Require(all.All(mod => !MlmEarlyLoadOrderGuard.LoadedAssemblies(mod).Any()), "Policy preparation must not initialize provider/framework modules.");
             }
             finally { field.SetValue(null, oldDecisions); }
             Console.WriteLine("MLM compatibility passed: CLR collectible negative/control, actual installed MLM decision struct and loader patch, cold/cached plan correction, cyclic framework dependencies and unrelated-mod isolation.");

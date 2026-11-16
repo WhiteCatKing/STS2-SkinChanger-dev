@@ -880,7 +880,7 @@ internal static class MerchantRuntimeAppearance
             ModelDb.Character<Ironclad>(),
             UnlockState.all,
             netId);
-        _ = RunState.CreateForTest([player], seed: seed);
+        _ = GameBranchApi.CreatePreviewRun([player], seed: seed);
         return player;
     }
 

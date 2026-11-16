@@ -21,6 +21,19 @@ internal static class IndependentFoolSkinTests
                 !IndependentFoolSkinContract.Matches(normalized with { Id = "Unknown", ManifestId = "Unknown" }),
                 "Unrelated, gameplay and missing-code negatives must remain excluded.");
         }
+        using (var baseline = STS2SkinChanger.Pck.PckArchive.Open(game))
+        {
+            if (!baseline.Contains("res://scenes/creature_visuals/fool.tscn") &&
+                !baseline.Contains("res://scenes/creature_visuals/fool.tscn.remap"))
+            {
+                Require(!SkinCatalog.ProbeSkinProviders(mods, game).Any(), "Older game without Fool must not advertise beta-only providers.");
+                using var older = SkinCatalog.Build(game, mods);
+                Require(!older.Groups.Any(g => g.Options.Any(o => mods.Any(m => m.Id == o.Id))),
+                    "Older branch must not add unsupported Fool selections.");
+                Console.WriteLine("Older game capability passed: all three beta-only Fool skins excluded because the game has no Fool.");
+                return;
+            }
+        }
         var probes = SkinCatalog.ProbeSkinProviders(mods, game);
         Require(mods.All(m => probes.Any(p => p.Id == m.Id && p.VisualGroupCount > 0 && p.HasResourceBackedCosmetics)),
             "All three real packages must be detected before native initialization.");

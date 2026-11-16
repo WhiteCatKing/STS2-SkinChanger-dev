@@ -38,9 +38,16 @@ internal static partial class SkinService
 // Preserve the native callback and its progression bookkeeping. Explicit vanilla choices
 // pin their selected art afterwards; inherit-category keeps the game's native decision.
 [FeaturePatch(FeatureIds.Ancient)]
-[HarmonyPatch(typeof(Vakuu), nameof(Vakuu.ConfigureBackgroundScene))]
+[HarmonyPatch]
 internal static class VakuuVanillaArtPatch
 {
+    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
+    {
+        // The normal/egg callback was introduced on beta; stable has neither the callback nor
+        // the egg option. Keep one binary loadable and leave stable's native behavior intact.
+        if (AccessTools.Method(typeof(Vakuu), "ConfigureBackgroundScene") is { } method) yield return method;
+    }
+
     private static void Postfix(Control backgroundScene)
     {
         try

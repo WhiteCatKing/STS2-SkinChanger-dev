@@ -124,7 +124,9 @@ internal static class MlmOrderGuardTests
             Require(MlmEarlyLoadOrderGuard.FindViolations([manager, content, self], gamePack).Count == 0, "Unrelated content before us must not trigger a skin order error.");
             Require(MlmEarlyLoadOrderGuard.FindViolations([skin, self], gamePack).Count == 0, "Without MLM retain the existing standard loader warning behavior.");
             var framework = Fake("STS2-RitsuLib");
-            framework.assemblies.Add(AssemblyBuilder.DefineDynamicAssembly(new("MlmSharedFramework"), AssemblyBuilderAccess.RunAndCollect));
+            var collectible = AssemblyBuilder.DefineDynamicAssembly(new("MlmSharedFramework"), AssemblyBuilderAccess.RunAndCollect);
+            if (AccessTools.Field(typeof(Mod), "assemblies")?.GetValue(framework) is ICollection<Assembly> many) many.Add(collectible);
+            else AccessTools.Field(typeof(Mod), "assembly").SetValue(framework, collectible);
             Require(MlmEarlyLoadOrderGuard.FindViolations([manager, framework, self], gamePack).SequenceEqual(["STS2-RitsuLib"]),
                 "A shared framework already in a collectible context must stop early even before skin discovery.");
             skin.state = ModLoadState.Disabled;

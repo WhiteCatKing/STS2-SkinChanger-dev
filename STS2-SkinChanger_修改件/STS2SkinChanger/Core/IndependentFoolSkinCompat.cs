@@ -32,6 +32,7 @@ internal static class IndependentFoolSkinCompat
         if (sprite == null) return;
         patches.GetMethod("Play", flags)!.Invoke(null, [sprite, "idle"]);
         patches.GetMethod("BlinkLoop", flags, null, [typeof(Sprite2D)], null)!.Invoke(null, [sprite]);
-        visuals.Body?.Hide();
+        // Stable exposes GetCurrentBody(); beta adds Body. Resolve the native branch contract.
+        GameBranchApi.CurrentBody(visuals)?.Hide();
     }
 }

@@ -175,7 +175,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // External image routers must be merged before runtime-bundle ownership is calculated.
         // Otherwise a DLL that independently supplies several Ancient pictures looks like one
         // inseparable multi-group runtime merely because its PCK also contains per-Ancient icons.
-        foreach (var mod in mods.Where(IndependentFoolSkinContract.Matches))
+        foreach (var mod in mods.Where(mod => IndependentFoolSkinContract.Matches(mod) && IsGameCharacterGroup("fool", baselineIndexes)))
         {
             var group = _groups.FirstOrDefault(g => g.Id == "fool");
             if (group == null) { group = new SkinGroup("fool", DisplayName("fool")); _groups.Add(group); }
@@ -907,6 +907,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
             foreach (var mod in modList)
             {
+                if (IndependentFoolSkinContract.Matches(mod) && !IsGameCharacterGroup("fool", baselineIndexes)) continue;
                 if (mod.PckPath == null || !File.Exists(mod.PckPath))
                 {
                     continue;
@@ -1004,6 +1005,7 @@ internal sealed partial class SkinCatalog : IDisposable
             {
                 if (IndependentFoolSkinContract.Matches(mod))
                 {
+                    if (!IsGameCharacterGroup("fool", baselineIndexes)) continue;
                     providers.Add(new SkinProviderProbe(mod.Id, mod.RootPath, 1, 0, 0, 0, 1, false,
                         mod.ResourceNamespaceId, HasResourceBackedCosmetics: true, ServedGroupIds: ["fool"]));
                     continue;

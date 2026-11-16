@@ -268,7 +268,7 @@ internal static class EventCompendiumPreview
         if (!LocString.Exists(model.LocTable, key)) return "";
         var text = new LocString(model.LocTable, key);
         model.DynamicVars.AddTo(text);
-        ModelDb.Character<Ironclad>().AddDetailsTo(text);
+        GameBranchApi.AddCharacterDetails(ModelDb.Character<Ironclad>(), text);
         text.Add("IsMultiplayer", false);
         var raw = text.GetRawText();
         // Some later pages require a rolled card/relic or prior choice. Don't simulate those

@@ -1082,7 +1082,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 ModelDb.Character<Ironclad>(),
                 UnlockState.all,
                 0x534b494e50525631UL);
-            _ = RunState.CreateForTest(
+            _ = GameBranchApi.CreatePreviewRun(
                 [previewPlayer],
                 seed: "SkinChangerMerchantPreview");
             previewPlayer.Gold = 9999;

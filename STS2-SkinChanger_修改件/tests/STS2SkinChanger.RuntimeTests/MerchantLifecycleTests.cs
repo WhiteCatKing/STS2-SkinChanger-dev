@@ -52,12 +52,13 @@ internal static class MerchantLifecycleTests
                 Require(!(bool)owner.Invoke(null, [old, "ATA_Merchant"])!, "Outgoing merchant must deactivate: " + old);
             Require(!(bool)owner.Invoke(null, ["ATA_Merchant", null])!, "Original selection must not keep an old merchant active.");
             var roomType = typeof(MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom).Assembly
-                .GetType(MerchantRoomConcreteReadyPatch.StandardTypeName, true)!;
+                .GetType(MerchantRoomConcreteReadyPatch.StandardTypeName, false) ?? typeof(MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom);
             harmony.Patch(AccessTools.Method(typeof(MerchantRuntimeAppearance), "IsMerchantPreviewRoot"), prefix: Patch(nameof(Preview)));
             MerchantRoomConcreteReadyPatch.Install(harmony);
             foreach (var name in new[] { MerchantRoomConcreteReadyPatch.StandardTypeName, MerchantRoomConcreteReadyPatch.BlitzTypeName })
             {
-                var concrete = roomType.Assembly.GetType(name, true)!;
+                var concrete = roomType.Assembly.GetType(name, false);
+                if (concrete == null) continue;
                 var ready = AccessTools.Method(concrete, "_Ready");
                 Require(Harmony.GetPatchInfo(ready)!.Prefixes.Any(patch => patch.PatchMethod.DeclaringType == typeof(MerchantRoomConcreteReadyPatch)),
                     "Concrete room Ready must be gated too; skipping only base Ready leaves derived gameplay running.");

@@ -17,7 +17,7 @@ internal static class CharacterSelectModeTests
         {
             CharacterSelectModePatches.Install(harmony);
             foreach (var type in new[] { typeof(NCharacterSelectScreen) }.Concat(CharacterSelectScreenAccess.ModeTypes
-                         .Select(name => typeof(NCharacterSelectScreen).Assembly.GetType(name, true)!)))
+                         .Select(name => typeof(NCharacterSelectScreen).Assembly.GetType(name, false)).OfType<Type>()))
             {
                 var screen = (Control)RuntimeHelpers.GetUninitializedObject(type); GC.SuppressFinalize(screen);
                 if (type.TypeInitializer != null)

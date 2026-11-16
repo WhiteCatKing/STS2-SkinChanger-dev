@@ -2421,7 +2421,7 @@ internal static class CharacterAppearanceRuntime
                         BossMapMaterialField?.SetValue(bossPoint, readyMaterial);
                     }
 
-                    animationState.SetAnimation("animation");
+                    GameBranchApi.StartLoop(animationState, "animation");
                     BossMapRefreshColorMethod?.Invoke(bossPoint, null);
                 }
             });

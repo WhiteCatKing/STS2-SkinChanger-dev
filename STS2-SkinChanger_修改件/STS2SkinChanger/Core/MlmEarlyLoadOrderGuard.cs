@@ -57,6 +57,14 @@ internal static class MlmEarlyLoadOrderGuard
         }
     }
 
+    internal static IEnumerable<System.Reflection.Assembly> LoadedAssemblies(Mod mod)
+    {
+        var value = HarmonyLib.AccessTools.Field(typeof(Mod), "assemblies")?.GetValue(mod) ??
+                    HarmonyLib.AccessTools.Field(typeof(Mod), "assembly")?.GetValue(mod);
+        return value is IEnumerable<System.Reflection.Assembly> many ? many :
+            value is System.Reflection.Assembly single ? [single] : [];
+    }
+
     internal static IReadOnlyList<string> FindViolations(IReadOnlyList<Mod> mods, string? gamePack = null)
     {
         if (!mods.Any(mod => mod.manifest?.id == "ModLaunchManager" && mod.state == ModLoadState.Loaded)) return [];
@@ -67,7 +75,7 @@ internal static class MlmEarlyLoadOrderGuard
             !Entry.IsSelfModId(mod.manifest?.id) && mod.manifest?.id != "ModLaunchManager").ToArray();
         if (preceding.Length == 0) return [];
         var failures = preceding.Where(mod => MlmAssemblyContextCompat.RequiresGameContext(mod, mods) &&
-                mod.assemblies.Any(assembly => assembly.IsCollectible))
+                LoadedAssemblies(mod).Any(assembly => assembly.IsCollectible))
             .Select(mod => mod.manifest?.name ?? mod.manifest?.id ?? mod.path).ToList();
         // Use the same metadata-only detector as normal takeover. Do not call initializers,
         // mount PCKs, or treat every DLL/UI/content mod as a skin merely because it precedes us.

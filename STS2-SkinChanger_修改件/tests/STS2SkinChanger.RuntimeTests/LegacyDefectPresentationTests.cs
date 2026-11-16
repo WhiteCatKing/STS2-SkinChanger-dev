@@ -46,7 +46,10 @@ internal static class LegacyDefectPresentationTests
             GC.SuppressFinalize(screen); GC.SuppressFinalize(button);
             var character = (CharacterModel)RuntimeHelpers.GetUninitializedObject(typeof(CharacterModel).Assembly.GetType("MegaCrit.Sts2.Core.Models.Characters.Defect", true)!);
             var target = AccessTools.Method(typeof(NCharacterSelectScreen), "SelectCharacter");
-            Require(target.GetParameters().All(p => p.Name != "characterModel"), "Reproduce the new game signature.");
+            var native = target.GetParameters();
+            Require(native.Length == 1 && native[0].ParameterType == typeof(NCharacterSelectButton) ||
+                native.Length == 2 && native.Any(p => p.ParameterType == typeof(CharacterModel)),
+                "Replay must cover the actual stable or beta SelectCharacter contract.");
             object?[] arguments = [callback, target, screen, button, character, null];
             Require((bool)AccessTools.Method(typeof(ManagedSkinModLoader), "TryBuildCharacterPresentationArguments").Invoke(null, arguments)!,
                 "Legacy postfix must bind through the existing scoped replay argument adapter.");
