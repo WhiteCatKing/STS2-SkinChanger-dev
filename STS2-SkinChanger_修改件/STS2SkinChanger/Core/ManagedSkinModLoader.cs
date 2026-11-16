@@ -1318,6 +1318,9 @@ internal static class ManagedSkinModLoader
                     }
                 }
             }
+            // Recover only the proved legacy pack's skipped resource setup, under this selected
+            // provider's existing activation scope. Never rerun its partially applied PatchAll.
+            LegacyDefectPresentationCompat.EnsureScenes(assembly);
             FrameworkCompatibilityLayer.NotifyProviderActivated(assembly);
             initializedAt = Stopwatch.GetTimestamp();
 
@@ -1330,6 +1333,15 @@ internal static class ManagedSkinModLoader
             var presentationPatches = installedPatches
                 .Where(IsReplayableCharacterPresentationPatch)
                 .ToArray();
+            if (LegacyDefectPresentationCompat.BackgroundCallback(assembly) is { } legacyBackground &&
+                presentationPatches.All(patch => patch.Callback != legacyBackground))
+            {
+                // Manual replay already binds characterModel from the selected button, so the old
+                // postfix can run without installing an invalid Harmony patch on the new signature.
+                presentationPatches = [.. presentationPatches, new ProviderPatch(
+                    AccessTools.Method(typeof(NCharacterSelectScreen), "SelectCharacter"),
+                    legacyBackground, ProviderPatchKind.Postfix, Priority.Normal, [], [], false)];
+            }
             var nodeReadyPresentationPatches = installedPatches
                 .Where(patch => IsNodeReadyPresentationTarget(patch.Target))
                 .ToArray();
