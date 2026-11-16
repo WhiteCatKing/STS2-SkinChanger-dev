@@ -37,6 +37,7 @@ internal static class QuitCacheCleanup
         {
             Thread.Sleep(TimeSpan.FromSeconds(12));
             ModLog.Warn("[退出诊断] 原版 Quit 返回后 12 秒进程仍未结束（保存已执行），强制结束引擎收尾。");
+            CrashDiagnostics.MarkForcedShutdown();
             System.Environment.Exit(0);
         })
         {

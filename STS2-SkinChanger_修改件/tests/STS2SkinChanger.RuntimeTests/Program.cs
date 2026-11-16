@@ -99,6 +99,12 @@ if (args.Length == 1 && args[0] == "--test-switch-resource-lifetime")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-crash-diagnostics")
+{
+    CrashDiagnosticsTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-game-branch")
 {
     GameBranchCompatibilityTests.Run();

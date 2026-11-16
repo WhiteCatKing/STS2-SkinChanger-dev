@@ -18,8 +18,10 @@ internal static class QuitTimingDiagnostics
     }
 
     [HarmonyPostfix]
-    private static void Postfix()
+    private static void Postfix(bool __runOriginal)
     {
+        if (!__runOriginal) return;
+        CrashDiagnostics.MarkNativeQuitCompleted();
         ModLog.Info($"[退出诊断] NGame.Quit 返回，用时 {Clock.ElapsedMilliseconds} ms；此后若卡住即引擎侧收尾。");
     }
 }

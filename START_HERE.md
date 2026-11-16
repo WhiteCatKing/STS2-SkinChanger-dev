@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.33`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.33.16`（工坊公开 `1.0.33`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
+当前值：`1.0.33.17`（工坊公开 `1.0.33`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -270,3 +270,6 @@ Initialize()
 - 1.0.33.15：图集页保持所选皮肤纹理所有权；单图预览在 Ready 后替换与隐藏原身体。
 
 - 1.0.33.16：生产 DLL 必须用正式版引用编译，再用 tools/check-dual-branch.ps1 把同一产物放入两端测试；测试版构建仅用于隔离验证，禁止覆盖正式发布产物。
+
+- 1.0.33.17：自动崩溃诊断位于 Core/CrashDiagnostics.cs 与内嵌 Diagnostics/CrashWatch.ps1；使用 --test-crash-diagnostics 只监视自建测试进程，禁止拿游戏做崩溃/卡死实验。日志副本/转储在用户数据 Gurio.SkinChanger/diagnostics/<session>。
+- 当前本机游戏已切回测试版。发布显式使用工作区 stable-api-1071 的正式版引用快照（MVID 97f10687-c306-4798-ab75-8b9f23f34dfb），不能把 D:/steam 当前安装路径继续当正式版引用。
