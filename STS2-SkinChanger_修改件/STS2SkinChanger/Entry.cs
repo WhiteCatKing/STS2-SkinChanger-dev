@@ -17,7 +17,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.33.5";
+    public const string InternalTestVersion = "1.0.33.6";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -31,6 +31,7 @@ public static class Entry
             $"内测版本 {InternalTestVersion}；程序集={assembly.GetName().Name} " +
             $"{assembly.GetName().Version}；路径={assembly.Location}");
         ModPrivateDependencyResolver.Install(ModLog.Info);
+        MlmAssemblyContextCompat.Install();
         StartupWatchdog.Begin();
         SkinChangerPaths.Initialize();
         StartupWatchdog.Stage("路径与依赖就绪");
