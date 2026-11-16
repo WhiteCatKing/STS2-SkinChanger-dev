@@ -43,6 +43,7 @@ internal static class FrameworkModelPreview
             var player = CreatePreviewPlayer(character, UnlockState.all);
             visuals = CreateVisuals(character, groupId, scenePath, player.Creature);
             CznPresentationBridge.ApplyPreviewBody(visuals, character, groupId);
+            LegacyDefectPresentationCompat.ApplyPreviewBody(visuals, groupId);
 
             // Packs finish their model in a Creature.CreateVisuals postfix (Orchis removes the
             // vanilla flame). The preview is built outside the combat creature path, so replay the

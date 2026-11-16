@@ -13,6 +13,32 @@ internal static class LegacyDefectPresentationCompat
             ? assembly.GetType("DefectSkinMod.Scripts.NCharacterSelectScreen_SelectCharacter_Patch")?.GetMethod("Postfix", Static)
             : null;
 
+    internal static PackedScene? PreviewScene(Assembly assembly) => BackgroundCallback(assembly) == null ? null :
+        assembly.GetType("DefectSkinMod.Scripts.DefectSkinGlobals")?.GetField("CharacterScene", Static)?.GetValue(null) as PackedScene;
+
+    internal static void ApplyPreviewBody(MegaCrit.Sts2.Core.Nodes.Combat.NCreatureVisuals visuals, string? groupId)
+    {
+        if (groupId != "defect" || SkinService.GetSelectedCreatureRuntimeProvider(groupId) is not { } providerId ||
+            ManagedSkinModLoader.GetActiveProviderAssembly(providerId) is not { } assembly ||
+            PreviewScene(assembly) is not { } scene) return;
+        // Reuse the author's actor/scale/idle without its combat Ready callback, global active
+        // sprite collection, direction timer or gameplay lifecycle. The preview owns this node.
+        var actor = scene.Instantiate<Node2D>(PackedScene.GenEditState.Disabled);
+        actor.Name = "SkinChangerDefectPreviewActor";
+        actor.Position = Vector2.Zero;
+        actor.Scale = new Vector2(2.5f, 2.5f);
+        visuals.AddChild(actor);
+        PlayIdle(actor);
+        visuals.GetNodeOrNull<Node2D>("%Visuals")?.Hide();
+    }
+
+    private static void PlayIdle(Node node)
+    {
+        if (node is AnimatedSprite2D sprite && sprite.SpriteFrames?.HasAnimation("Idle") == true)
+            sprite.Play("Idle");
+        foreach (var child in node.GetChildren()) PlayIdle(child);
+    }
+
     internal static void EnsureScenes(Assembly assembly)
     {
         if (BackgroundCallback(assembly) == null) return;

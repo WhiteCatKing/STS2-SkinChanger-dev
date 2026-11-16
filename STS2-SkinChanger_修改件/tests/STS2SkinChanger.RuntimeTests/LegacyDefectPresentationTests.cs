@@ -28,6 +28,19 @@ internal static class LegacyDefectPresentationTests
             LegacyDefectPresentationCompat.EnsureScenes(pack);
             Require(preloads == 1 && ReferenceEquals(globals.GetField("CharacterScene")!.GetValue(null), scene) &&
                 ReferenceEquals(globals.GetField("SelectBgScene")!.GetValue(null), scene), "Both native scene fields must initialize exactly once.");
+            Require(ReferenceEquals(LegacyDefectPresentationCompat.PreviewScene(pack), scene) &&
+                LegacyDefectPresentationCompat.PreviewScene(typeof(CharacterModel).Assembly) == null,
+                "Preview actor must use the selected legacy pack's actual CharacterScene, never another provider.");
+            var previewCalls = PatchProcessor.GetOriginalInstructions(AccessTools.Method(typeof(FrameworkModelPreview), "TryRefresh"))
+                .Select(i => i.operand).OfType<MethodBase>().ToArray();
+            Require(previewCalls.Any(m => m.DeclaringType == typeof(LegacyDefectPresentationCompat) && m.Name == "ApplyPreviewBody"),
+                "Shared preview creation must apply the legacy actor.");
+            var actorCalls = PatchProcessor.GetOriginalInstructions(AccessTools.Method(typeof(LegacyDefectPresentationCompat), "ApplyPreviewBody"))
+                .Select(i => i.operand).OfType<MethodBase>().ToArray();
+            Require(actorCalls.Any(m => m.Name == "GetSelectedCreatureRuntimeProvider") &&
+                actorCalls.Any(m => m.Name == "GetActiveProviderAssembly") &&
+                actorCalls.All(m => m.Name is not "ReplaySelectedCreatureNodeReady" and not "UpdateBounds" and not "_Ready"),
+                "Preview attachment must retain selection/activation gates and avoid combat lifecycle replay.");
             var screen = (NCharacterSelectScreen)RuntimeHelpers.GetUninitializedObject(typeof(NCharacterSelectScreen));
             var button = (NCharacterSelectButton)RuntimeHelpers.GetUninitializedObject(typeof(NCharacterSelectButton));
             GC.SuppressFinalize(screen); GC.SuppressFinalize(button);
