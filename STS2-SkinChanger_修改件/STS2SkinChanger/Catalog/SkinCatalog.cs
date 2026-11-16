@@ -175,6 +175,17 @@ internal sealed partial class SkinCatalog : IDisposable
         // External image routers must be merged before runtime-bundle ownership is calculated.
         // Otherwise a DLL that independently supplies several Ancient pictures looks like one
         // inseparable multi-group runtime merely because its PCK also contains per-Ancient icons.
+        foreach (var mod in mods.Where(IndependentFoolSkinContract.Matches))
+        {
+            var group = _groups.FirstOrDefault(g => g.Id == "fool");
+            if (group == null) { group = new SkinGroup("fool", DisplayName("fool")); _groups.Add(group); }
+            var existing = group.Options.FindIndex(o => o.Id == mod.Id);
+            if (existing >= 0) group.Options[existing] = group.Options[existing] with
+                { IsRuntimeProvider = true, IsDirectCharacterRuntimeProvider = true, IsCharacterIconOnly = false };
+            else group.Options.Add(new SkinOption(mod.Id, mod.Name,
+                new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+                IsRuntimeProvider: true, IsDirectCharacterRuntimeProvider: true));
+        }
         AddImageRuntimeProviderOptions(mods);
         AddVakuuVanillaArtOption();
         // Only the character table of an actual character appearance has a skin-owned lifetime.
@@ -875,7 +886,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // CznStyleUI is a UI application, including frames/icons that resemble card art.
         // Its initializer and entire PCK must stay owned by the native loader.
         // Match manifest identity so duplicate installations keep the same boundary.
-        var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods))
+        var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods.Select(IndependentFoolSkinContract.Normalize)))
             .Where(mod => !string.Equals(mod.ResourceNamespaceId, "CznStyleUI", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var gameArchive = PckArchive.Open(gamePckPath);
@@ -959,7 +970,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // CznStyleUI is a UI application, including frames/icons that resemble card art.
         // Its initializer and entire PCK must stay owned by the native loader.
         // Match manifest identity so duplicate installations keep the same boundary.
-        var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods))
+        var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods.Select(IndependentFoolSkinContract.Normalize)))
             .Where(mod => !string.Equals(mod.ResourceNamespaceId, "CznStyleUI", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var providers = new List<SkinProviderProbe>();
@@ -991,6 +1002,13 @@ internal sealed partial class SkinCatalog : IDisposable
 
             foreach (var mod in modList.Where(mod => !mod.AffectsGameplay))
             {
+                if (IndependentFoolSkinContract.Matches(mod))
+                {
+                    providers.Add(new SkinProviderProbe(mod.Id, mod.RootPath, 1, 0, 0, 0, 1, false,
+                        mod.ResourceNamespaceId, HasResourceBackedCosmetics: true, ServedGroupIds: ["fool"]));
+                    continue;
+                }
+
                 // A content pack that defines its own card pool / character / monster models only
                 // ships art for that new content. Isolating its PCK makes it look "hidden": the new
                 // cards lose their art and its scenes never load. Such a pack is never a skin.

@@ -99,6 +99,12 @@ if (args.Length == 1 && args[0] == "--test-switch-resource-lifetime")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--test-independent-fool-skins")
+{
+    IndependentFoolSkinTests.Run(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--test-legacy-defect")
 {
     LegacyDefectPresentationTests.Run(args[1]);

@@ -1254,6 +1254,7 @@ internal static partial class SkinService
                         ManagedSkinModLoader.ShouldTreatAsGameplayBaseline(mod, loadedMods),
                         mod.path,
                         mod.manifest.hasDll))
+                    .Select(IndependentFoolSkinContract.Normalize)
                     .ToArray();
 
                 Catalog = SkinCatalog.Build(gamePckPath, mods);

@@ -1174,6 +1174,7 @@ internal static class ManagedSkinModLoader
                 FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
                     provider.HasDeclarativeCharacterAssetReplacement,
                     FrameworkRegistryCooperation.IsNativeProvider(providerId));
+            IndependentFoolSkinCompat.Prepare(assembly);
             var initializerTypes = runsAuthorInitializer
                 ? GetLoadableTypes(assembly)
                     .Select(type => (Type: type, Attribute: type.GetCustomAttribute<ModInitializerAttribute>()))
