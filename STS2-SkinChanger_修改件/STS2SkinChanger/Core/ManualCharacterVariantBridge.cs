@@ -12,8 +12,8 @@ internal static class ManualCharacterVariantBridge
 {
     private static readonly Harmony Observer = new(Entry.ModId + ".manual_variants");
     private static readonly HashSet<MethodInfo> Observed = [];
-    private static readonly ConditionalWeakTable<NCharacterSelectScreen, ScreenBinding> Screens = new();
-    private static readonly List<WeakReference<NCharacterSelectScreen>> ScreenRefs = [];
+    private static readonly ConditionalWeakTable<Control, ScreenBinding> Screens = new();
+    private static readonly List<WeakReference<Control>> ScreenRefs = [];
     private const BindingFlags Static = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
 
     internal static IDisposable? BeginScope(string groupId)
@@ -49,7 +49,7 @@ internal static class ManualCharacterVariantBridge
             .GetType(state.TypeName)?.GetField(state.FieldName, Static);
     }
 
-    internal static void BindScreen(NCharacterSelectScreen screen, string groupId, string providerId)
+    internal static void BindScreen(Control screen, string groupId, string providerId)
     {
         var mode = SkinService.GetSelectedManualCharacterVariant(groupId);
         if (mode == null) return;
@@ -89,14 +89,14 @@ internal static class ManualCharacterVariantBridge
     {
         for (Node? parent = control; parent != null; parent = parent.GetParent())
         {
-            if (parent is not NCharacterSelectScreen screen || !Screens.TryGetValue(screen, out var binding)) continue;
+            if (parent is not Control screen || !Screens.TryGetValue(screen, out var binding)) continue;
             if (binding.GroupId == groupId && binding.ProviderId == providerId && binding.State.Id == stateId)
                 Request(screen, binding, value);
             return;
         }
     }
 
-    private static void Request(NCharacterSelectScreen screen, ScreenBinding binding, bool value)
+    private static void Request(Control screen, ScreenBinding binding, bool value)
     {
         var generation = ++binding.Generation;
         Callable.From(() =>

@@ -2682,8 +2682,8 @@ internal partial class MultiplayerSkinSyncNode : Node
 [HarmonyPatch(typeof(NCharacterSelectScreen), "AfterInitialized")]
 internal static class MultiplayerSkinLobbyAttachPatch
 {
-    private static void Postfix(NCharacterSelectScreen __instance) =>
-        MultiplayerSkinSync.AttachToLobby(__instance.Lobby);
+    private static void Postfix(Control __instance) =>
+        MultiplayerSkinSync.AttachToLobby(Ui.CharacterSelectScreenAccess.Lobby(__instance));
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen._Process))]

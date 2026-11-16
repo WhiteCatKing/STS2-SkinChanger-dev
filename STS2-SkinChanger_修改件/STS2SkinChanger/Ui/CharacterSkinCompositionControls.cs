@@ -14,10 +14,10 @@ internal static class CharacterSkinCompositionControls
     private const string MarginName = "MergeMargin";
     private const string ContentName = "MergeContent";
 
-    private static readonly ConditionalWeakTable<NCharacterSelectScreen, EditorState> States = new();
+    private static readonly ConditionalWeakTable<Control, EditorState> States = new();
 
     public static void Show(
-        NCharacterSelectScreen screen,
+        Control screen,
         SkinGroup? group,
         Action refresh)
     {
@@ -37,7 +37,7 @@ internal static class CharacterSkinCompositionControls
         }
     }
 
-    public static void Hide(NCharacterSelectScreen screen)
+    public static void Hide(Control screen)
     {
         if (!States.TryGetValue(screen, out var state))
         {
@@ -48,7 +48,7 @@ internal static class CharacterSkinCompositionControls
         state.Overlay.Visible = false;
     }
 
-    private static EditorState CreateState(NCharacterSelectScreen screen)
+    private static EditorState CreateState(Control screen)
     {
         var entryControl = new HBoxContainer
         {
@@ -577,12 +577,12 @@ internal static class CharacterSkinCompositionControls
     }
 
     private sealed class EditorState(
-        NCharacterSelectScreen screen,
+        Control screen,
         Control entryControl,
         Button entryButton,
         Control overlay)
     {
-        public NCharacterSelectScreen Screen { get; } = screen;
+        public Control Screen { get; } = screen;
         public Control EntryControl { get; } = entryControl;
         public Button EntryButton { get; } = entryButton;
         public Control Overlay { get; } = overlay;

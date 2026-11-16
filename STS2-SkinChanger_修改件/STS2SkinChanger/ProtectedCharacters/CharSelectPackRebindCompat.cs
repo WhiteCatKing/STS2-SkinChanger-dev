@@ -26,7 +26,7 @@ internal static class CharSelectPackRebindCompat
 
     private static readonly Dictionary<string, long> LastCall = new(StringComparer.Ordinal);
 
-    internal static void AfterRebuild(NCharacterSelectScreen? screen, string? groupId, string? providerId)
+    internal static void AfterRebuild(Control? screen, string? groupId, string? providerId)
     {
         if (screen == null || string.IsNullOrEmpty(providerId))
         {
@@ -77,7 +77,7 @@ internal static class CharSelectPackRebindCompat
                     null,
                     [typeof(NCharacterSelectScreen)],
                     null);
-                if (method == null)
+                if (method == null || !method.GetParameters()[0].ParameterType.IsInstanceOfType(screen))
                 {
                     continue;
                 }

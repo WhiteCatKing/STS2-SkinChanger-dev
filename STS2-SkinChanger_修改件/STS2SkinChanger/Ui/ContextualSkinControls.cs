@@ -47,7 +47,7 @@ internal static partial class ContextualSkinControls
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
     internal const string ManagedCombatSceneMeta = "sts2_skin_managed_combat_scene";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
-    private static readonly ConditionalWeakTable<NCharacterSelectScreen, CharacterBackgroundHostLayout>
+    private static readonly ConditionalWeakTable<Control, CharacterBackgroundHostLayout>
         CharacterBackgroundHostLayouts = new();
     private static readonly HashSet<string> LoggedMissingMultiplayerIcons =
         new(StringComparer.OrdinalIgnoreCase);
@@ -193,8 +193,9 @@ internal static partial class ContextualSkinControls
     internal static string CanonicalImagePath(string innerPath) =>
         "res://images/" + innerPath.TrimStart('/');
 
-    public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
+    public static void ShowCharacter(Control screen, CharacterModel character)
     {
+        CharacterSelectScreenAccess.EnsureHost(screen);
         OstyModelPreviewControls.BindCharacter(screen, character.Id.Entry);
         if (!OstyModelPreviewControls.IsAllowed(screen))
         {
@@ -275,11 +276,11 @@ internal static partial class ContextualSkinControls
         CharSelectStageCycle.Attach(screen, character);
     }
 
-    private static bool IsMultiplayerCharacterSelect(NCharacterSelectScreen screen)
+    private static bool IsMultiplayerCharacterSelect(Control screen)
     {
         try
         {
-            return screen.Lobby?.NetService.Type.IsMultiplayer() == true;
+            return CharacterSelectScreenAccess.Lobby(screen)?.NetService.Type.IsMultiplayer() == true;
         }
         catch
         {
@@ -288,7 +289,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void ScheduleCharacterRefresh(
-        NCharacterSelectScreen screen,
+        Control screen,
         CharacterModel character,
         string groupId)
     {
@@ -368,7 +369,7 @@ internal static partial class ContextualSkinControls
                candidates[0];
     }
 
-    private static HBoxContainer EnsureCharacterSelector(NCharacterSelectScreen screen)
+    private static HBoxContainer EnsureCharacterSelector(Control screen)
     {
         var infoPanel = screen.GetNodeOrNull<Control>("InfoPanel");
         if (infoPanel == null)
@@ -393,17 +394,17 @@ internal static partial class ContextualSkinControls
         return selector;
     }
 
-    private static HBoxContainer? FindCharacterSelector(NCharacterSelectScreen screen) =>
+    private static HBoxContainer? FindCharacterSelector(Control screen) =>
         screen.GetNodeOrNull<HBoxContainer>(SelectorName) ??
         screen.GetNodeOrNull<HBoxContainer>($"InfoPanel/{SelectorName}");
 
     private static void AttachCharacterSelectorDragging(
-        NCharacterSelectScreen screen, Control infoPanel, HBoxContainer selector) =>
+        Control screen, Control infoPanel, HBoxContainer selector) =>
         DraggableSkinControl.Attach(screen, selector, mergeButton: false,
             () => ApplyCharacterSelectorPlacement(screen, infoPanel, selector));
 
     private static void ApplyCharacterSelectorPlacement(
-        NCharacterSelectScreen screen,
+        Control screen,
         Control infoPanel,
         HBoxContainer selector)
     {
@@ -449,7 +450,7 @@ internal static partial class ContextualSkinControls
     // always active, so a player can never end up with a configuration where nothing works and
     // does not have to reason about two independent directions.
     private static void EnsureMultiplayerSkinModePanel(
-        NCharacterSelectScreen screen,
+        Control screen,
         Control infoPanel)
     {
         var panel = infoPanel.GetNodeOrNull<VBoxContainer>(MultiplayerSkinModePanelName);
@@ -572,7 +573,7 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private static void RefreshMultiplayerSkinModeButtons(NCharacterSelectScreen screen)
+    private static void RefreshMultiplayerSkinModeButtons(Control screen)
     {
         var panel = screen.GetNodeOrNull<VBoxContainer>("InfoPanel/" + MultiplayerSkinModePanelName);
         if (panel == null)
@@ -760,7 +761,7 @@ internal static partial class ContextualSkinControls
         ModThemeRuntime.Button(button, 21);
     }
 
-    internal static void HideCharacterSelector(NCharacterSelectScreen screen)
+    internal static void HideCharacterSelector(Control screen)
     {
         CharacterModelPreviewControls.Hide(screen);
         OstyModelPreviewControls.Hide(screen);
@@ -823,7 +824,7 @@ internal static partial class ContextualSkinControls
             }
 
             var group = FindGroup(groupId);
-            foreach (var screen in EnumerateNodes(root).OfType<NCharacterSelectScreen>())
+            foreach (var screen in EnumerateNodes(root).OfType<Control>().Where(CharacterSelectScreenAccess.IsSupported))
             {
                 if (!GodotObject.IsInstanceValid(screen))
                 {
@@ -849,7 +850,7 @@ internal static partial class ContextualSkinControls
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
         if (group != null) group = SkinService.Catalog?.Groups.FirstOrDefault(g => g.Id == group.Id) ?? group;
         dropdown.GetPopup().Hide();
-        var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
+        var characterScreen = CharacterSelectScreenAccess.Find(selector);
         var visualOptions = group == null
             ? []
             : SkinService.Catalog?.IsCharacterAppearanceGroup(group.Id) == true
@@ -973,7 +974,7 @@ internal static partial class ContextualSkinControls
         }
 
         // 只在"角色选择"界面显示；图鉴/怪物分类等选择器不挂随从下拉。
-        var screen = FindAncestor<NCharacterSelectScreen>(selector);
+        var screen = CharacterSelectScreenAccess.Find(selector);
         if (screen == null)
         {
             osty.Visible = false;
@@ -1227,7 +1228,7 @@ internal static partial class ContextualSkinControls
             }
 
             PopulateOsty(selector);
-            if (FindAncestor<NCharacterSelectScreen>(selector) is { } randomScreen)
+            if (CharacterSelectScreenAccess.Find(selector) is { } randomScreen)
             {
                 OstyModelPreviewControls.Refresh(randomScreen);
             }
@@ -1248,7 +1249,7 @@ internal static partial class ContextualSkinControls
         PopulateOsty(selector);
         // 骨妹选人图里奥斯提与本体是同一条骨骼，换完要按当前角色重刷一次预览。
         RefreshSelectorDisplay(selector);
-        if (FindAncestor<NCharacterSelectScreen>(selector) is { } ostyScreen)
+        if (CharacterSelectScreenAccess.Find(selector) is { } ostyScreen)
         {
             OstyModelPreviewControls.Refresh(ostyScreen);
         }
@@ -1278,7 +1279,7 @@ internal static partial class ContextualSkinControls
                 return;
             }
 
-            foreach (var screen in EnumerateNodes(root).OfType<NCharacterSelectScreen>())
+            foreach (var screen in EnumerateNodes(root).OfType<Control>().Where(CharacterSelectScreenAccess.IsSupported))
             {
                 if (!GodotObject.IsInstanceValid(screen))
                 {
@@ -1416,7 +1417,7 @@ internal static partial class ContextualSkinControls
         CharacterSkinRandomExclusionUi.Attach(dropdown, list, () =>
         {
             var id = selector.GetMeta(GroupMeta, string.Empty).AsString();
-            return FindAncestor<NCharacterSelectScreen>(selector) != null &&
+            return CharacterSelectScreenAccess.Find(selector) != null &&
                    SkinService.Catalog?.IsCharacterAppearanceGroup(id) == true ? id : null;
         });
         RefreshCharacterBundlePopupList(dropdown, list);
@@ -1511,7 +1512,7 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private static OptionButton? FindFrameworkDropdown(NCharacterSelectScreen screen, string groupId)
+    private static OptionButton? FindFrameworkDropdown(Control screen, string groupId)
     {
         var selector = FindCharacterSelector(screen);
         if (selector == null || !selector.GetMeta(GroupMeta, string.Empty).AsString()
@@ -1520,7 +1521,7 @@ internal static partial class ContextualSkinControls
     }
 
     internal static string? GetFrameworkCycleOption(
-        NCharacterSelectScreen screen, string groupId, string? pendingOptionId, int direction)
+        Control screen, string groupId, string? pendingOptionId, int direction)
     {
         var dropdown = FindFrameworkDropdown(screen, groupId);
         if (dropdown == null) return null;
@@ -1535,7 +1536,7 @@ internal static partial class ContextualSkinControls
     }
 
     internal static string? GetFrameworkSelectionName(
-        NCharacterSelectScreen screen, string groupId, string? pendingOptionId)
+        Control screen, string groupId, string? pendingOptionId)
     {
         var dropdown = FindFrameworkDropdown(screen, groupId);
         if (dropdown == null) return null;
@@ -1546,7 +1547,7 @@ internal static partial class ContextualSkinControls
         return null;
     }
 
-    internal static bool RequestFrameworkSelection(NCharacterSelectScreen screen, string groupId, string optionId)
+    internal static bool RequestFrameworkSelection(Control screen, string groupId, string optionId)
     {
         var dropdown = FindFrameworkDropdown(screen, groupId);
         if (dropdown == null) return false;
@@ -1563,7 +1564,7 @@ internal static partial class ContextualSkinControls
         return false;
     }
 
-    internal static bool RequestManualVariantSelection(NCharacterSelectScreen screen, string groupId, string optionId)
+    internal static bool RequestManualVariantSelection(Control screen, string groupId, string optionId)
     {
         if (RequestFrameworkSelection(screen, groupId, optionId)) return true;
         var dropdown = FindFrameworkDropdown(screen, groupId);
@@ -1576,7 +1577,7 @@ internal static partial class ContextualSkinControls
         return RequestFrameworkSelection(screen, groupId, option.Id);
     }
 
-    internal static bool IsCharacterSelectionLoading(NCharacterSelectScreen screen) =>
+    internal static bool IsCharacterSelectionLoading(Control screen) =>
         FindCharacterSelector(screen)?.GetMeta(UpdatingMeta, false).AsBool() == true;
 
     private static void ApplyDropdownSelection(HBoxContainer selector, OptionButton dropdown, int index)
@@ -1588,7 +1589,7 @@ internal static partial class ContextualSkinControls
 
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var optionId = dropdown.GetItemMetadata(index).AsString();
-        var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
+        var characterScreen = CharacterSelectScreenAccess.Find(selector);
         if (SkinWorkshopEntry.Open(optionId, selector, groupId, () => Populate(selector, FindGroup(groupId)),
                 kind: characterScreen != null ? "character" : "monster")) return;
         if (characterScreen != null && !HasMonsterPriorityContext(selector) && RandomCharacterSkinPolicy.IsRandom(optionId))
@@ -1669,7 +1670,7 @@ internal static partial class ContextualSkinControls
             return false;
         }
 
-        var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
+        var characterScreen = CharacterSelectScreenAccess.Find(selector);
         var refreshedCharacter = false;
         if (characterScreen != null && !HasMonsterPriorityContext(selector) &&
             RefreshActions.TryGetValue(selector.GetInstanceId(), out var characterRefresh))
@@ -1696,14 +1697,14 @@ internal static partial class ContextualSkinControls
             }
         }
 
-        if (FindAncestor<NCharacterSelectScreen>(selector) != null &&
+        if (CharacterSelectScreenAccess.Find(selector) != null &&
             !HasMonsterPriorityContext(selector) &&
             !SkinService.SetRandomCharacterSkinEnabled(groupId, selectRandomCharacterSkin))
         {
             ModLog.Warn($"保存选角随机皮肤状态失败：{SkinService.LastError}");
         }
 
-        if (FindAncestor<NCharacterSelectScreen>(selector) != null &&
+        if (CharacterSelectScreenAccess.Find(selector) != null &&
             !HasMonsterPriorityContext(selector) &&
             !preserveCharacterSkinBundle &&
             !SkinService.ClearSelectedCharacterSkinBundle(groupId))
@@ -1743,7 +1744,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void BeginCharacterDropdownSelection(
-        NCharacterSelectScreen screen,
+        Control screen,
         HBoxContainer selector,
         OptionButton dropdown,
         int index,
@@ -1854,7 +1855,7 @@ internal static partial class ContextualSkinControls
         ScheduleNextFrame(screen, poll);
     }
 
-    private static void CancelCharacterDropdownSelection(NCharacterSelectScreen screen)
+    private static void CancelCharacterDropdownSelection(Control screen)
     {
         var overlay = screen.GetNodeOrNull<PanelContainer>(CharacterLoadingOverlayName);
         if (overlay?.Visible != true)
@@ -1879,7 +1880,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static PanelContainer EnsureCharacterLoadingOverlay(
-        NCharacterSelectScreen screen,
+        Control screen,
         string optionName)
     {
         var existing = screen.GetNodeOrNull<PanelContainer>(CharacterLoadingOverlayName);
@@ -1971,7 +1972,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void HideCharacterLoadingOverlay(
-        NCharacterSelectScreen screen,
+        Control screen,
         PanelContainer overlay)
     {
         if (GodotObject.IsInstanceValid(screen) && GodotObject.IsInstanceValid(overlay))
@@ -2036,7 +2037,7 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
+    private static void RebuildCharacterDisplay(Control screen, CharacterModel character, string groupId)
     {
         // F29 取证：卡死复现停在选角预览重建时，godot.log 以此行与挂载日志分界。
         ModLog.Info($"开始重建选角预览：{groupId}。");
@@ -2191,7 +2192,7 @@ internal static partial class ContextualSkinControls
     /// the deferred character rebuild; this is a direct texture assignment and never re-enters
     /// the game's full visual refresh (which can recurse while a lobby is being constructed).
     /// </summary>
-    private static void RefreshLocalLobbyAvatar(NCharacterSelectScreen screen)
+    private static void RefreshLocalLobbyAvatar(Control screen)
     {
         try
         {
@@ -2203,7 +2204,7 @@ internal static partial class ContextualSkinControls
             // Do not call StartRunLobby.LocalPlayer here: its return type changed between the
             // formal and public-beta game builds (LobbyPlayer vs StartRunLobbyPlayer), which
             // makes an otherwise valid dual-version DLL fail with MissingMethodException.
-            var playerId = screen.Lobby.NetService.NetId;
+            var playerId = CharacterSelectScreenAccess.Lobby(screen).NetService.NetId;
             RefreshMultiplayerPlayerIcons(playerId);
         }
         catch (Exception exception)
@@ -2224,7 +2225,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void RebuildMountedFullRuntimeCharacterDisplay(
-        NCharacterSelectScreen screen,
+        Control screen,
         CharacterModel character,
         string groupId,
         string scenePath,
@@ -2272,13 +2273,13 @@ internal static partial class ContextualSkinControls
     /// 就会显示 <c>可见=False</c>。只有这两种情况之一，才会出现「背景退回原版」。
     /// </summary>
     private static void DescribeCharacterSelectBackground(
-        NCharacterSelectScreen screen,
+        Control screen,
         string groupId,
         CharacterModel character)
     {
         try
         {
-            var animated = screen.GetNodeOrNull<Node>("AnimatedBg");
+            var animated = CharacterSelectScreenAccess.Background(screen);
             var parts = new List<string>();
             if (animated != null)
             {
@@ -2312,7 +2313,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void RestoreCharacterInfoText(
-        NCharacterSelectScreen screen,
+        Control screen,
         CharacterModel character)
     {
         try
@@ -2321,11 +2322,11 @@ internal static partial class ContextualSkinControls
             var title = button?.IsLocked == true
                 ? new LocString("main_menu_ui", "CHARACTER_SELECT.locked.title").GetFormattedText()
                 : new LocString("characters", character.CharacterSelectTitle).GetFormattedText();
-            var nameLabel = CharacterNameField.GetValue(screen);
+            var nameLabel = CharacterSelectScreenAccess.Read(CharacterNameField, screen);
             AccessTools.Method(nameLabel?.GetType(), "SetTextAutoSize", [typeof(string)])?
                 .Invoke(nameLabel, [title]);
 
-            if (CharacterDescriptionField.GetValue(screen) is RichTextLabel description)
+            if (CharacterSelectScreenAccess.Read(CharacterDescriptionField, screen) is RichTextLabel description)
             {
                 description.Text = button?.IsLocked == true
                     ? character.GetUnlockText().GetFormattedText()
@@ -2341,7 +2342,7 @@ internal static partial class ContextualSkinControls
             }
 
             var isLocked = button?.IsLocked == true;
-            if (CharacterRelicTitleField.GetValue(screen) is RichTextLabel relicTitle)
+            if (CharacterSelectScreenAccess.Read(CharacterRelicTitleField, screen) is RichTextLabel relicTitle)
             {
                 relicTitle.Text = isLocked
                     ? new LocString(
@@ -2350,7 +2351,7 @@ internal static partial class ContextualSkinControls
                     : relic.Title.GetFormattedText();
             }
 
-            if (CharacterRelicDescriptionField.GetValue(screen) is RichTextLabel relicDescription)
+            if (CharacterSelectScreenAccess.Read(CharacterRelicDescriptionField, screen) is RichTextLabel relicDescription)
             {
                 relicDescription.Text = isLocked
                     ? new LocString(
@@ -2359,13 +2360,13 @@ internal static partial class ContextualSkinControls
                     : relic.DynamicDescription.GetFormattedText();
             }
 
-            if (CharacterRelicIconField.GetValue(screen) is TextureRect relicIcon)
+            if (CharacterSelectScreenAccess.Read(CharacterRelicIconField, screen) is TextureRect relicIcon)
             {
                 relicIcon.Texture = relic.Icon;
                 relicIcon.SelfModulate = isLocked ? StsColors.ninetyPercentBlack : Colors.White;
             }
 
-            if (CharacterRelicIconOutlineField.GetValue(screen) is TextureRect relicIconOutline)
+            if (CharacterSelectScreenAccess.Read(CharacterRelicIconOutlineField, screen) is TextureRect relicIconOutline)
             {
                 relicIconOutline.Texture = relic.IconOutline;
                 relicIconOutline.SelfModulate = isLocked
@@ -2380,7 +2381,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void ReplaySelectedCharacterPresentation(
-        NCharacterSelectScreen screen,
+        Control screen,
         CharacterModel character,
         string groupId)
     {
@@ -2406,7 +2407,7 @@ internal static partial class ContextualSkinControls
             ManualCharacterVariantBridge.BindScreen(screen, groupId, providerId);
         }
 
-        var animatedBackground = screen.GetNodeOrNull<Node>("AnimatedBg");
+        var animatedBackground = CharacterSelectScreenAccess.Background(screen);
         var sceneRoot = animatedBackground?.GetChildCount() > 0
             ? animatedBackground.GetChild(0)
             : null;
@@ -2424,7 +2425,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void RemoveStaleProviderCharacterSelectControls(
-        NCharacterSelectScreen screen,
+        Control screen,
         CharacterModel? character)
     {
         // A runtime (DLL/framework) provider attaches its own character-select toolbar and names
@@ -2472,7 +2473,7 @@ internal static partial class ContextualSkinControls
     /// particular Mod, node name, or button label.
     /// </summary>
     private static void StabilizeProviderCharacterSelectControls(
-        NCharacterSelectScreen screen,
+        Control screen,
         IReadOnlySet<ulong> existingNodes,
         string providerId)
     {
@@ -2545,7 +2546,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void StabilizeProviderCharacterSelectControl(
-        NCharacterSelectScreen screen,
+        Control screen,
         Control control)
     {
         control.Visible = true;
@@ -2560,7 +2561,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void RebuildRuntimeProviderCharacterDisplay(
-        NCharacterSelectScreen screen,
+        Control screen,
         CharacterModel character)
     {
         var scenePath = character.CharacterSelectBg;
@@ -2599,7 +2600,7 @@ internal static partial class ContextualSkinControls
     }
 
     /// <summary>把所有角色按钮的头像按当前选择重刷一遍（绕开资源缓存）。</summary>
-    private static void RefreshAllCharacterButtonIcons(NCharacterSelectScreen screen)
+    private static void RefreshAllCharacterButtonIcons(Control screen)
     {
         try
         {
@@ -2639,12 +2640,12 @@ internal static partial class ContextualSkinControls
     }
 
     private static void ReplaceCharacterBackground(
-        NCharacterSelectScreen screen,
+        Control screen,
         CharacterModel character,
         PackedScene scene,
         IReadOnlyDictionary<string, Resource>? isolatedResources = null)
     {
-        var container = screen.GetNodeOrNull<Control>("AnimatedBg");
+        var container = CharacterSelectScreenAccess.Background(screen);
         if (container == null)
         {
             ModLog.Error("选角界面缺少 AnimatedBg 节点，无法替换角色背景。");
@@ -2695,7 +2696,7 @@ internal static partial class ContextualSkinControls
         }).CallDeferred();
     }
 
-    internal static void CaptureCharacterBackgroundHostLayout(NCharacterSelectScreen screen)
+    internal static void CaptureCharacterBackgroundHostLayout(Control screen)
     {
         if (!GodotObject.IsInstanceValid(screen) ||
             CharacterBackgroundHostLayouts.TryGetValue(screen, out _))
@@ -2703,7 +2704,7 @@ internal static partial class ContextualSkinControls
             return;
         }
 
-        var container = screen.GetNodeOrNull<Control>("AnimatedBg");
+        var container = CharacterSelectScreenAccess.Background(screen);
         if (container != null)
         {
             CharacterBackgroundHostLayouts.Add(
@@ -2712,9 +2713,9 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private static void RestoreCharacterBackgroundHostLayout(NCharacterSelectScreen screen)
+    private static void RestoreCharacterBackgroundHostLayout(Control screen)
     {
-        var container = screen.GetNodeOrNull<Control>("AnimatedBg");
+        var container = CharacterSelectScreenAccess.Background(screen);
         if (container == null)
         {
             return;
@@ -2808,7 +2809,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static void RefreshCharacterButtonIcon(
-        NCharacterSelectScreen screen,
+        Control screen,
         CharacterModel character)
     {
         var button = FindCharacterButton(screen, character);
@@ -2842,7 +2843,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static NCharacterSelectButton? FindCharacterButton(
-        NCharacterSelectScreen screen,
+        Control screen,
         CharacterModel character) =>
         FindDescendant<NCharacterSelectButton>(screen, candidate =>
             candidate.Character?.Id.Entry.Equals(character.Id.Entry, StringComparison.OrdinalIgnoreCase) == true);
@@ -3878,22 +3879,22 @@ internal static class RandomCharacterLobbySkinPatch
 internal static class CharacterSelectionSkinPatch
 {
     [HarmonyPriority(Priority.First)]
-    private static void Prefix(NCharacterSelectScreen __instance) =>
+    private static void Prefix(Control __instance) =>
         ContextualSkinControls.CaptureCharacterBackgroundHostLayout(__instance);
 
     [HarmonyPriority(Priority.First)]
-    private static void Postfix(NCharacterSelectScreen __instance, NCharacterSelectButton charSelectButton) =>
+    private static void Postfix(Control __instance, NCharacterSelectButton charSelectButton) =>
         ContextualSkinControls.ShowCharacter(__instance, charSelectButton.Character);
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), "StartNewSingleplayerRun")]
 internal static class SingleplayerEmbarkSkinSelectorPatch
 {
-    private static void Prefix(NCharacterSelectScreen __instance)
+    private static void Prefix(Control __instance)
     {
         try
         {
-            var groupId = ContextualSkinControls.GetLocalLobbyCharacter(__instance.Lobby).Id.Entry.ToLowerInvariant();
+            var groupId = ContextualSkinControls.GetLocalLobbyCharacter(CharacterSelectScreenAccess.Lobby(__instance)).Id.Entry.ToLowerInvariant();
             if (SkinService.IsRandomCharacterSkinEnabled(groupId))
             {
                 ContextualSkinControls.HideCharacterSelector(__instance);
@@ -3919,11 +3920,11 @@ internal static class SingleplayerEmbarkSkinSelectorPatch
 [HarmonyPatch(typeof(NCharacterSelectScreen), "StartNewMultiplayerRun")]
 internal static class MultiplayerEmbarkSkinSelectorPatch
 {
-    private static void Prefix(NCharacterSelectScreen __instance)
+    private static void Prefix(Control __instance)
     {
         try
         {
-            var groupId = ContextualSkinControls.GetLocalLobbyCharacter(__instance.Lobby).Id.Entry.ToLowerInvariant();
+            var groupId = ContextualSkinControls.GetLocalLobbyCharacter(CharacterSelectScreenAccess.Lobby(__instance)).Id.Entry.ToLowerInvariant();
             if (SkinService.IsRandomCharacterSkinEnabled(groupId))
             {
                 ContextualSkinControls.HideCharacterSelector(__instance);

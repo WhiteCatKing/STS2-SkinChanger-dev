@@ -17,7 +17,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.33.4";
+    public const string InternalTestVersion = "1.0.33.5";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -75,6 +75,7 @@ public static class Entry
         OstyDefectImpostorCompat.Install(harmony);
         BlackedEventMerchantCompat.Install(harmony);
         Ui.MerchantRoomConcreteReadyPatch.Install(harmony);
+        Ui.CharacterSelectModePatches.Install(harmony);
         ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
         ModLog.Info(failedPatchClasses.Count == 0
             ? "代码补丁已加载。等待游戏资源初始化。"

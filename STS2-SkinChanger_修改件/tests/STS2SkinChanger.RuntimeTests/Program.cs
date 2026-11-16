@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-character-select-modes")
+{
+    CharacterSelectModeTests.Run();
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--test-private-merchant")
 {
     PrivateMerchantTests.Run(args[1], args[2]);

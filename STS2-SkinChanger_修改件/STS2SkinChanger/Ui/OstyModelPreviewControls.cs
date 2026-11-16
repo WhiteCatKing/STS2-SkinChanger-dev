@@ -29,11 +29,11 @@ internal static class OstyModelPreviewControls
 
     // 作者要求：预览框只跟随骨妹；面板自身每帧会把 Visible 置回 true，所以判定必须在面板内部。
     internal static bool ShouldShowForCharacter(string id) => id.Equals("necrobinder", StringComparison.OrdinalIgnoreCase);
-    internal static void BindCharacter(NCharacterSelectScreen screen, string id) =>
+    internal static void BindCharacter(Control screen, string id) =>
         screen.SetMeta("sc_osty_owner", ShouldShowForCharacter(id));
-    internal static bool IsAllowed(NCharacterSelectScreen screen) => screen.GetMeta("sc_osty_owner", false).AsBool();
+    internal static bool IsAllowed(Control screen) => screen.GetMeta("sc_osty_owner", false).AsBool();
 
-    public static void Refresh(NCharacterSelectScreen screen)
+    public static void Refresh(Control screen)
     {
         var diagnostic = screen.GetNodeOrNull<Control>($"InfoPanel/{PanelName}");
         // 非主人页面（作者要求：除骨妹外都不显示随从与预览框）即使被再次调用也不显示。
@@ -67,7 +67,7 @@ internal static class OstyModelPreviewControls
         panel.ShowOsty();
     }
 
-    public static void Hide(NCharacterSelectScreen screen) =>
+    public static void Hide(Control screen) =>
         screen.GetNodeOrNull<OstyModelPreviewPanel>($"InfoPanel/{PanelName}")?.Suspend();
 
 
@@ -227,7 +227,7 @@ internal partial class OstyModelPreviewPanel : Control
     private const float GripWidth = CharacterModelPreviewControls.GripWidth;
     private const float ModelInset = CharacterModelPreviewControls.ModelInset;
 
-    private NCharacterSelectScreen _screen = null!;
+    private Control _screen = null!;
     private Control _info = null!;
     private Control _frame = null!;
     private NinePatchRect _background = null!;
@@ -244,7 +244,7 @@ internal partial class OstyModelPreviewPanel : Control
     private bool _refreshQueued;
     private Window _window = null!;
 
-    internal void Initialize(NCharacterSelectScreen screen, Control info)
+    internal void Initialize(Control screen, Control info)
     {
         _screen = screen;
         _info = info;

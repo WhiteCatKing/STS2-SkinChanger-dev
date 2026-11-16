@@ -8,9 +8,9 @@ namespace STS2SkinChanger.Ui;
 
 internal static partial class CharacterSkinBundleControls
 {
-    private static readonly ConditionalWeakTable<NCharacterSelectScreen, EditorState> States = new();
+    private static readonly ConditionalWeakTable<Control, EditorState> States = new();
 
-    internal static void ShowForCharacter(NCharacterSelectScreen screen, string groupId, string displayName, Action refresh)
+    internal static void ShowForCharacter(Control screen, string groupId, string displayName, Action refresh)
     {
         var state = States.GetValue(screen, CreateState);
         if (!state.GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase))
@@ -23,7 +23,7 @@ internal static partial class CharacterSkinBundleControls
         state.Entry.Show();
     }
 
-    internal static void Hide(NCharacterSelectScreen screen)
+    internal static void Hide(Control screen)
     {
         if (States.TryGetValue(screen, out var state))
         {
@@ -32,7 +32,7 @@ internal static partial class CharacterSkinBundleControls
         }
     }
 
-    private static EditorState CreateState(NCharacterSelectScreen screen)
+    private static EditorState CreateState(Control screen)
     {
         var entry = new HBoxContainer
         {
@@ -454,12 +454,12 @@ internal static partial class CharacterSkinBundleControls
     }
 
     private sealed class EditorState(
-        NCharacterSelectScreen screen,
+        Control screen,
         HBoxContainer entry,
         Control overlay,
         VBoxContainer content)
     {
-        public NCharacterSelectScreen Screen { get; } = screen;
+        public Control Screen { get; } = screen;
         public HBoxContainer Entry { get; } = entry;
         public Control Overlay { get; } = overlay;
         public VBoxContainer Content { get; } = content;

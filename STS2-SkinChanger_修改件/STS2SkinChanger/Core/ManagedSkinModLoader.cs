@@ -1900,7 +1900,7 @@ internal static class ManagedSkinModLoader
     /// </summary>
     public static void ReplaySelectedCharacterPresentation(
         string providerId,
-        NCharacterSelectScreen screen,
+        Control screen,
         NCharacterSelectButton button,
         CharacterModel character,
         Action? afterReplay = null)
@@ -1922,6 +1922,7 @@ internal static class ManagedSkinModLoader
             var instance = typeof(NCharacterSelectScreen).IsAssignableFrom(patch.Target.DeclaringType)
                 ? (object)screen
                 : button;
+            if (patch.Target.DeclaringType?.IsInstanceOfType(instance) != true) continue;
             if (!TryBuildCharacterPresentationArguments(
                     patch.Callback,
                     patch.Target,
@@ -1957,7 +1958,7 @@ internal static class ManagedSkinModLoader
         }
     }
 
-    public static void RestoreCharacterPresentation(NCharacterSelectScreen screen)
+    public static void RestoreCharacterPresentation(Control screen)
     {
         foreach (var runtime in ActiveProviderRuntimes.Values)
         {
@@ -1966,7 +1967,7 @@ internal static class ManagedSkinModLoader
     }
 
     private static Dictionary<ulong, CharacterPresentationNodeState> CaptureCharacterPresentationState(
-        NCharacterSelectScreen screen)
+        Control screen)
     {
         var result = new Dictionary<ulong, CharacterPresentationNodeState>();
         foreach (var node in EnumerateNodeTree(screen))
@@ -1985,7 +1986,7 @@ internal static class ManagedSkinModLoader
 
     private static void TrackCharacterPresentationMutation(
         ActiveProviderRuntime runtime,
-        NCharacterSelectScreen screen,
+        Control screen,
         IReadOnlyDictionary<ulong, CharacterPresentationNodeState> baseline)
     {
         var addedRoots = new List<WeakReference<Node>>();
@@ -2062,7 +2063,7 @@ internal static class ManagedSkinModLoader
 
         runtime.CharacterPresentationMutations[screen.GetInstanceId()] =
             new CharacterPresentationMutation(
-                new WeakReference<NCharacterSelectScreen>(screen),
+                new WeakReference<Control>(screen),
                 addedRoots,
                 visibilityChanges,
                 textChanges,
@@ -2099,7 +2100,7 @@ internal static class ManagedSkinModLoader
 
     private static void RestoreCharacterPresentation(
         ActiveProviderRuntime runtime,
-        NCharacterSelectScreen screen)
+        Control screen)
     {
         var instanceId = screen.GetInstanceId();
         if (!runtime.CharacterPresentationMutations.Remove(instanceId, out var mutation))
@@ -3147,7 +3148,7 @@ internal static class ManagedSkinModLoader
                     break;
                 case "__args" when parameterType == typeof(object[]) &&
                                    target.Name == nameof(NCharacterSelectScreen.SelectCharacter) &&
-                                   instance is NCharacterSelectScreen:
+                                   instance is Control:
                     // Older builds take only the button. Beta also passes the character model.
                     var targetParameters = target.GetParameters();
                     if (targetParameters.Length == 1 &&
@@ -4793,7 +4794,7 @@ internal static class ManagedSkinModLoader
         IReadOnlyList<Callable> ResizeConnections);
 
     private sealed record CharacterPresentationMutation(
-        WeakReference<NCharacterSelectScreen> Screen,
+        WeakReference<Control> Screen,
         IReadOnlyList<WeakReference<Node>> AddedRoots,
         IReadOnlyList<CharacterPresentationVisibilityChange> VisibilityChanges,
         IReadOnlyList<CharacterPresentationTextChange> TextChanges,

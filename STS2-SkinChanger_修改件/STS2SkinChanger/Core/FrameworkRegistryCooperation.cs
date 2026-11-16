@@ -125,7 +125,7 @@ internal static class FrameworkRegistryCooperation
                 if (CharacterId(node) is not { } id || Normalize(id.Entry) != groupId) continue;
                 for (Node? parent = node; parent != null; parent = parent.GetParent())
                 {
-                    if (parent is MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen screen &&
+                    if (parent is Control screen && CharacterSelectScreenAccess.IsSupported(screen) &&
                         ContextualSkinControls.RequestFrameworkSelection(screen, groupId, optionId)) return;
                 }
             }
@@ -179,10 +179,10 @@ internal static class FrameworkRegistryCooperation
         Callable.From(() => { _refreshQueued = false; RefreshControls(); }).CallDeferred();
     }
 
-    private static NCharacterSelectScreen? CharacterScreen(Node control)
+    private static Control? CharacterScreen(Node control)
     {
         for (Node? parent = control; parent != null; parent = parent.GetParent())
-            if (parent is NCharacterSelectScreen screen) return screen;
+            if (parent is Control screen && CharacterSelectScreenAccess.IsSupported(screen)) return screen;
         return null;
     }
 
@@ -206,7 +206,7 @@ internal static class FrameworkRegistryCooperation
         if (CharacterId(__instance) is not { } id) return false;
         var group = Normalize(id.Entry);
         for (Node? parent = __instance; parent != null; parent = parent.GetParent())
-            if (parent is NCharacterSelectScreen screen && ContextualSkinControls.IsCharacterSelectionLoading(screen)) return false;
+            if (parent is Control screen && CharacterSelectScreenAccess.IsSupported(screen) && ContextualSkinControls.IsCharacterSelectionLoading(screen)) return false;
         if (Requests.ContainsKey(group)) return false;
         PendingOptions.Remove(group);
         if (__originalMethod.Name != "LoadPreview") return true;

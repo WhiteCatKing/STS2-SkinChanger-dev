@@ -35,7 +35,7 @@ internal static class CharSelectStageCycle
     private static WeakReference<CharacterModel>? _character;
 
 
-    internal static void Attach(NCharacterSelectScreen screen, CharacterModel? characterModel)
+    internal static void Attach(Control screen, CharacterModel? characterModel)
     {
         try
         {
@@ -81,7 +81,7 @@ internal static class CharSelectStageCycle
         }
     }
 
-    private static void Tick(NCharacterSelectScreen screen, Godot.Timer host)
+    private static void Tick(Control screen, Godot.Timer host)
     {
         try
         {
@@ -183,7 +183,7 @@ internal static class CharSelectStageCycle
 
 
     /// <summary>Performs one stage advance. Returns true when the click was consumed.</summary>
-    private static bool CycleWithLog(NCharacterSelectScreen screen, string groupId, string entry)
+    private static bool CycleWithLog(Control screen, string groupId, string entry)
     {
         var background = FindBackground(screen, entry, groupId);
         var spine = background == null ? null : FindSpine(background);
@@ -232,7 +232,7 @@ internal static class CharSelectStageCycle
     /// Skin Changer rebuilding the per-character background: prefer the background's own container (the
     /// pack does the same), then the screen's <c>AnimatedBg</c>, and only then the background itself.
     /// </summary>
-    private static Control ResolveCatcherHost(NCharacterSelectScreen screen, Node background)
+    private static Control ResolveCatcherHost(Control screen, Node background)
     {
         if (background.GetParent() is Control { } parent && parent != screen)
         {
@@ -255,7 +255,7 @@ internal static class CharSelectStageCycle
         return background as Control ?? screen;
     }
 
-    private static void OnClick(NCharacterSelectScreen screen, Control catcher, InputEvent input)
+    private static void OnClick(Control screen, Control catcher, InputEvent input)
     {
         if (input is not InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true })
         {
@@ -574,7 +574,7 @@ internal static class CharSelectStageCycle
     /// Keeps the character-select button portrait on the same stage as the background, using the
     /// package's own per-variant, per-stage portrait images when it ships them.
     /// </summary>
-    private static void RefreshCharacterButtons(NCharacterSelectScreen screen, string groupId, string entry, int stage)
+    private static void RefreshCharacterButtons(Control screen, string groupId, string entry, int stage)
     {
         try
         {
@@ -607,7 +607,7 @@ internal static class CharSelectStageCycle
         }
     }
 
-    private static Texture2D? LoadStageIcon(string groupId, NCharacterSelectScreen screen, string entry, int stage)
+    private static Texture2D? LoadStageIcon(string groupId, Control screen, string entry, int stage)
     {
         try
         {
@@ -705,13 +705,13 @@ internal static class CharSelectStageCycle
         return null;
     }
 
-    private static Control? FindBackground(NCharacterSelectScreen screen, string entry, string groupId)
+    private static Control? FindBackground(Control screen, string entry, string groupId)
     {
         var container = screen.GetNodeOrNull<Control>(new NodePath("AnimatedBg"));
         if (container == null)
         {
             _bgContainerField ??= AccessTools.Field(typeof(NCharacterSelectScreen), "_bgContainer");
-            container = _bgContainerField?.GetValue(screen) as Control;
+            container = CharacterSelectScreenAccess.Read(_bgContainerField, screen) as Control;
         }
 
         container ??= screen;
@@ -764,6 +764,6 @@ internal static class CharSelectStageCyclePatch
 {
     // v0.113.0 起 SelectCharacter 只收按钮参数，角色模型要自己从按钮上取。
     [HarmonyPostfix]
-    private static void Postfix(NCharacterSelectScreen __instance, NCharacterSelectButton charSelectButton) =>
+    private static void Postfix(Control __instance, NCharacterSelectButton charSelectButton) =>
         CharSelectStageCycle.Attach(__instance, charSelectButton?.Character);
 }

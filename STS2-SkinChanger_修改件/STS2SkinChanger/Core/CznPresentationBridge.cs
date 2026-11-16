@@ -186,11 +186,16 @@ internal static class CznPresentationBridge
         if (!SelectionRuntimes.Any(value => ReferenceEquals(value, __instance))) SelectionRuntimes.Add(__instance);
     }
 
-    internal static void ReapplySelection(NCharacterSelectScreen screen, CharacterModel character, NCharacterSelectButton button)
+    internal static void ReapplySelection(Control screen, CharacterModel character, NCharacterSelectButton button)
     {
         foreach (var runtime in SelectionRuntimes.ToArray())
         {
-            try { AccessTools.Method(runtime.GetType(), "ApplyScreenSelection").Invoke(runtime, [screen, button, character]); }
+            try
+            {
+                var method = AccessTools.Method(runtime.GetType(), "ApplyScreenSelection");
+                if (method?.GetParameters()[0].ParameterType.IsInstanceOfType(screen) == true)
+                    method.Invoke(runtime, [screen, button, character]);
+            }
             catch (Exception exception) { ModLog.Warn("[CZN兼容] 选角展示恢复失败：" + exception.GetBaseException().Message); }
         }
     }

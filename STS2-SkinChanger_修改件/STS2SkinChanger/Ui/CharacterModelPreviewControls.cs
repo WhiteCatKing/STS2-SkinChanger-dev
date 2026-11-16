@@ -52,7 +52,7 @@ internal static class CharacterModelPreviewControls
     internal static bool ShouldLoadModel(bool docked, bool hasCharacter, bool enabled, bool visible) =>
         !docked && hasCharacter && enabled && visible;
 
-    public static void Refresh(NCharacterSelectScreen screen, CharacterModel character)
+    public static void Refresh(Control screen, CharacterModel character)
     {
         if (!IsEnabled) { Hide(screen); return; }
         var info = screen.GetNodeOrNull<Control>("InfoPanel");
@@ -67,10 +67,10 @@ internal static class CharacterModelPreviewControls
         panel.ShowCharacter(character);
     }
 
-    public static void Hide(NCharacterSelectScreen screen) =>
+    public static void Hide(Control screen) =>
         screen.GetNodeOrNull<CharacterModelPreviewPanel>($"InfoPanel/{PanelName}")?.Suspend();
 
-    internal static bool BindNow(NCharacterSelectScreen screen, CharacterModel character)
+    internal static bool BindNow(Control screen, CharacterModel character)
     {
         Refresh(screen, character);
         return screen.GetNodeOrNull<CharacterModelPreviewPanel>($"InfoPanel/{PanelName}")?.TryRefreshModel() == true;
@@ -84,7 +84,7 @@ internal partial class CharacterModelPreviewPanel : Control
     private CharacterAppearanceIdentity? _requestedAppearance;
     private int _retryGeneration, _retryCount;
     private bool _retryQueued;
-    private NCharacterSelectScreen _screen = null!;
+    private Control _screen = null!;
     private Control _info = null!;
     private Control _frame = null!;
     private NinePatchRect _background = null!;
@@ -99,7 +99,7 @@ internal partial class CharacterModelPreviewPanel : Control
     private Window _window = null!;
     private bool _hintDragging;
 
-    internal void Initialize(NCharacterSelectScreen screen, Control info)
+    internal void Initialize(Control screen, Control info)
     {
         _screen = screen;
         _info = info;

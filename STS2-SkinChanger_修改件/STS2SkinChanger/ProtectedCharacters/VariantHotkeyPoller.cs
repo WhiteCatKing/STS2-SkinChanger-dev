@@ -35,16 +35,16 @@ internal static class VariantHotkeyPoller
     private static readonly HashSet<string> DownBindings = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> LoggedBindings = new(StringComparer.OrdinalIgnoreCase);
 
-    private static WeakReference<MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen>?
+    private static WeakReference<Control>?
         _characterSelect;
 
     private static string? _characterSelectGroupId;
 
     internal static void NoteCharacterSelectScreen(
-        MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen screen,
+        Control screen,
         string groupId)
     {
-        _characterSelect = new WeakReference<MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen>(screen);
+        _characterSelect = new WeakReference<Control>(screen);
         _characterSelectGroupId = groupId;
     }
 
