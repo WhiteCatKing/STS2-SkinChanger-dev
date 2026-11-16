@@ -26,6 +26,13 @@ internal static class MultiplayerMerchantPlayerVisualIsolationPatch
         AccessTools.Method(typeof(NMerchantRoom), "AfterRoomIsLoaded") ??
         throw new MissingMethodException(typeof(NMerchantRoom).FullName, "AfterRoomIsLoaded");
 
+    // Third-party CharacterModels may supply a plain Node2D and patch the native shop loop
+    // to adapt it. Replacing that loop bypasses their patch and the typed Instantiate throws.
+    // Decide before touching player order, room nodes or resource scopes. Mixed lobbies retain
+    // the entire native path so third-party transpilers/prefixes keep their own creation contract.
+    internal static bool RequiresNativeCharacterCreation(IEnumerable<Player> players) =>
+        players.Any(player => player.Character.GetType().Assembly != typeof(MegaCrit.Sts2.Core.Models.CharacterModel).Assembly);
+
     [HarmonyPrefix]
     [HarmonyPriority(Priority.First)]
     private static bool Prefix(
@@ -35,7 +42,7 @@ internal static class MultiplayerMerchantPlayerVisualIsolationPatch
     {
         // Preserve the untouched game path in single player. The replacement loop is only needed
         // when one shared CharacterModel can represent more than one player's skin selection.
-        if (____players.Count <= 1)
+        if (____players.Count <= 1 || RequiresNativeCharacterCreation(____players))
         {
             return true;
         }

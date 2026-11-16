@@ -1234,6 +1234,11 @@ internal static class MerchantRuntimeAppearance
     {
         refreshedVisual = null;
         error = null;
+        if (MultiplayerMerchantPlayerVisualIsolationPatch.RequiresNativeCharacterCreation([player]))
+        {
+            error = "custom character merchant visuals remain owned by their native provider";
+            return false;
+        }
         var room = NMerchantRoom.Instance;
         if (room == null || !GodotObject.IsInstanceValid(room))
         {
