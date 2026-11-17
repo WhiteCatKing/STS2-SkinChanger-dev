@@ -2405,7 +2405,13 @@ internal static partial class ContextualSkinControls
                 screen,
                 button,
                 character,
-                () => StabilizeProviderCharacterSelectControls(screen, existingNodes, providerId));
+                () =>
+                {
+                    // Include framework/static art in the same reversible presentation snapshot.
+                    FrameworkSelectPresentationBridge.Reapply(screen, character, button);
+                    IndependentFoolSkinCompat.ApplySelectionBackground(screen, groupId);
+                    StabilizeProviderCharacterSelectControls(screen, existingNodes, providerId);
+                });
             ManualCharacterVariantBridge.BindScreen(screen, groupId, providerId);
         }
 
@@ -2419,11 +2425,6 @@ internal static partial class ContextualSkinControls
             ManagedSlotVisibilityBridge.BindPreview(sceneRoot, groupId, providerId);
         }
 
-        // Selecting a character makes a CZN-style framework build its own select background and
-        // large portrait. Our rebuild then clears that presentation, so ask the framework to
-        // re-apply for the character we just rebuilt; otherwise only the combat model shows the
-        // skin and the select screen stays vanilla.
-        FrameworkSelectPresentationBridge.Reapply(screen, character, button);
     }
 
     private static void RemoveStaleProviderCharacterSelectControls(
@@ -2604,30 +2605,29 @@ internal static partial class ContextualSkinControls
     /// <summary>把所有角色按钮的头像按当前选择重刷一遍（绕开资源缓存）。</summary>
     private static void RefreshAllCharacterButtonIcons(Control screen)
     {
-        try
+        foreach (var candidate in EnumerateNodes(screen).OfType<NCharacterSelectButton>())
         {
-            foreach (var candidate in EnumerateNodes(screen).OfType<NCharacterSelectButton>())
+            var character = candidate.Character;
+            if (character == null || candidate.IsRandom || !GodotObject.IsInstanceValid(candidate)) continue;
+            try
             {
-                var character = candidate.Character;
-                if (character == null || !GodotObject.IsInstanceValid(candidate))
-                {
-                    continue;
-                }
-
-                var icon = SkinService.GetCharacterSelectIcon(
-                    character.Id.Entry.ToLowerInvariant(), character.Id.Entry, candidate.IsLocked);
-                if (icon == null)
-                {
-                    continue;
-                }
-
-                candidate.GetNodeOrNull<TextureRect>("%Icon")?.SetTexture(icon);
+                var icon = SkinService.GetCharacterSelectIcon(character.Id.Entry.ToLowerInvariant(),
+                    character.Id.Entry, candidate.IsLocked) ?? (candidate.IsLocked
+                        ? character.CharacterSelectLockedIcon : character.CharacterSelectIcon);
+                SetCharacterButtonIcon(candidate, icon);
+            }
+            catch (Exception exception)
+            {
+                // One third-party character cannot prevent later buttons from refreshing.
+                ModLog.Warn($"刷新 {character.Id.Entry} 角色头像失败：" + exception.GetBaseException().Message);
             }
         }
-        catch (Exception exception)
-        {
-            ModLog.Warn("批量刷新角色列表头像失败：" + exception.GetBaseException().Message);
-        }
+    }
+
+    internal static void SetCharacterButtonIcon(NCharacterSelectButton button, Texture2D icon)
+    {
+        button.GetNodeOrNull<TextureRect>("%Icon")?.SetTexture(icon);
+        button.GetNodeOrNull<TextureRect>("%IconAdd")?.SetTexture(icon);
     }
 
     private static void TakeOverCharacterSelectSceneCache(string scenePath, PackedScene scene)
@@ -2829,10 +2829,10 @@ internal static partial class ContextualSkinControls
                 ? character.CharacterSelectLockedIcon
                 : character.CharacterSelectIcon;
             // 头像写死绑定"这个角色分组当前选中的皮肤"，与奥斯提/其它分组的选择无关。
-            button.GetNode<TextureRect>("%Icon").Texture =
+            SetCharacterButtonIcon(button,
                 SkinService.GetCharacterSelectIcon(
                     character.Id.Entry.ToLowerInvariant(), character.Id.Entry, button.IsLocked)
-                ?? fallback;
+                ?? fallback);
             ModLog.Info($"已刷新 {character.Id.Entry} 的角色列表头像。");
         }
         catch (AppearanceResourceUnavailableException) { throw; }

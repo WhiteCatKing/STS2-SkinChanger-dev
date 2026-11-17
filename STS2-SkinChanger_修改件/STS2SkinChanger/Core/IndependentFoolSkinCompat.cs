@@ -17,6 +17,35 @@ internal static class IndependentFoolSkinCompat
     }
     private static bool SkipAuthorMount() => false; // SC mounts the selected .assets via its ordinary isolated pack path.
 
+    internal static MethodInfo? SelectionBackgroundContract(Assembly assembly) =>
+        assembly.GetName().Name == "FoolSkinStatic" ? AccessTools.Method(
+            assembly.GetType("FoolSkinStatic.Patches"), "BuildPortrait", [typeof(Node)]) : null;
+
+    internal static void ApplySelectionBackground(Control screen, string groupId)
+    {
+        if (screen is MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen ||
+            groupId != "fool" || SkinService.GetSelectedCreatureRuntimeProvider(groupId) is not { } provider ||
+            ManagedSkinModLoader.GetActiveProviderAssembly(provider) is not { } assembly ||
+            SelectionBackgroundContract(assembly) is not { } build ||
+            STS2SkinChanger.Ui.CharacterSelectScreenAccess.Background(screen) is not { } container) return;
+        foreach (var background in container.GetChildren().OfType<Control>().Where(c => c.Visible))
+        {
+            // Preserve the author's portrait animation and native mode viewport/material.
+            if (BuildSelectionBackground(assembly, background))
+                background.GetNodeOrNull<Node2D>("SpineSprite")?.Hide();
+        }
+    }
+
+    internal static bool BuildSelectionBackground(Assembly assembly, Node background)
+    {
+        if (SelectionBackgroundContract(assembly) is not { } build) return false;
+        var patches = build.DeclaringType!;
+        AccessTools.Method(patches, "EnsurePortrait").Invoke(null, null);
+        if (AccessTools.Field(patches, "_portrait").GetValue(null) is not Texture2D) return false;
+        build.Invoke(null, [background]);
+        return true;
+    }
+
     internal static void ApplyPreview(NCreatureVisuals visuals, string? groupId)
     {
         if (groupId != "fool" || SkinService.GetSelectedCreatureRuntimeProvider(groupId) is not { } provider ||

@@ -13,8 +13,9 @@ internal static class CharacterSelectScreenAccess
     internal static readonly string[] ModeTypes = [
         "MegaCrit.Sts2.Core.Nodes.Screens.Blitz.NBlitzScreen",
         "MegaCrit.Sts2.Core.Nodes.Screens.Dread.NDreadScreen"];
-    internal static bool IsSupported(Control screen) => screen is NCharacterSelectScreen ||
-        ModeTypes.Contains(screen.GetType().FullName, StringComparer.Ordinal);
+    internal static bool IsScreenType(Type? type) => type != null &&
+        (typeof(NCharacterSelectScreen).IsAssignableFrom(type) || ModeTypes.Contains(type.FullName, StringComparer.Ordinal));
+    internal static bool IsSupported(Control screen) => IsScreenType(screen.GetType());
     internal static Control? Find(Node node)
     {
         for (Node? current = node; current != null; current = current.GetParent())

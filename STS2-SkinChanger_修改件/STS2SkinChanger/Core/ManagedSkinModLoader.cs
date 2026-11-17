@@ -1932,7 +1932,7 @@ internal static class ManagedSkinModLoader
         var replayed = 0;
         foreach (var patch in runtime.CharacterPresentationPatches)
         {
-            var instance = typeof(NCharacterSelectScreen).IsAssignableFrom(patch.Target.DeclaringType)
+            var instance = STS2SkinChanger.Ui.CharacterSelectScreenAccess.IsScreenType(patch.Target.DeclaringType)
                 ? (object)screen
                 : button;
             if (patch.Target.DeclaringType?.IsInstanceOfType(instance) != true) continue;
@@ -1962,8 +1962,8 @@ internal static class ManagedSkinModLoader
 
         // Let the caller normalize provider-created controls before recording the final mutation
         // state. This keeps any temporary parent layout change reversible when the skin is left.
-        afterReplay?.Invoke();
-        TrackCharacterPresentationMutation(runtime, screen, baseline);
+        try { afterReplay?.Invoke(); }
+        finally { TrackCharacterPresentationMutation(runtime, screen, baseline); }
 
         if (replayed > 0)
         {
@@ -3133,7 +3133,7 @@ internal static class ManagedSkinModLoader
 
     private static bool IsCharacterPresentationTarget(MethodBase target) =>
         target.DeclaringType != null &&
-        ((typeof(NCharacterSelectScreen).IsAssignableFrom(target.DeclaringType) &&
+        ((STS2SkinChanger.Ui.CharacterSelectScreenAccess.IsScreenType(target.DeclaringType) &&
           target.Name.Equals(nameof(NCharacterSelectScreen.SelectCharacter), StringComparison.Ordinal)) ||
          (typeof(NCharacterSelectButton).IsAssignableFrom(target.DeclaringType) &&
           target.Name.Equals("Init", StringComparison.Ordinal)));

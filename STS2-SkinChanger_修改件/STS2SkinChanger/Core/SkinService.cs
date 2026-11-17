@@ -8703,6 +8703,9 @@ internal static partial class SkinService
             return LoadCharacterSelectIcon(characterId, locked);
         }
 
+        // Content-only characters need no skin group. Do not enter overlay lookup for them.
+        if (Catalog?.Groups.Any(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase)) != true)
+            return null;
         var selection = GetVisualSelection(groupId);
         var key = $"{groupId}|{CaptureCharacterAppearance(groupId).Key}|{locked}";
         if (!locked && VariantPortraits.Resolve(groupId, "select", 1) is { } variantIcon) return variantIcon;
@@ -8713,6 +8716,9 @@ internal static partial class SkinService
 
         var id = characterId.ToLowerInvariant();
         var path = $"res://images/packed/character_select/char_select_{id}{(locked ? "_locked" : "")}.png";
+        // A code provider can supply an embedded portrait from CharacterModel's getter.
+        // Reading a canonical image it does not ship would overwrite that portrait with vanilla.
+        if (ShouldDeferCharacterIconResourceToExternalRuntime(groupId, path)) return null;
         Texture2D? icon = null;
         var target = path;
         try

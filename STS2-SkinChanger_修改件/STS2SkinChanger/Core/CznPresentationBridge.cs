@@ -195,9 +195,33 @@ internal static class CznPresentationBridge
                 var method = AccessTools.Method(runtime.GetType(), "ApplyScreenSelection");
                 if (method?.GetParameters()[0].ParameterType.IsInstanceOfType(screen) == true)
                     method.Invoke(runtime, [screen, button, character]);
+                else if (CharacterSelectScreenAccess.IsSupported(screen) && !button.IsLocked &&
+                    CharacterSelectScreenAccess.Background(screen) is { } host)
+                {
+                    // The shared framework already exposes its native mode event. Invoke only
+                    // the selected profile: several skins can target the same character type.
+                    var profile = AccessTools.Field(runtime.GetType(), "_profile")?.GetValue(runtime);
+                    var binding = profile == null ? null : Find(profile);
+                    var group = ContextualSkinControls.FindGroup(character.Id.Entry, character.GetType().Name);
+                    if (binding != null && group != null && binding.Target.IsInstanceOfType(character) &&
+                        string.Equals(binding.Provider, SkinService.GetSelectedCreatureRuntimeProvider(group.Id), StringComparison.OrdinalIgnoreCase))
+                        ReapplyModeRuntime(runtime, screen, host, character);
+                }
             }
             catch (Exception exception) { ModLog.Warn("[CZN兼容] 选角展示恢复失败：" + exception.GetBaseException().Message); }
         }
+    }
+
+    internal static bool ReapplyModeRuntime(object runtime, Control screen, Control host, CharacterModel character)
+    {
+        var eventType = runtime.GetType().Assembly.GetType("CznCore.Presentation.ModeSelectionBackground");
+        var constructor = eventType?.GetConstructor(Members, null,
+            [typeof(Control), typeof(Control), typeof(CharacterModel), typeof(bool)], null);
+        var apply = eventType == null ? null : AccessTools.Method(runtime.GetType(), "ApplyModeBackground", [eventType]);
+        if (constructor == null || apply == null) return false;
+        var selection = constructor.Invoke([screen, host, character, true]);
+        apply.Invoke(runtime, [selection]);
+        return true;
     }
 
     internal static bool ApplyPreviewBody(NCreatureVisuals visuals, CharacterModel character, string? groupId)

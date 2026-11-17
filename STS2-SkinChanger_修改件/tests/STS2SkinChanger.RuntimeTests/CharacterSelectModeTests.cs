@@ -36,6 +36,8 @@ internal static class CharacterSelectModeTests
                         AccessTools.Method(typeof(CharacterModelPreviewControls), "Refresh").GetParameters()[0].ParameterType.IsInstanceOfType(screen) &&
                         AccessTools.Method(typeof(OstyModelPreviewControls), "Refresh").GetParameters()[0].ParameterType.IsInstanceOfType(screen),
                     "A mode cannot use the same selector/model/companion pipeline.");
+                Require((bool)AccessTools.Method(typeof(ManagedSkinModLoader), "IsCharacterPresentationTarget").Invoke(null,
+                    [AccessTools.Method(type, "SelectCharacter")])!, "Provider presentation callbacks excluded for " + type.Name);
                 if (type == typeof(NCharacterSelectScreen)) continue;
                 var selection = Harmony.GetPatchInfo(AccessTools.Method(type, "SelectCharacter"))!;
                 Require(selection.Prefixes.Any(patch => patch.PatchMethod.DeclaringType == typeof(CharacterSelectionSkinPatch)) &&

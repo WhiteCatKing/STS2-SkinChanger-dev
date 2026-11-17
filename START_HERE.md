@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.34`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.34.1`（工坊公开 `1.0.34`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
+当前值：`1.0.34.2`（工坊公开 `1.0.34`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -277,3 +277,5 @@ Initialize()
 2026-11-17 工坊发布 1.0.34（内部 1.0.34.0）：汇总 1.0.33.1–17，正式版 v0.107.1 / 测试版 v0.113.1 同 DLL 离线回归通过；新增 Windows 自动崩溃日志诊断。发布记录见 `STS2-SkinChanger_修改件/docs/issues/RELEASE_2026-11-17_workshop_1.0.34.md`。
 
 1.0.34.1：修复局内面板 Bad IL / 极速商店按钮类型与 CrossbowFool 极速、恐惧选角点击；见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_inrun_abstract_merchant_and_crossbow_modes.md`。公开工坊仍 1.0.34，本次未上传。
+
+1.0.34.2：统一三模式选角背景回调和普通/高亮头像；CznCore 按当前选中 profile 走原生 ModeSelectionBackground，单图愚者复用作者 BuildPortrait。见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_character_select_mode_presentation_parity.md`。本次未上传工坊。
