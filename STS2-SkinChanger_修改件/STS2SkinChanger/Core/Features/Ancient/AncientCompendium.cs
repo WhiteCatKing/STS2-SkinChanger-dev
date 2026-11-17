@@ -649,6 +649,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
     public override void OnSubmenuOpened()
     {
         base.OnSubmenuOpened();
+        SkinService.CompanionSelectionChanged -= OnCompanionSelectionChanged;
+        SkinService.CompanionSelectionChanged += OnCompanionSelectionChanged;
         ConfigurePreviewResolution();
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
         SkinService.InitializeAncientSkinCategories();
@@ -658,6 +660,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     public override void OnSubmenuClosed()
     {
+        SkinService.CompanionSelectionChanged -= OnCompanionSelectionChanged;
+        _otherPreviewRequest++;
         // Dynamic Ancient providers can register scene-tree-wide input hooks. Merely hiding the
         // compendium leaves their preview nodes alive, so those hooks keep receiving input after
         // the player returns to the compendium or enters a run. Release the preview scene at the
@@ -667,6 +671,26 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
         FocusPreviewRuntimeProviderBehaviors(null, "关闭其它图鉴");
         base.OnSubmenuClosed();
+    }
+
+    public override void _ExitTree()
+    {
+        SkinService.CompanionSelectionChanged -= OnCompanionSelectionChanged;
+        _otherPreviewRequest++;
+        base._ExitTree();
+    }
+
+    private void OnCompanionSelectionChanged()
+    {
+        if (_selectedCategory != OtherCategory.Creatures || _selectedOther?.Id != "osty") return;
+        var request = ++_otherPreviewRequest;
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(this) || !IsVisibleInTree() || request != _otherPreviewRequest ||
+                _selectedCategory != OtherCategory.Creatures || _selectedOther?.Id != "osty") return;
+            PopulateSkinDropdown(FindOtherGroup(_selectedOther));
+            RebuildOtherPreview(_selectedOther);
+        }).CallDeferred();
     }
 
     private void BuildUi()
@@ -971,7 +995,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             OtherCreatureActionKind.Block => text.Block,
             OtherCreatureActionKind.Sleep => text.Sleep,
             OtherCreatureActionKind.Wake => text.Wake,
-            _ => kind.ToString()
+            _ => OtherCreatureActionText.Get(kind)
         };
     }
 
@@ -1786,14 +1810,16 @@ internal partial class AncientCompendiumScreen : NSubmenu
         OtherCategory.Events => EventCompendiumPreview.Events().Select(model => new OtherEntry(
             EventSkinPolicy.GroupId(model.Id.Entry), EventCompendiumPreview.Title(model),
             NEventLayout.defaultScenePath)).ToArray(),
-        OtherCategory.Creatures => OtherCreatureCatalog.All
+        OtherCategory.Creatures => OtherCreatureCatalog.Available(OtherCreaturePreview.HasModel)
             .Select(creature => new OtherEntry(
                 creature.Id,
-                GetLocalizedTitle(
+                creature.Id == "byrdine_monster" && ModLocalization.CurrentLanguage is "zhs" or "zht"
+                    ? (ModLocalization.CurrentLanguage == "zhs" ? "异鸟成鸟" : "異鳥成鳥")
+                    : GetLocalizedTitle(
                     creature.LocalizationTable,
                     creature.LocalizationKey,
                     creature.FallbackTitle),
-                creature.ScenePath))
+                creature.ScenePath, creature.Id == "osty" ? OstySkinChoices.GroupId : null))
             .ToArray(),
         // One entry per act: switching its background applies to every battle of that act.
         OtherCategory.Backgrounds => GetBackgroundEntries(),
@@ -2067,6 +2093,16 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void PopulateSkinDropdown(SkinGroup? group)
     {
+        if (_selectedCategory == OtherCategory.Creatures && _selectedOther?.Id == "osty")
+        {
+            _updatingDropdown = true;
+            OstySkinChoices.Populate(_skinDropdown, OstySkinChoices.GroupId);
+            _skinDropdown.SetMeta("sts2_skin_group", OstySkinChoices.GroupId);
+            PresetChoiceColoring.Attach(_skinDropdown, SkinOptionStylePolicy.IsAccented, colorSelection: false);
+            _updatingDropdown = false;
+            _skinSelector.Visible = true;
+            return;
+        }
         var id = group?.Id ?? (_selectedAncient != null ? _selectedAncient.Id.Entry.ToLowerInvariant() : _selectedOther?.Id);
         group = SkinService.Catalog?.Groups.FirstOrDefault(g => g.Id.Equals(id, StringComparison.OrdinalIgnoreCase)) ?? group;
         if (group == null && id != null) group = new SkinGroup(id, id);
@@ -2162,6 +2198,16 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         var groupId = _skinDropdown.GetMeta("sts2_skin_group", string.Empty).AsString();
         var optionId = _skinDropdown.GetItemMetadata(index).AsString();
+        if (_selectedCategory == OtherCategory.Creatures && _selectedOther?.Id == "osty")
+        {
+            if (SkinWorkshopEntry.Open(optionId, this, groupId, () => PopulateSkinDropdown(FindOtherGroup(_selectedOther)), kind: "character")) return;
+            if (!OstySkinChoices.Apply(groupId, optionId))
+            {
+                ModLog.Warn("其它图鉴奥斯提切换失败：" + SkinService.LastError);
+                PopulateSkinDropdown(FindOtherGroup(_selectedOther));
+            }
+            return;
+        }
         if (_selectedCategory == OtherCategory.Ancients && optionId == SkinService.InheritAncientSelectionId)
         {
             SkinService.FollowAncientCategoryPriority(groupId);
@@ -2269,7 +2315,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 previewScene = InstantiateOtherPreviewScene(entry, group);
                 instance = previewScene.Instance;
             }
-            if (creatureDefinition != null)
+            if (creatureDefinition != null && entry.Id != "osty")
             {
                 // Companion roots are NCreatureVisuals instances authored for a live combat
                 // creature. Preview their selected Visuals resource in isolation so a provider
@@ -2383,6 +2429,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 // Creature scenes do not get NCreature's normal animation setup when previewed in
                 // isolation. Reuse the same generic Spine starter used by Ancient previews so a
                 // Byrdpip skin with an idle loop remains animated in the compendium.
+                if (creatureDefinition != null) OtherCreaturePreview.Prepare(creatureDefinition, instance);
                 ManagedAncientSceneAnimation.TryStart(group?.Id, instance);
                 ManagedAncientSceneAnimation.ConfigureActions(
                     instance,
@@ -2395,7 +2442,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     ManagedAncientSceneAnimation.TryPlay(
                         instance,
                         group?.Id,
-                        creatureDefinition.IdleAliases,
+                        OtherCreaturePreview.IdleAliases(creatureDefinition),
                         loop: true);
                 }
             }
@@ -2413,6 +2460,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         OtherEntry entry,
         SkinGroup? group)
     {
+        if (entry.Id == "osty") return (OtherCreaturePreview.CreateOsty(), entry.ScenePath);
         var scenePaths = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
             // The standalone button is the smallest common scene and gives provider DLLs the
             // same _Ready hook as the live shop. v0.107 does not ship it, so the room scene is a
@@ -2857,6 +2905,7 @@ internal static class ManagedAncientSceneAnimation
         var spineNode = FindSpineNode(sceneRoot);
         if (spineNode == null)
         {
+            if (OtherCreatureFrameAnimation.Play(sceneRoot, aliases, loop, followUpAliases, followUpLoop)) return;
             ModLog.Warn($"{groupId ?? "其它图鉴"} 没有可播放的 Spine 节点。");
             return;
         }
@@ -2929,6 +2978,9 @@ internal static class ManagedAncientSceneAnimation
         var spineNode = FindSpineNode(sceneRoot);
         if (spineNode == null)
         {
+            if (OtherCreatureFrameAnimation.Find(sceneRoot)?.SpriteFrames is { } frames)
+                foreach (var action in actionSnapshot)
+                    action.Button.Visible = OtherCreatureFrameAnimation.Resolve(frames.GetAnimationNames(), action.Action.AnimationAliases) != null;
             return;
         }
 

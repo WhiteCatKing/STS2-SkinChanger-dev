@@ -874,7 +874,7 @@ internal partial class OstyModelPreviewPanel : Control
         return true;
     }
 
-    private static bool HasDrawableNode(Node root) =>
+    internal static bool HasDrawableNode(Node root) => root is Sprite2D or AnimatedSprite2D ||
         root.FindChildren("*", "AnimatedSprite2D", true, false).Count > 0 ||
         root.FindChildren("*", "Sprite2D", true, false).Count > 0;
 
@@ -883,7 +883,7 @@ internal partial class OstyModelPreviewPanel : Control
     {
         try
         {
-            foreach (var node in root.FindChildren("*", "AnimatedSprite2D", true, false))
+            foreach (var node in new[] { root }.Concat(root.FindChildren("*", "AnimatedSprite2D", true, false)))
             {
                 if (node is not AnimatedSprite2D sprite || sprite.SpriteFrames == null)
                 {
@@ -916,7 +916,7 @@ internal partial class OstyModelPreviewPanel : Control
     /// 场景型外观的包围盒：优先用 creature_visuals 约定的 <c>Bounds</c> 控件（与局内一致），
     /// 没有就按所有精灵的帧贴图算出局部矩形。
     /// </summary>
-    private static Rect2 MeasureSceneBounds(Node2D root)
+    internal static Rect2 MeasureSceneBounds(Node2D root)
     {
         var boundsNode = root.GetNodeOrNull<Control>("Bounds");
         if (boundsNode != null && boundsNode.Size.X > 1f && boundsNode.Size.Y > 1f)
@@ -948,7 +948,7 @@ internal partial class OstyModelPreviewPanel : Control
             any = true;
         }
 
-        foreach (var node in root.FindChildren("*", "Sprite2D", true, false))
+        foreach (var node in new Node[] { root }.Concat(root.FindChildren("*", "Sprite2D", true, false)))
         {
             if (node is Sprite2D sprite && sprite.Texture != null)
             {
@@ -956,7 +956,7 @@ internal partial class OstyModelPreviewPanel : Control
             }
         }
 
-        foreach (var node in root.FindChildren("*", "AnimatedSprite2D", true, false))
+        foreach (var node in new Node[] { root }.Concat(root.FindChildren("*", "AnimatedSprite2D", true, false)))
         {
             if (node is not AnimatedSprite2D sprite || sprite.SpriteFrames == null)
             {

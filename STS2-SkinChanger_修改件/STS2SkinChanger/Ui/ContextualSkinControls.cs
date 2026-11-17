@@ -1028,48 +1028,9 @@ internal static partial class ContextualSkinControls
 
         groupId ??= "osty";
         selector.SetMeta(OstyGroupMeta, groupId);
-        osty.GetPopup().Hide();
-        osty.Clear();
-        osty.AddItem(ModLocalization.Get(ModText.GameDefault));
-        osty.SetItemMetadata(0, SkinCatalog.BaseOptionId);
-        foreach (var option in group?.Options ?? [])
-        {
-            var index = osty.ItemCount;
-            osty.AddItem(ModLocalization.DisplayOptionName(option.Name));
-            osty.SetItemMetadata(index, option.Id);
-        }
-
-        // 独立奥斯提 Mod 提供的皮肤（例如「撑在地上的鸡煲」）也放进同一个下拉。
-        foreach (var impostor in impostorOptions)
-        {
-            var index = osty.ItemCount;
-            osty.AddItem(impostor.Name);
-            osty.SetItemMetadata(index, OstyImpostorBridge.CreateOptionId(impostor.Id));
-        }
-
-        // 与角色下拉对齐：随机皮肤 + 创意工坊入口。
-        var hasChoices = osty.ItemCount > 1;
-        if (hasChoices)
-        {
-            var randomIndex = osty.ItemCount;
-            osty.AddItem(ModLocalization.Get(ModText.RandomCharacterSkin));
-            osty.SetItemMetadata(randomIndex, RandomCharacterSkinPolicy.OptionId);
-        }
-
-        SkinWorkshopEntry.Append(osty, characterPopup: true);
+        OstySkinChoices.Populate(osty, groupId);
         ConfigureOstyPopupList(selector, osty);
-
-        // 当前选择：随机状态优先，其次独立 Mod 皮肤，最后看 osty 组的选择。
-        var selected = SkinService.GetCompanionRandomEnabled(groupId)
-            ? RandomCharacterSkinPolicy.OptionId
-            : string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId)
-                ? SkinService.GetCompanionSelection(groupId)
-                : OstyImpostorBridge.CreateOptionId(SkinService.Config.CompanionImpostorSkinId!);
-        var selectedIndex = Enumerable.Range(0, osty.ItemCount)
-            .FirstOrDefault(index => osty.GetItemMetadata(index).AsString()
-                .Equals(selected, StringComparison.OrdinalIgnoreCase));
-        osty.Select(selectedIndex);
-        ApplyOstyButtonColor(osty, selected);
+        ApplyOstyButtonColor(osty, OstySkinChoices.Current(groupId));
         osty.Visible = true;
     }
 
@@ -1226,7 +1187,7 @@ internal static partial class ContextualSkinControls
         // 随机皮肤：进入随机状态（先显示游戏原版），抽取发生在每次选人界面展示时。
         if (RandomCharacterSkinPolicy.IsRandom(optionId))
         {
-            if (!SkinService.SetCompanionRandomEnabled(groupId, true))
+            if (!OstySkinChoices.Apply(groupId, optionId))
             {
                 ModLog.Error($"切换奥斯提随机皮肤失败：{SkinService.LastError}");
             }
@@ -1240,9 +1201,7 @@ internal static partial class ContextualSkinControls
             return;
         }
 
-        SkinService.ClearCompanionRandom();
-
-        if (!SkinService.ApplyCompanionSelection(groupId, optionId))
+        if (!OstySkinChoices.Apply(groupId, optionId))
         {
             ModLog.Error($"切换奥斯提皮肤失败：{SkinService.LastError}");
             PopulateOsty(selector);

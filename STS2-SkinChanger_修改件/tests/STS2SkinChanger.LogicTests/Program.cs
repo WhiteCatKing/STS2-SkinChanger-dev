@@ -1828,7 +1828,10 @@ previewFocus = MerchantPreviewFocusPolicy.Resolve(
 Require(!previewFocus.IsFocused, "鼠标和手柄焦点都离开后必须恢复商人默认外观。");
 
 var creatures = OtherCreatureCatalog.All;
-Require(creatures.Count == 2, "其它图鉴必须登记异鸟宝宝和佩尔的士兵两个生物。");
+Require(creatures.Count == 5, "其它图鉴须登记原有两项、奥斯提、异鸟成鸟与瓦皮。");
+Require(OtherCreatureCatalog.Available(_ => false).Select(c => c.Id)
+    .SequenceEqual(new[] { "byrdpip", "paels_legion", "osty" }), "旧分支保留奥斯提，不请求不存在的新生物。");
+Require(OtherCreatureCatalog.Available(_ => true).Count() == 5, "支持新生物的分支须显示五项。");
 
 var byrdpip = OtherCreatureCatalog.Find("Byrdpip") ??
                throw new InvalidOperationException("生物 ID 查找必须忽略大小写并识别异鸟宝宝。");

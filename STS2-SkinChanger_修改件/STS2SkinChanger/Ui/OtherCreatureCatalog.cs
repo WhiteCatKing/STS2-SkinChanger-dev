@@ -5,7 +5,11 @@ internal enum OtherCreatureActionKind
     Attack,
     Block,
     Sleep,
-    Wake
+    Wake,
+    Cast,
+    Hurt,
+    Death,
+    Revive
 }
 
 internal sealed record OtherCreatureActionDefinition(
@@ -23,7 +27,8 @@ internal sealed record OtherCreatureDefinition(
     string FallbackTitle,
     string ScenePath,
     IReadOnlyList<string> IdleAliases,
-    IReadOnlyList<OtherCreatureActionDefinition> Actions);
+    IReadOnlyList<OtherCreatureActionDefinition> Actions,
+    string? RequiredModelType = null);
 
 internal static class OtherCreatureCatalog
 {
@@ -76,8 +81,36 @@ internal static class OtherCreatureCatalog
                     Loop: false,
                     FollowUpAliases: IdleAliases,
                     FollowUpLoop: true)
-            ])
+            ]),
+        new OtherCreatureDefinition(
+            "osty", "monsters", "OSTY.name", "奥斯提",
+            "res://scenes/creature_visuals/osty.tscn", IdleAliases,
+            [
+                Action(OtherCreatureActionKind.Attack, ["attack", "attack1", "atk"]),
+                Action(OtherCreatureActionKind.Cast, ["cast", "skill"]),
+                Action(OtherCreatureActionKind.Hurt, ["hurt", "hit"]),
+                new(OtherCreatureActionKind.Death, ["die", "death"], false, ["dead_loop", "dead"], true),
+                Action(OtherCreatureActionKind.Revive, ["revive", "resurrect"])
+            ]),
+        new OtherCreatureDefinition(
+            "byrdine_monster", "relics", "BYRDINE.title", "异鸟成鸟",
+            "res://scenes/creature_visuals/byrdine_monster.tscn", IdleAliases,
+            [Action(OtherCreatureActionKind.Attack, ["attack", "attack1", "atk"])],
+            "MegaCrit.Sts2.Core.Models.Monsters.ByrdineMonster"),
+        new OtherCreatureDefinition(
+            "wuppy", "monsters", "WUPPY.name", "瓦皮",
+            "res://scenes/creature_visuals/wuppy.tscn", IdleAliases,
+            [
+                Action(OtherCreatureActionKind.Hurt, ["hurt", "hit"]),
+                new(OtherCreatureActionKind.Death, ["die", "death"], false, [], false)
+            ], "MegaCrit.Sts2.Core.Models.Monsters.Wuppy")
     ];
+
+    private static OtherCreatureActionDefinition Action(OtherCreatureActionKind kind, string[] aliases) =>
+        new(kind, aliases, false, IdleAliases, true);
+
+    internal static IEnumerable<OtherCreatureDefinition> Available(Func<string, bool> hasModel) =>
+        All.Where(c => c.RequiredModelType == null || hasModel(c.RequiredModelType));
 
     internal static OtherCreatureDefinition? Find(string? id)
     {
