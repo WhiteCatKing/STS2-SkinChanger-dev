@@ -4,7 +4,7 @@
   "title": "Skin Changer",
   "statementHeading": "Statement",
   "version": "1.0.35",
-  "internalTestVersion": "1.0.35.1",
+  "internalTestVersion": "1.0.35.2",
   "featureUpdate": "[h2]1.0.35[/h2]\nFixed in-run skin switching and crossbow skin clicks in Blitz mode. Unified skin backgrounds and portraits across Standard, Blitz and Dread. Added the Blitz Merchant compendium entry and three merchant scene variants, with native fallback for missing assets. Saved skin portraits now refresh before selecting a character.",
   "cardPriorityUpdate": "",
   "multiplayerUpdate": "",

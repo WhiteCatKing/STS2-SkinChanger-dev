@@ -1017,6 +1017,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 return;
             }
 
+            if (_selectedOther?.Id == "byrdine_monster" && action.Kind == OtherCreatureActionKind.Attack)
+            {
+                ByrdineAttackPreview.Start(_otherPreviewInstance, _otherPreviewGroupId, action);
+                return;
+            }
+
             ManagedAncientSceneAnimation.TryPlay(
                 _otherPreviewInstance,
                 _otherPreviewGroupId,
@@ -2693,6 +2699,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void ClearPreview()
     {
+        ByrdineAttackPreview.Cancel(_otherPreviewInstance);
         SetMerchantInventoryOpen(false);
         _otherPreviewInstance = null;
         _otherPreviewGroupId = null;
