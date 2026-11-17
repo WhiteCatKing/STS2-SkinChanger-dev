@@ -1080,7 +1080,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
                 var rollbackRefreshed = rollbackApplied &&
                                         MerchantRuntimeAppearance.TryRefreshMerchant(out rollbackError);
                 PopulateSkinDropdown();
-                _targetMerchantButton = NMerchantRoom.Instance?.MerchantButton;
+                _targetMerchantButton = GameBranchApi.MerchantButton(NMerchantRoom.Instance);
                 if (!rollbackRefreshed)
                 {
                     ModLog.Error("回滚商人皮肤选择失败：" +
@@ -1093,7 +1093,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
                 return;
             }
 
-            _targetMerchantButton = NMerchantRoom.Instance?.MerchantButton;
+            _targetMerchantButton = GameBranchApi.MerchantButton(NMerchantRoom.Instance);
             SetAppliedStatus(null);
             return;
         }

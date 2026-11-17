@@ -2157,6 +2157,7 @@ internal static partial class ContextualSkinControls
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
         DescribeCharacterSelectBackground(screen, groupId, character);
         CharSelectPackRebindCompat.AfterRebuild(screen, groupId, SkinService.GetSelectedRuntimeProvider(groupId));
+        CrossbowFoolSelectCompat.AfterRebuild(screen, groupId);
     }
 
     /// <summary>
@@ -2264,6 +2265,7 @@ internal static partial class ContextualSkinControls
 
         ModLog.Info($"已从隔离依赖路径重建完整 DLL 皮肤 {character.Id.Entry} 的选角展示。");
         CharSelectPackRebindCompat.AfterRebuild(screen, groupId, SkinService.GetSelectedRuntimeProvider(groupId));
+        CrossbowFoolSelectCompat.AfterRebuild(screen, groupId);
         DescribeCharacterSelectBackground(screen, groupId, character);
     }
 

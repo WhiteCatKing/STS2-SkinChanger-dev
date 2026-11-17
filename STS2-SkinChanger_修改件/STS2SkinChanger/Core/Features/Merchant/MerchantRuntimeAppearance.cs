@@ -984,7 +984,7 @@ internal static class MerchantRuntimeAppearance
             var selectedProvider = SkinService.GetSelectedFullRuntimeProvider(GroupId);
             if (selectedProvider != null)
                 EnsureSelectedMerchantProviderActive(GroupId, selectedProvider);
-            newButton = InstantiateMerchantButton();
+            newButton = InstantiateMerchantButton(room: room);
             try
             {
                 // Inventory providers can replace the hand scene or its child Spine resources.
@@ -1516,9 +1516,9 @@ internal static class MerchantRuntimeAppearance
     }
 
     internal static NMerchantButton InstantiateMerchantButton(
-        string groupId = GroupId)
+        string groupId = GroupId, NMerchantRoom? room = null)
     {
-        var scenePath = GetMerchantScenePath(groupId);
+        var scenePath = GetMerchantScenePath(groupId, room?.GetType());
         // Build the same complete scene that the game uses for this entity. In particular, the
         // fake merchant has its own MerchantButton offsets and skeleton inside fake_merchant.tscn;
         // loading the normal standalone button made its default preview indistinguishable from
@@ -1670,10 +1670,12 @@ internal static class MerchantRuntimeAppearance
         field.SetValue(target, node);
     }
 
-    internal static string GetMerchantScenePath(string groupId = GroupId) =>
+    internal static string GetMerchantScenePath(string groupId = GroupId, Type? roomType = null) =>
         groupId.Equals(FakeMerchantGroupId, StringComparison.OrdinalIgnoreCase)
             ? FakeMerchantScenePath
-            : MerchantRoomScenePath;
+            : roomType?.FullName == "MegaCrit.Sts2.Core.Nodes.Rooms.NBlitzMerchantRoom"
+                ? "res://scenes/rooms/blitz_merchant_room.tscn"
+                : MerchantRoomScenePath;
 
     private static PackedScene LoadRuntimeOrBaseScene(
         string scenePath,

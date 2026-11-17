@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 2 && args[0] == "--test-crossbow-select")
+{
+    CrossbowSelectTests.Run(args[1]);
+    return;
+}
+
 if (args.Length == 5 && args[0] == "--test-mlm-order-guard")
 {
     MlmOrderGuardTests.Run(args[1], args[2], args[3], args[4]);

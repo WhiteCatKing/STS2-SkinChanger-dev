@@ -55,7 +55,7 @@ internal partial class CharacterAppearanceScreen
             yield return new(AppearanceTargetKind.Character, playerRect, 1,
                 _ => SelectShopPlayerTarget(shopPlayer, playerRect.GetCenter()));
 
-        var merchant = NMerchantRoom.Instance?.MerchantButton;
+        var merchant = GameBranchApi.MerchantButton(NMerchantRoom.Instance);
         if (merchant != null && GodotObject.IsInstanceValid(merchant) && merchant.IsVisibleInTree() &&
             SkinService.Catalog?.Groups.Any(group => group.Id.Equals(
                 MerchantRuntimeAppearance.GroupId, StringComparison.OrdinalIgnoreCase)) == true &&

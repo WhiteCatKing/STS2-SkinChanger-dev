@@ -10,6 +10,15 @@ namespace STS2SkinChanger.Core;
 
 internal static class GameBranchApi
 {
+    // Stable exposes a concrete getter; beta makes it abstract. A null-conditional compiled
+    // against stable emits `call`, which tries to JIT the abstract getter on beta.
+    internal static MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantButton? MerchantButton(
+        MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom? room)
+    {
+        if (ReferenceEquals(room, null)) return null;
+        return room.MerchantButton; // Keep virtual dispatch, including Blitz's override.
+    }
+
     internal static CanvasItem? CurrentBody(MegaCrit.Sts2.Core.Nodes.Combat.NCreatureVisuals visuals) =>
         AccessTools.Property(visuals.GetType(), "Body")?.GetValue(visuals) as CanvasItem ??
         AccessTools.Method(visuals.GetType(), "GetCurrentBody", Type.EmptyTypes)?.Invoke(visuals, null) as CanvasItem;
