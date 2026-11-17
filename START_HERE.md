@@ -98,9 +98,9 @@ git commit -q -F $tmp
 | `workshop\workshop.json` | `internalTestVersion` |
 | `STS2SkinChanger\STS2SkinChanger.csproj` | `Version` / `AssemblyVersion` / `FileVersion` / `InformationalVersion` |
 
-规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.34`；后续内测保持此公开版本，只提高四段内测标记。
+规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.35`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.34.4`（工坊公开 `1.0.34`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
+当前值：`1.0.35.0`（工坊公开 `1.0.35`）。本次发布见 `RELEASE_2026-11-17_workshop_1.0.35.md`，本轮项目记录见 `项目工作记录_本次对话至1.0.35_2026-11-17.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -285,3 +285,7 @@ Initialize()
 ## 2026-11-17：未点击角色的头像（1.0.34.4）
 
 当前内部版本 **1.0.34.4**；工坊公开版仍为 1.0.34。新 CharacterStripPortraits 在列表刷新时按每个角色保存的选择读取代码头像，支持头像 getter / 按钮 Init postfix，未聚焦角色无需先点击。保留资源皮肤优先级、锁定状态及双层贴图同步，不激活其他角色完整 runtime。双端、真实愚者合同和保护角色离线回归通过，未实机渲染。详见 STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_unfocused_character_portraits.md。
+
+## 2026-11-17：工坊 1.0.35 已发布
+
+当前交付版本为 **1.0.35 / 内部 1.0.35.0**，汇总上方四个内测修复。用户确认后已更新原条目 3787302680，15 语言回读全部通过。正式/测试安装包、staging、游戏本地和订阅目录已同步校验；项目记录见根目录 项目工作记录_本次对话至1.0.35_2026-11-17.md，发布证据见 RELEASE_2026-11-17_workshop_1.0.35.md。后续未上传修复从 1.0.35.1 开始。
