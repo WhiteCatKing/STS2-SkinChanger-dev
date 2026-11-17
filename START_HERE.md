@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.34`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.34.3`（工坊公开 `1.0.34`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
+当前值：`1.0.34.4`（工坊公开 `1.0.34`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -281,3 +281,7 @@ Initialize()
 1.0.34.2：统一三模式选角背景回调和普通/高亮头像；CznCore 按当前选中 profile 走原生 ModeSelectionBackground，单图愚者复用作者 BuildPortrait。见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_character_select_mode_presentation_parity.md`。本次未上传工坊。
 
 1.0.34.3：鸡煲新模式背景、商人三场景与极速图鉴；普通/极速共用 merchant 选择，假商人保留自己的选择，但两家族列出相同包，未制作部分原版回退。详情见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_defect_modes_and_merchant_variants.md`。未上传工坊。
+
+## 2026-11-17：未点击角色的头像（1.0.34.4）
+
+当前内部版本 **1.0.34.4**；工坊公开版仍为 1.0.34。新 CharacterStripPortraits 在列表刷新时按每个角色保存的选择读取代码头像，支持头像 getter / 按钮 Init postfix，未聚焦角色无需先点击。保留资源皮肤优先级、锁定状态及双层贴图同步，不激活其他角色完整 runtime。双端、真实愚者合同和保护角色离线回归通过，未实机渲染。详见 STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_unfocused_character_portraits.md。

@@ -256,7 +256,11 @@ internal static partial class ContextualSkinControls
                     MultiplayerSkinSync.OnLocalCharacterSelectionChanged(group.Id)).CallDeferred();
             }
         }
-        else CharacterModelPreviewControls.Refresh(screen, character);
+        else
+        {
+            CharacterModelPreviewControls.Refresh(screen, character);
+            RefreshAllCharacterButtonIcons(screen);
+        }
         // 随从处于“随机皮肤”状态时，每次进入选人界面抽一次（与角色随机一致的语义）。
         var companionGroupId = SkinService.CompanionGroupIds.FirstOrDefault();
         if (companionGroupId != null && SkinService.GetCompanionRandomEnabled(companionGroupId))
@@ -2612,10 +2616,13 @@ internal static partial class ContextualSkinControls
             if (character == null || candidate.IsRandom || !GodotObject.IsInstanceValid(candidate)) continue;
             try
             {
-                var icon = SkinService.GetCharacterSelectIcon(character.Id.Entry.ToLowerInvariant(),
-                    character.Id.Entry, candidate.IsLocked) ?? (candidate.IsLocked
-                        ? character.CharacterSelectLockedIcon : character.CharacterSelectIcon);
-                SetCharacterButtonIcon(candidate, icon);
+                CharacterStripPortraits.Refresh(candidate, character, () =>
+                {
+                    var icon = SkinService.GetCharacterSelectIcon(character.Id.Entry.ToLowerInvariant(),
+                        character.Id.Entry, candidate.IsLocked) ?? (candidate.IsLocked
+                            ? character.CharacterSelectLockedIcon : character.CharacterSelectIcon);
+                    SetCharacterButtonIcon(candidate, icon);
+                });
             }
             catch (Exception exception)
             {

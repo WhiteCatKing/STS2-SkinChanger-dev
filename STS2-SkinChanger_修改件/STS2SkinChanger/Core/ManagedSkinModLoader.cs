@@ -3138,6 +3138,13 @@ internal static class ManagedSkinModLoader
          (typeof(NCharacterSelectButton).IsAssignableFrom(target.DeclaringType) &&
           target.Name.Equals("Init", StringComparison.Ordinal)));
 
+    internal static void ReplayCharacterButtonIcon(MethodInfo callback, MethodBase target,
+        NCharacterSelectButton button, CharacterModel character)
+    {
+        if (TryBuildCharacterPresentationArguments(callback, target, button, button, character, out var arguments))
+            callback.Invoke(null, arguments);
+    }
+
     private static bool TryBuildCharacterPresentationArguments(
         MethodInfo callback,
         MethodBase target,
