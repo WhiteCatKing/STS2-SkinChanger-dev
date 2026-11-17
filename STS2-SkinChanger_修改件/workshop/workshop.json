@@ -4,7 +4,7 @@
   "title": "Skin Changer",
   "statementHeading": "Statement",
   "version": "1.0.34",
-  "internalTestVersion": "1.0.34.2",
+  "internalTestVersion": "1.0.34.3",
   "featureUpdate": "[h2]1.0.34[/h2]\nImproved skin detection, character previews, damage stages, merchant compatibility and MLM load-order guidance. Added automatic Windows crash diagnostics to godot.log; no manual external monitor is needed. Crashes before this mod loads cannot be monitored.",
   "cardPriorityUpdate": "",
   "multiplayerUpdate": "",

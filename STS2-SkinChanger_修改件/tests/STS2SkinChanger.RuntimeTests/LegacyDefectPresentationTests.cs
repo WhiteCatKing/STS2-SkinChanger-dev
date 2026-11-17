@@ -26,7 +26,7 @@ internal static class LegacyDefectPresentationTests
         {
             LegacyDefectPresentationCompat.EnsureScenes(pack);
             LegacyDefectPresentationCompat.EnsureScenes(pack);
-            Require(preloads == 1 && ReferenceEquals(globals.GetField("CharacterScene")!.GetValue(null), scene) &&
+            Require(ReferenceEquals(LegacyDefectPresentationCompat.BackgroundScene(pack), scene) && preloads == 1 && ReferenceEquals(globals.GetField("CharacterScene")!.GetValue(null), scene) &&
                 ReferenceEquals(globals.GetField("SelectBgScene")!.GetValue(null), scene), "Both native scene fields must initialize exactly once.");
             Require(ReferenceEquals(LegacyDefectPresentationCompat.PreviewScene(pack), scene) &&
                 LegacyDefectPresentationCompat.PreviewScene(typeof(CharacterModel).Assembly) == null,

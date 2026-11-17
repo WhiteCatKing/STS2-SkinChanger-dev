@@ -1778,7 +1778,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 GetLocalizedTitle("events", "FAKE_MERCHANT.title", "商人？？？"),
                 // The standalone fake-merchant button is beta-only; the event scene is shared
                 // by formal and beta and still contains the MerchantButton node.
-                "res://scenes/events/custom/fake_merchant.tscn")
+                "res://scenes/events/custom/fake_merchant.tscn"),
+            ..(MerchantVariantScenes.HasBlitz ? new[] { new OtherEntry(
+                MerchantVariantScenes.BlitzEntryId, ModLocalization.BlitzMerchantTitle,
+                MerchantRuntimeAppearance.BlitzMerchantRoomScenePath, MerchantRuntimeAppearance.GroupId) } : [])
         ],
         OtherCategory.Events => EventCompendiumPreview.Events().Select(model => new OtherEntry(
             EventSkinPolicy.GroupId(model.Id.Entry), EventCompendiumPreview.Title(model),
@@ -2237,7 +2240,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // during Instantiate. Keep the selected provider overlay mounted for the complete
             // load+instantiate operation so a previous skin cannot leak its skeleton into this
             // preview.
-            var isMerchant = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase);
+            var isMerchant = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) || entry.Id == MerchantVariantScenes.BlitzEntryId;
             var isFakeMerchant = entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase);
             // The complete native merchant/event scene owns its own hover, focus and reticle
             // controls. Let those controls receive input directly in the SubViewport; no
@@ -2257,7 +2260,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 var merchantPreview = MerchantRuntimeAppearance.InstantiateMerchantPreviewScene(
                     isFakeMerchant
                         ? MerchantRuntimeAppearance.FakeMerchantGroupId
-                        : MerchantRuntimeAppearance.GroupId);
+                        : MerchantRuntimeAppearance.GroupId, blitz: entry.Id == MerchantVariantScenes.BlitzEntryId);
                 instance = merchantPreview.Scene;
                 previewScene = merchantPreview;
             }
@@ -2278,8 +2281,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // use the node path/name to distinguish the real shop from the fake merchant; giving
             // both roots a generic compendium name makes a fake/normal skin choose the wrong
             // branch even though the Spine resource itself loaded correctly.
-            if (!entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) &&
-                !entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+            if (!isMerchant && !isFakeMerchant)
             {
                 instance.Name = "OtherCompendiumPreview";
             }
@@ -2319,8 +2321,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     _previewViewport.AddChild(instance);
                 }
 
-                if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
-                    entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+                if (isMerchant || isFakeMerchant)
                 {
                     // Reconnect the normal merchant's own signal path after skipping the gameplay
                     // root _Ready. This is the native MerchantOpened → OpenInventory flow; no

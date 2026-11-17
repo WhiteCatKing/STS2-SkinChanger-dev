@@ -100,7 +100,7 @@ git commit -q -F $tmp
 
 规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.34`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.34.2`（工坊公开 `1.0.34`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
+当前值：`1.0.34.3`（工坊公开 `1.0.34`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -279,3 +279,5 @@ Initialize()
 1.0.34.1：修复局内面板 Bad IL / 极速商店按钮类型与 CrossbowFool 极速、恐惧选角点击；见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_inrun_abstract_merchant_and_crossbow_modes.md`。公开工坊仍 1.0.34，本次未上传。
 
 1.0.34.2：统一三模式选角背景回调和普通/高亮头像；CznCore 按当前选中 profile 走原生 ModeSelectionBackground，单图愚者复用作者 BuildPortrait。见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_character_select_mode_presentation_parity.md`。本次未上传工坊。
+
+1.0.34.3：鸡煲新模式背景、商人三场景与极速图鉴；普通/极速共用 merchant 选择，假商人保留自己的选择，但两家族列出相同包，未制作部分原版回退。详情见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_defect_modes_and_merchant_variants.md`。未上传工坊。

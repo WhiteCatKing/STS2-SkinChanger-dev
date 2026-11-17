@@ -2410,6 +2410,7 @@ internal static partial class ContextualSkinControls
                     // Include framework/static art in the same reversible presentation snapshot.
                     FrameworkSelectPresentationBridge.Reapply(screen, character, button);
                     IndependentFoolSkinCompat.ApplySelectionBackground(screen, groupId);
+                    LegacyDefectPresentationCompat.ApplyModeBackground(screen, groupId);
                     StabilizeProviderCharacterSelectControls(screen, existingNodes, providerId);
                 });
             ManualCharacterVariantBridge.BindScreen(screen, groupId, providerId);

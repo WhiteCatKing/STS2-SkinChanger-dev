@@ -145,6 +145,7 @@ internal static class MerchantRuntimeAppearance
 
     internal static string? BeginSelectedMerchantNodeReady(Node node)
     {
+        if (MerchantVariantScenes.IsBlitz(node)) return null;
         var groupId = ResolveMerchantGroupId(node);
         var providerId = groupId == null
             ? null
@@ -472,8 +473,10 @@ internal static class MerchantRuntimeAppearance
     /// from its own images. Record them exactly as the game built them — before any package writes —
     /// so the merchant selection can hand the game's own value back and restore the author's art.
     /// </summary>
-    internal static void ScopePartTakeover(Node room) =>
-        PartTakeoverVisualScope.Capture(room, GroupId);
+    internal static void ScopePartTakeover(Node room)
+    {
+        if (!MerchantVariantScenes.IsBlitz(room)) PartTakeoverVisualScope.Capture(room, GroupId);
+    }
 
     private static readonly ConditionalWeakTable<NMerchantRoom, object> InitialMerchantRooms = new();
 
@@ -558,9 +561,7 @@ internal static class MerchantRuntimeAppearance
             var roomScenePath = ResolveMerchantRoomScenePath(preloadCreatedRoom);
             try
             {
-                replacement = SkinService.InstantiateRuntimeScene<NMerchantRoom>(
-                    GroupId,
-                    roomScenePath);
+                replacement = (NMerchantRoom)MerchantVariantScenes.Instantiate(GroupId, roomScenePath);
             }
             catch (Exception runtimeException)
             {
@@ -775,7 +776,10 @@ internal static class MerchantRuntimeAppearance
 
             var previewPlayer = CreatePreviewPlayer("SkinChangerMerchantPreview");
             previewPlayer.Gold = 9999;
-            var model = MerchantInventory.CreateForNormalMerchant(previewPlayer);
+            var model = MerchantVariantScenes.IsBlitz(preview)
+                ? (MerchantInventory)(AccessTools.Method(typeof(MerchantInventory), "CreateForBlitzMerchant", [typeof(Player)])!
+                    .Invoke(null, [previewPlayer])!)
+                : MerchantInventory.CreateForNormalMerchant(previewPlayer);
 
             MerchantRoomInventoryField.SetValue(preview, inventory);
             MerchantRoomProceedButtonField.SetValue(preview, proceed);
@@ -785,6 +789,7 @@ internal static class MerchantRuntimeAppearance
             InstallMerchantPreviewInputProxy(button);
             inventory.MouseFilter = Control.MouseFilterEnum.Ignore;
             inventory.Initialize(model, MerchantRoom.Dialogue);
+            MerchantVariantScenes.BindBlitzInventory(button, model);
             button.Connect(
                 NMerchantButton.SignalName.MerchantOpened,
                 Callable.From<NMerchantButton>(_ =>
@@ -964,6 +969,7 @@ internal static class MerchantRuntimeAppearance
             return false;
         }
 
+        if (MerchantVariantScenes.IsBlitz(room)) return TryRefreshBlitzMerchant(room, out error);
         var merchantButtonField = ResolveMerchantButtonField(room);
         if (merchantButtonField == null || MerchantHandField == null)
         {
@@ -1123,6 +1129,45 @@ internal static class MerchantRuntimeAppearance
             {
                 inventoryTemplate.Free();
             }
+        }
+    }
+
+    private static bool TryRefreshBlitzMerchant(NMerchantRoom room, out string? error)
+    {
+        error = null;
+        NMerchantButton? replacement = null;
+        NMerchantButton? previous = null;
+        var swapped = false;
+        try
+        {
+            replacement = InstantiateMerchantButton(room: room);
+            ReplaceMerchantButton(room, replacement, out previous);
+            swapped = true;
+            // Setup uses the existing six entries and choice count. Exiting the old button
+            // runs its native Teardown, removing its PurchaseCompleted subscriptions.
+            MerchantVariantScenes.BindBlitzInventory(replacement, room.Inventory.Inventory ??
+                throw new InvalidOperationException("极速商店商品模型尚未初始化。"));
+            previous.GetParent()?.RemoveChild(previous);
+            previous.QueueFree();
+            replacement = null;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            if (replacement != null && GodotObject.IsInstanceValid(replacement))
+            {
+                replacement.GetParent()?.RemoveChild(replacement);
+                replacement.Free();
+                replacement = null;
+            }
+            if (swapped && previous != null)
+            {
+                ResolveMerchantButtonField(room)!.SetValue(room, previous);
+                previous.Name = previous.Name.ToString().Replace("__SkinChangerPrevious", "", StringComparison.Ordinal);
+            }
+            error = exception.GetBaseException().Message;
+            ModLog.Warn("极速商人切换失败，保留原商店及商品状态：" + error);
+            return false;
         }
     }
 
@@ -1377,6 +1422,7 @@ internal static class MerchantRuntimeAppearance
     // callback after replacement nodes are committed; the old button/hand must already be gone.
     internal static void ReplayPrivateMerchantRoomAppearance(NMerchantRoom room)
     {
+        if (MerchantVariantScenes.IsBlitz(room)) return;
         var selection = SkinService.GetDisplayedSelection(GroupId);
         var option = SkinService.Catalog?.Groups.FirstOrDefault(group => group.Id == GroupId)?
             .Options.FirstOrDefault(item => item.Id == selection);
@@ -1477,12 +1523,14 @@ internal static class MerchantRuntimeAppearance
         FieldInfo targetField,
         Action<NMerchantButton> openedCallback)
     {
+        if (!targetField.FieldType.IsInstanceOfType(replacement))
+            throw new InvalidOperationException("商人按钮与原生场景类型不匹配，未修改商店。");
         var parent = previous.GetParent() ??
                      throw new InvalidOperationException("merchant button has no parent");
         var index = previous.GetIndex();
         var originalName = previous.Name;
         var wasFocused = previous.HasFocus();
-        CopyControlRuntimeState(previous, replacement);
+        if (!MerchantVariantScenes.IsBlitzType(replacement.GetType())) CopyControlRuntimeState(previous, replacement);
         CopyRequiredUniqueNode(previous, replacement, "MerchantSelectionReticle");
         SetOwnerRecursive(replacement, replacement);
         if (replacement.GetNodeOrNull<Node>("%MerchantVisual") == null ||
@@ -1491,27 +1539,37 @@ internal static class MerchantRuntimeAppearance
             throw new InvalidOperationException("商人场景缺少 MerchantVisual 或 MerchantSelectionReticle");
         }
 
-        previous.Name = originalName + "__SkinChangerPrevious";
-        replacement.Name = originalName;
-        replacement.IsLocalPlayerDead = previous.IsLocalPlayerDead;
-        replacement.PlayerDeadLines = previous.PlayerDeadLines;
-        parent.AddChild(replacement);
-        parent.MoveChild(replacement, index);
-        CopyControlRuntimeState(previous, replacement);
-        if (replacement.GetNodeOrNull<Node>("%MerchantVisual") == null ||
-            replacement.GetNodeOrNull<Node>("%MerchantSelectionReticle") == null)
+        try
         {
-            throw new InvalidOperationException("商人场景初始化后丢失必要的视觉节点");
-        }
+            previous.Name = originalName + "__SkinChangerPrevious";
+            replacement.Name = originalName;
+            replacement.IsLocalPlayerDead = previous.IsLocalPlayerDead;
+            replacement.PlayerDeadLines = previous.PlayerDeadLines;
+            parent.AddChild(replacement);
+            parent.MoveChild(replacement, index);
+            if (!MerchantVariantScenes.IsBlitzType(replacement.GetType())) CopyControlRuntimeState(previous, replacement);
+            if (replacement.GetNodeOrNull<Node>("%MerchantVisual") == null ||
+                replacement.GetNodeOrNull<Node>("%MerchantSelectionReticle") == null)
+            {
+                throw new InvalidOperationException("商人场景初始化后丢失必要的视觉节点");
+            }
 
-        replacement.SetEnabled(previous.IsEnabled);
-        replacement.Connect(
-            NMerchantButton.SignalName.MerchantOpened,
-            Callable.From<NMerchantButton>(openedCallback));
-        targetField.SetValue(targetOwner, replacement);
-        if (wasFocused)
+            replacement.SetEnabled(previous.IsEnabled);
+            replacement.Connect(
+                NMerchantButton.SignalName.MerchantOpened,
+                Callable.From<NMerchantButton>(openedCallback));
+            targetField.SetValue(targetOwner, replacement);
+            if (wasFocused)
+            {
+                replacement.GrabFocus();
+            }
+        }
+        catch
         {
-            replacement.GrabFocus();
+            if (replacement.GetParent() != null) replacement.GetParent().RemoveChild(replacement);
+            previous.Name = originalName;
+            targetField.SetValue(targetOwner, previous);
+            throw;
         }
     }
 
@@ -1524,7 +1582,7 @@ internal static class MerchantRuntimeAppearance
         // loading the normal standalone button made its default preview indistinguishable from
         // the real merchant. Keep load+instantiate inside the selected provider overlay so lazy
         // Spine dependencies also come from the selected skin.
-        var sceneTemplate = SkinService.InstantiateRuntimeScene<Node>(groupId, scenePath);
+        var sceneTemplate = MerchantVariantScenes.Instantiate(groupId, scenePath);
 
         try
         {
@@ -1562,6 +1620,7 @@ internal static class MerchantRuntimeAppearance
     /// </summary>
     private static void ReplayNodeReadyBeforeTree(Node node, string groupId)
     {
+        if (MerchantVariantScenes.IsBlitz(node)) return;
         try
         {
             var providerId = SkinService.GetSelectedFullRuntimeProvider(groupId);
@@ -1595,22 +1654,20 @@ internal static class MerchantRuntimeAppearance
         }
     }
     internal static (Node Scene, string ScenePath) InstantiateMerchantPreviewScene(
-        string groupId = GroupId)
+        string groupId = GroupId, bool blitz = false)
     {
-        var scenePath = GetMerchantScenePath(groupId);
+        var scenePath = blitz ? BlitzMerchantRoomScenePath : GetMerchantScenePath(groupId);
         // Keep the native root type while previewing. Provider code uses the ancestor type to
         // distinguish a real merchant from the fake merchant (Merchant2Cute, for example,
         // chooses a different scale/offset for NMerchantRoom versus NFakeMerchant). The root
         // _Ready method is skipped by the preview Harmony prefix below, so no run/map/inventory
         // state is touched; every visual child and authored hierarchy remains intact.
-        Node scene = groupId.Equals(FakeMerchantGroupId, StringComparison.OrdinalIgnoreCase)
-            ? SkinService.InstantiateRuntimeScene<NFakeMerchant>(groupId, scenePath)
-            : SkinService.InstantiateRuntimeScene<NMerchantRoom>(groupId, scenePath);
+        Node scene = MerchantVariantScenes.Instantiate(groupId, scenePath);
         scene.SetMeta(MerchantPreviewRootMeta, true);
         PreparePreviewNativeReferences(scene);
         // Record the room's own merchant figure and button layout before the scene enters the tree:
         // a package's room callback runs during _Ready and draws its own merchant over them.
-        PartTakeoverVisualScope.Capture(scene, groupId);
+        if (!blitz) PartTakeoverVisualScope.Capture(scene, groupId);
         return (scene, scenePath);
     }
 
@@ -1675,7 +1732,7 @@ internal static class MerchantRuntimeAppearance
             ? FakeMerchantScenePath
             : roomType?.FullName == "MegaCrit.Sts2.Core.Nodes.Rooms.NBlitzMerchantRoom"
                 ? "res://scenes/rooms/blitz_merchant_room.tscn"
-                : MerchantRoomScenePath;
+                : MerchantVariantScenes.HasBlitz ? MerchantRoomScenePath : "res://scenes/rooms/merchant_room.tscn";
 
     private static PackedScene LoadRuntimeOrBaseScene(
         string scenePath,
@@ -1958,7 +2015,8 @@ internal static class MerchantRoomPlayerAppearancePatch
         {
             // The catalogue preview runs the same scene with the same packages, so the merchant's
             // figure and the button's layout follow the selection here as well.
-            PartTakeoverVisualScope.Reconcile(__instance, MerchantRuntimeAppearance.GroupId);
+            if (!MerchantVariantScenes.IsBlitz(__instance))
+                PartTakeoverVisualScope.Reconcile(__instance, MerchantRuntimeAppearance.GroupId);
             MerchantRuntimeAppearance.ReplayPrivateMerchantRoomAppearance(__instance);
             return;
         }
@@ -2192,7 +2250,7 @@ internal static class MerchantPreviewPurchaseBlockPatch
         return false;
     }
 
-    private static bool IsPreviewDescendant(Node node)
+    internal static bool IsPreviewDescendant(Node node)
     {
         for (Node? current = node; current != null; current = current.GetParent())
         {
@@ -2204,4 +2262,14 @@ internal static class MerchantPreviewPurchaseBlockPatch
 
         return false;
     }
+}
+
+[FeaturePatch(FeatureIds.Merchant)]
+[HarmonyPatch]
+internal static class MerchantPreviewProceedReadyPatch
+{
+    private static IEnumerable<MethodBase> TargetMethods() => new[] { "_Ready", "_ExitTree" }
+        .Select(name => AccessTools.Method(typeof(NProceedButton), name));
+    private static bool Prefix(NProceedButton __instance) =>
+        !MerchantPreviewPurchaseBlockPatch.IsPreviewDescendant(__instance);
 }

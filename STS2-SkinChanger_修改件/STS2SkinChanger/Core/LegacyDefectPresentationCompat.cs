@@ -13,6 +13,28 @@ internal static class LegacyDefectPresentationCompat
             ? assembly.GetType("DefectSkinMod.Scripts.NCharacterSelectScreen_SelectCharacter_Patch")?.GetMethod("Postfix", Static)
             : null;
 
+    internal static void ApplyModeBackground(Control screen, string groupId)
+    {
+        if (groupId != "defect" || screen is MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen ||
+            SkinService.GetSelectedCreatureRuntimeProvider(groupId) is not { } provider ||
+            ManagedSkinModLoader.GetActiveProviderAssembly(provider) is not { } assembly ||
+            BackgroundCallback(assembly) == null ||
+            STS2SkinChanger.Ui.CharacterSelectScreenAccess.Background(screen) is not { } container) return;
+        EnsureScenes(assembly);
+        if (BackgroundScene(assembly) is not { } scene)
+            throw new AppearanceResourceUnavailableException("鸡煲选角背景尚未就绪。");
+        if (container.GetNodeOrNull("DefectAnimatedBg") != null) return;
+        var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+        background.Name = "DefectAnimatedBg";
+        background.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        background.MouseFilter = Control.MouseFilterEnum.Ignore;
+        foreach (var child in container.GetChildren()) { container.RemoveChild(child); child.QueueFree(); }
+        container.AddChild(background);
+    }
+
+    internal static PackedScene? BackgroundScene(Assembly assembly) => BackgroundCallback(assembly) == null ? null :
+        assembly.GetType("DefectSkinMod.Scripts.DefectSkinGlobals")?.GetField("SelectBgScene", Static)?.GetValue(null) as PackedScene;
+
     internal static PackedScene? PreviewScene(Assembly assembly) => BackgroundCallback(assembly) == null ? null :
         assembly.GetType("DefectSkinMod.Scripts.DefectSkinGlobals")?.GetField("CharacterScene", Static)?.GetValue(null) as PackedScene;
 

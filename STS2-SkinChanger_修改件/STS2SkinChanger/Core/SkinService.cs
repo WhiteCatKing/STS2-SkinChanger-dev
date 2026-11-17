@@ -4456,6 +4456,25 @@ internal static partial class SkinService
     /// instantiating it after <see cref="WithRuntimeResources{T}"/> restores the canonical packs
     /// can therefore bind a remote player's model to the other player's currently mounted skin.
     /// </summary>
+    internal static Node InstantiateMerchantVariantScene(string groupId, string scenePath, bool vanilla, Action<Node>? prepare)
+    {
+        using var foreground = CharacterPackPrefetch.HoldForeground();
+        lock (Sync)
+        {
+            var identity = CaptureCharacterAppearance(groupId);
+            return WithRuntimeResourcesForSelection(groupId, vanilla ? SkinCatalog.BaseOptionId : GetVisualSelection(groupId),
+                RuntimeSceneResourcePaths(groupId, scenePath), resources =>
+                {
+                    if (!identity.IsCurrent) throw new AppearanceResourceUnavailableException("商人外观请求已过期。");
+                    var scene = resources.GetValueOrDefault(scenePath) as PackedScene ??
+                        throw new AppearanceResourceUnavailableException("商人场景未就绪：" + scenePath);
+                    var node = scene.Instantiate(PackedScene.GenEditState.Disabled);
+                    try { prepare?.Invoke(node); identity.Bind(node); return node; }
+                    catch { node.Free(); throw; }
+                }, includeProviderDependencies: !vanilla, takeOverCanonicalPaths: false);
+        }
+    }
+
     public static T InstantiateRuntimeScene<T>(
         string groupId,
         string scenePath,

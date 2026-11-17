@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 4 && args[0] == "--test-merchant-variants")
+{
+    MerchantVariantTests.Run(args[1], args[2], args[3]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--test-mode-presentation-parity")
 {
     ModePresentationParityTests.Run(args[1]);

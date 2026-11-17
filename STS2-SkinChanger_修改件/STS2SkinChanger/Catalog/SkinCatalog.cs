@@ -228,7 +228,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visualGroupsByProvider = _groups.Where(group => !EventSkinPolicy.IsEventGroup(group.Id))
             .SelectMany(group => group.Options
-                .Where(option => !option.IsCharacterIconOnly)
+                .Where(option => !option.IsCharacterIconOnly && !option.IsMerchantVariantFallback)
                 .Select(option =>
                     (GroupId: group.Id, ProviderId: option.EffectiveProviderId)))
             .GroupBy(pair => pair.ProviderId, StringComparer.OrdinalIgnoreCase)
@@ -6047,6 +6047,7 @@ internal sealed partial class SkinCatalog : IDisposable
         ProviderSettingsVariantOptions.Expand(indexes, groups);
         AddEventSkinGroups(indexes, baselines, groups);
         MergeOrphanMonsterOptions(groups, knownGroupIds);
+        AddMerchantVariantFallbackOptions(groups);
 
         foreach (var group in groups.Values)
         {
@@ -9245,9 +9246,10 @@ internal sealed partial class SkinCatalog : IDisposable
     private static partial Regex MonsterPathRegex();
 
     [GeneratedRegex(
-        "^(?:res://animations/backgrounds/merchant_room/|" +
+        "^(?:res://animations/backgrounds/(?:blitz_)?merchant_room/|" +
         "res://animations/customs/merchant/|" +
-        "res://scenes/rooms/merchant_button\\.tscn$|" +
+        "res://animations/customs/merchant2cute_ii/blitz_merchant/|" +
+        "res://scenes/rooms/(?:(?:blitz_)?merchant_button|blitz_merchant_room|standard_merchant_room)\\.tscn$|" +
         "res://scenes/merchant/(?!characters/)[^/]+\\.tscn$)",
         RegexOptions.IgnoreCase)]
     private static partial Regex MerchantAppearancePathRegex();
@@ -9505,6 +9507,7 @@ internal sealed record SkinOption(
     /// </summary>
     public string? ProviderRootPath { get; init; }
     public bool UsesPrivateMerchantRoomCallback { get; init; }
+    public bool IsMerchantVariantFallback { get; init; }
 }
 
 internal sealed record RuntimeMonsterVisualMode(
