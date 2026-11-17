@@ -1,3 +1,9 @@
+## 1.0.34（创意工坊正式发布，内部 1.0.34.0）
+
+- 汇总 1.0.33.1–17 的皮肤检测、模型/选人预览、战损背景、商店与 MLM 兼容修复。
+- 同一 DLL 通过正式版 v0.107.1 与测试版 v0.113.1 离线回归；加入 Windows 自动崩溃诊断并补记 godot.log。
+- 同步 15 种语言说明与版本，保留主图和 12 张附加预览图。
+
 ## 1.0.33.17（内测）
 
 - 内置自动崩溃诊断：Windows 随 Mod 自动启动隐藏监视器，无需手动开启外部程序；异常退出后将退出码、系统事件、托管异常及可用转储路径追加到本次游戏日志。
@@ -554,7 +560,9 @@ necrobinderHpWear 这一族包给选人背景挂「点击切战损」时，会�
 结论记录：故障机器人（DefectSkinMod）的背景用的是它自己命名的 `res://Scenes/DefectSelectBg.tscn`，靠「放宽文件名匹配」这条路走不通，需要按包注册（provider contract）显式声明背景场景，另开改动。
 ### 1.0.31.4 —— 选人界面背景识别放宽（支持包自己的场景命名）
 
-v0.113.0 之后，故障机器人（DefectSkinMod）这类把选人背景放在自己命名下（es://Scenes/DefectSelectBg.tscn）的皮肤包，选人界面一直被换回原版背景：我们只认游戏的规范路径 es://scenes/screens/char_select/char_select_bg_<角色>.tscn。
+v0.113.0 之后，故障机器人（DefectSkinMod）这类把选人背景放在自己命名下（
+es://Scenes/DefectSelectBg.tscn）的皮肤包，选人界面一直被换回原版背景：我们只认游戏的规范路径
+es://scenes/screens/char_select/char_select_bg_<角色>.tscn。
 
 - Catalog\SkinCatalog.cs：新增 FindCharacterSelectBackgroundScene(groupId, optionId, characterId)，优先用规范名，找不到时在该选项自己的资源里挑 *selectbg* / char_select_bg_* 的 .tscn（同名多份时取路径最短的一个）。
 - Ui\ContextualSkinControls.cs：RebuildCharacterDisplay 里背景路径先问上面这个方法，取不到再退回规范路径；后续的资源收集、整包快照重建都沿用同一个路径。

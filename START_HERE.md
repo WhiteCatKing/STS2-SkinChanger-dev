@@ -98,9 +98,9 @@ git commit -q -F $tmp
 | `workshop\workshop.json` | `internalTestVersion` |
 | `STS2SkinChanger\STS2SkinChanger.csproj` | `Version` / `AssemblyVersion` / `FileVersion` / `InformationalVersion` |
 
-规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.33`；后续内测保持此公开版本，只提高四段内测标记。
+规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.34`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.33.17`（工坊公开 `1.0.33`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
+当前值：`1.0.34.0`（工坊公开 `1.0.34`）。本轮修复与验证限制见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_mlm_priority_persistence_and_feedback.md`；上次工坊发布见 `RELEASE_2026-11-16_workshop_1.0.33.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -273,3 +273,5 @@ Initialize()
 
 - 1.0.33.17：自动崩溃诊断位于 Core/CrashDiagnostics.cs 与内嵌 Diagnostics/CrashWatch.ps1；使用 --test-crash-diagnostics 只监视自建测试进程，禁止拿游戏做崩溃/卡死实验。日志副本/转储在用户数据 Gurio.SkinChanger/diagnostics/<session>。
 - 当前本机游戏已切回测试版。发布显式使用工作区 stable-api-1071 的正式版引用快照（MVID 97f10687-c306-4798-ab75-8b9f23f34dfb），不能把 D:/steam 当前安装路径继续当正式版引用。
+
+2026-11-17 工坊发布 1.0.34（内部 1.0.34.0）：汇总 1.0.33.1–17，正式版 v0.107.1 / 测试版 v0.113.1 同 DLL 离线回归通过；新增 Windows 自动崩溃日志诊断。发布记录见 `STS2-SkinChanger_修改件/docs/issues/RELEASE_2026-11-17_workshop_1.0.34.md`。
