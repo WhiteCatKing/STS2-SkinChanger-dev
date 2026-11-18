@@ -134,14 +134,8 @@ internal sealed partial class SkinCatalog
         var selected = providers.FirstOrDefault(index => index.Mod.Id == selection);
         if (selected != null && TryReadEventText(ReadEventTables(selected.Archive), key, language, out text))
             return true;
-        // A text-only event pack (NSFW化原版事件 and similar) rewrites an event's dialogue without
-        // ever becoming a selectable skin for it. The selected cosmetic keeps the keys it defines;
-        // every other key keeps the wording that pack authored instead of snapping back to vanilla.
-        foreach (var provider in providers)
-        {
-            if (ReferenceEquals(provider, selected)) continue;
-            if (TryReadEventText(ReadEventTables(provider.Archive), key, language, out text)) return true;
-        }
+        // Text-only providers are selectable too. A missing key (or explicit vanilla choice)
+        // falls back to the game's/content provider's baseline, never another cosmetic pack.
         if (TryReadBaselineEventText(_baselineIndexes, key, language, out text)) return true;
         return false;
     }

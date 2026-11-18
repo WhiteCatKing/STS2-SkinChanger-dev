@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 3 && args[0] == "--test-event-pack-switch")
+{
+    EventPackSwitchTests.Run(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--test-byrdine-attack")
 {
     ByrdineAttackTests.Run(args[1]);

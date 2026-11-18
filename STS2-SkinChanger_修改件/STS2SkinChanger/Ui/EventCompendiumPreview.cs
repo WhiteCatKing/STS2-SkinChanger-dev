@@ -155,7 +155,8 @@ internal static class EventCompendiumPreview
                 // redirect it to their private resource folder), so it must be tried first.
                 try
                 {
-                    portrait = model.CreateInitialPortrait();
+                    portrait = EventSkinRuntime.TryLoadInitialPortrait(model, false, out var selectedPortrait)
+                        ? selectedPortrait : model.CreateInitialPortrait();
                 }
                 catch
                 {

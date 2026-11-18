@@ -11,6 +11,7 @@ internal static class EventSkinTests
 
     internal static void Run()
     {
+        _ = AuditLogSilencer.Install();
         OtherCompendiumUiTests.Run();
         EventPriorityTests.Run();
         var previewPolicy = Assembly.GetType("STS2SkinChanger.Core.EventPreviewPolicy");
@@ -95,7 +96,7 @@ internal static class EventSkinTests
                 var files = (IReadOnlyDictionary<string, byte[]>)Property(overlay, "Files");
                 var payloads = files.Where(pair => pair.Key.EndsWith(".ctex")).Select(pair => pair.Value).ToArray();
                 Require(payloads.Length > 0 && payloads.All(payload => payload.SequenceEqual(
-                        new byte[] { choice == "skin" ? (byte)2 : (byte)1 })),
+                        TexturePayload(choice == "skin" ? (byte)2 : (byte)1))),
                     "独立资源包必须携带当前皮肤自己的贴图，切回原版不能继续取已挂载的提供者贴图。");
             }
             Require(Resolve(catalog, "ALPHA.title", "eng", selection) == "Skin Alpha", "标题跟随所选皮肤。");
@@ -229,7 +230,11 @@ internal static class EventSkinTests
     {
         var imported = "res://.godot/imported/" + path[6..].Replace('/', '-') + ".ctex";
         files[path + ".import"] = Encoding.UTF8.GetBytes($"[remap]\npath=\"{imported}\"\n");
-        files[imported] = [payload];
+        files[imported] = TexturePayload(payload);
+    }
+    private static byte[] TexturePayload(byte marker)
+    {
+        var bytes = new byte[53]; "GST2"u8.CopyTo(bytes); bytes[40] = 1; bytes[42] = 1; bytes[52] = marker; return bytes;
     }
     private static byte[] Json(Dictionary<string, string> values) => JsonSerializer.SerializeToUtf8Bytes(values);
     private static void WritePack(string path, Dictionary<string, byte[]> files) =>

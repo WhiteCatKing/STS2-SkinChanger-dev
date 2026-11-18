@@ -22,7 +22,7 @@ internal static class OtherCompendiumUiTests
             "最前提供收录全部可预览事件的全局分组，按真实地区归属保留多地区事件，跨地区事件单列，不收录不可预览条目，不遗漏未知 Mod 地区事件。");
         var screen = assembly.GetType("STS2SkinChanger.Ui.AncientCompendiumScreen", true)!;
         var regionRefresh = AccessTools.Method(screen, "RefreshEventRegions");
-        Require(Calls(regionRefresh, typeof(MegaCrit.Sts2.Core.Models.ModelDb), "get_Acts") &&
+        Require(Calls(regionRefresh, assembly.GetType("STS2SkinChanger.Core.ActCatalog", true)!, "get_All") &&
                 Calls(regionRefresh, typeof(MegaCrit.Sts2.Core.Models.ModelDb), "get_AllSharedEvents") &&
                 Calls(AccessTools.Method(screen, "RefreshAncients"), screen, "RefreshEventRegions"),
             "实际图鉴列表必须读取游戏地区池，并在切换分类和重开时刷新，不能只测试未接入的分组函数。");

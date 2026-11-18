@@ -82,6 +82,27 @@ internal static class EventSkinRuntime
         return texture;
     }
 
+    internal static bool TryLoadInitialPortrait(EventModel model, bool phobia, out Texture2D texture)
+    {
+        texture = null!;
+        if (!IsManaged(model)) return false;
+        var path = AccessTools.Property(typeof(EventModel), phobia
+            ? "InitialPhobiaModePortraitPath" : "InitialPortraitPath")?.GetValue(model) as string;
+        var group = EventSkinPolicy.GroupId(model.Id.Entry);
+        // Preserve custom/private portraits supplied by gameplay events and author code.
+        if (path == null || SkinService.Catalog!.FindGroupIdForResourcePath(path) != group ||
+            !SkinService.Catalog.HasEventResource(group, SkinService.Config.GetSelection(group), path)) return false;
+        texture = LoadTexture(group, path);
+        return true;
+    }
+
+    internal static Texture2D ResolvePortraitArgument(Texture2D texture)
+    {
+        var path = texture.GetMeta(TextureSourceMeta, texture.ResourcePath).AsString();
+        var group = SkinService.Catalog?.FindGroupIdForResourcePath(path);
+        return group != null && EventSkinPolicy.IsEventGroup(group) ? LoadTexture(group, path) : texture;
+    }
+
     private static bool RefreshVfx(Node parent, string groupId, bool enabled)
     {
         var found = false;
@@ -171,6 +192,44 @@ internal static class EventSkinVfxPatch
 [HarmonyPatch(typeof(NEventLayout), nameof(NEventLayout.SetPortrait))]
 internal static class EventSkinPortraitTrackingPatch
 {
+    [HarmonyPriority(Priority.Last)]
+    private static void Prefix(ref Texture2D portrait, ref Texture2D? phobiaModePortrait)
+    {
+        // Resolve at the final layout boundary too, including later event pages, without
+        // restarting gameplay when AssetCache still holds another skin's canonical texture.
+        try
+        {
+            if (portrait != null) portrait = EventSkinRuntime.ResolvePortraitArgument(portrait);
+            if (phobiaModePortrait != null) phobiaModePortrait = EventSkinRuntime.ResolvePortraitArgument(phobiaModePortrait);
+        }
+        catch (Exception error) { ModLog.Warn("事件图片未能刷新，保留当前展示：" + error.GetBaseException().Message); }
+    }
     private static void Postfix(NEventLayout __instance, Texture2D portrait, Texture2D? phobiaModePortrait) =>
         EventSkinRuntime.RememberPortrait(__instance, portrait, phobiaModePortrait);
+}
+
+[FeaturePatch(FeatureIds.Event)]
+[HarmonyPatch]
+internal static class EventSkinInitialPortraitPatch
+{
+    private static IEnumerable<System.Reflection.MethodBase> TargetMethods() =>
+    [
+        AccessTools.Method(typeof(EventModel), nameof(EventModel.CreateInitialPortrait)),
+        AccessTools.Method(typeof(EventModel), nameof(EventModel.CreateInitialPhobiaModePortrait))
+    ];
+    private static bool Prefix(EventModel __instance, System.Reflection.MethodBase __originalMethod, ref Texture2D __result)
+    {
+        try
+        {
+            if (!EventSkinRuntime.TryLoadInitialPortrait(__instance,
+                    __originalMethod.Name == nameof(EventModel.CreateInitialPhobiaModePortrait), out var portrait)) return true;
+            __result = portrait;
+            return false;
+        }
+        catch (Exception error)
+        {
+            ModLog.Warn("事件初始图片未能隔离加载：" + error.GetBaseException().Message);
+            return true;
+        }
+    }
 }
