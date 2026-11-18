@@ -6046,6 +6046,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // settings (JoanofArcIroncladHpwear and similar) get one option per variant as well.
         ProviderSettingsVariantOptions.Expand(indexes, groups);
         AddEventSkinGroups(indexes, baselines, groups);
+        AddFakeMerchantBackgroundProviders(indexes, groups);
         MergeOrphanMonsterOptions(groups, knownGroupIds);
         AddMerchantVariantFallbackOptions(groups);
 

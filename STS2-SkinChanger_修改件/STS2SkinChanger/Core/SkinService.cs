@@ -4715,6 +4715,17 @@ internal static partial class SkinService
         }
     }
 
+    internal static T WithBackgroundEventResource<T>(string providerId, string path, Func<Resource, T> callback) =>
+        WithBackgroundEventResources(providerId, [path], resources => callback(resources[path]));
+
+    internal static T WithBackgroundEventResources<T>(string providerId, IReadOnlyCollection<string> paths,
+        Func<IReadOnlyDictionary<string, Resource>, T> callback)
+    {
+        lock (Sync)
+            return WithRuntimeResourcesForSelection(FakeMerchantEventArtPolicy.MonsterGroupId,
+                providerId, paths, callback, false, takeOverCanonicalPaths: false);
+    }
+
     public static Resource GetOrLoadCharacterIconResource(
         string groupId,
         string resourcePath,

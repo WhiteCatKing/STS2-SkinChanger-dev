@@ -53,7 +53,6 @@ internal static class BackgroundSkinService
     private static List<BackgroundActEntry>? _acts;
     private static List<BackgroundOption>? _backgrounds;
     // The event pack's picture, read once per session and reused by previews and fights.
-    private static Texture2D? _fakeMerchantEventImage;
     private static Dictionary<string, string> _providerActDefaults =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -716,6 +715,18 @@ internal static class BackgroundSkinService
             return CreatePackBackground(option, rng);
         }
 
+        if (option.Title == FakeMerchantEventArtPolicy.EncounterBackgroundScene && option.Source != GameSourceId)
+        {
+            var layers = ListLayerPaths(FakeMerchantEncounterId);
+            return SkinService.WithBackgroundEventResources(option.Source, layers.Append(option.Title).ToArray(), resources =>
+            {
+                var root = ((PackedScene)resources[option.Title]).Instantiate<NCombatBackground>();
+                FillLayers(root, root, layers, rng,
+                    path => ((PackedScene)resources[path]).Instantiate<Control>(PackedScene.GenEditState.Disabled));
+                return root;
+            });
+        }
+
         return option.Title.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase)
             ? CreateSceneBackground(option)
             : CreateImageBackground(option);
@@ -729,7 +740,7 @@ internal static class BackgroundSkinService
                 option.Title,
                 StringComparison.OrdinalIgnoreCase);
             var texture = isFakeMerchantEventImage
-                ? LoadFakeMerchantEventImage()
+                ? SkinService.WithBackgroundEventResource(option.Source, option.Title, resource => resource as Texture2D)
                 : PreloadManager.Cache.GetTexture2D(option.Title);
             if (texture == null)
             {
@@ -763,32 +774,6 @@ internal static class BackgroundSkinService
                 exception.GetBaseException().Message);
             return null;
         }
-    }
-
-    /// <summary>
-    /// The event pack's own picture, read straight from the mounted packs. It deliberately does not
-    /// go through PreloadManager: that cache is patched to redirect event resources to the skin
-    /// group that owns the event, and the fake merchant group owns no copy of this picture — every
-    /// read therefore failed with a logged KeyNotFoundException before the game texture was used
-    /// anyway. Replacing the cache entry also makes sure a previously cached vanilla copy cannot
-    /// win over the mounted event art.
-    /// </summary>
-    private static Texture2D? LoadFakeMerchantEventImage()
-    {
-        const string imagePath = FakeMerchantEventArtPolicy.EventImage;
-        if (_fakeMerchantEventImage != null &&
-            GodotObject.IsInstanceValid(_fakeMerchantEventImage))
-        {
-            return _fakeMerchantEventImage;
-        }
-
-        // The picture only exists once its event pack is mounted; a merchant skin's pack must not
-        // decide which version is read.
-        SkinService.EnsureFakeMerchantEventArtMounted();
-        _fakeMerchantEventImage =
-            ResourceLoader.Load<Texture2D>(imagePath, null, ResourceLoader.CacheMode.Replace) ??
-            PreloadManager.Cache.GetTexture2D(imagePath);
-        return _fakeMerchantEventImage;
     }
 
     /// <summary>
@@ -2159,7 +2144,8 @@ internal static class BackgroundSkinService
         Control shell,
         Node canvas,
         IEnumerable<string> layerPaths,
-        Rng rng)
+        Rng rng,
+        Func<string, Control>? instantiate = null)
     {
         var paths = layerPaths.ToArray();
         var added = 0;
@@ -2178,7 +2164,7 @@ internal static class BackgroundSkinService
                 continue;
             }
 
-            host.AddChild(InstantiateLayer(chosen));
+            host.AddChild(instantiate?.Invoke(chosen) ?? InstantiateLayer(chosen));
             added++;
         }
 
@@ -2190,7 +2176,7 @@ internal static class BackgroundSkinService
                        canvas.GetNodeOrNull<Node>("ForegroundLayer");
             if (host != null)
             {
-                host.AddChild(InstantiateLayer(foreground!));
+                host.AddChild(instantiate?.Invoke(foreground!) ?? InstantiateLayer(foreground!));
                 added++;
             }
         }
@@ -2520,46 +2506,18 @@ internal static class BackgroundSkinService
         // also what the event screen shows.
         void AddFakeMerchantEventFromPack()
         {
-            var provider = SkinService.Catalog?.FindFakeMerchantEventArtProvider();
-            if (string.IsNullOrWhiteSpace(provider))
+            foreach (var provider in SkinService.Catalog?.FindFakeMerchantEventArtProviders() ?? [])
             {
-                // No event pack: the game's own tent entry is the only artwork there is.
-                return;
+                if (!seen.Add(provider.Id + "::" + FakeMerchantEventOptionToken)) continue;
+                var option = new BackgroundOption(
+                    BackgroundSkinPolicy.ProviderOptionId(provider.Id, FakeMerchantEventOptionToken),
+                    FakeMerchantEventBackgroundName + " · " + provider.Name,
+                    provider.Id, SkinService.Catalog!.HasFakeMerchantEventImage(provider.Id)
+                        ? FakeMerchantEventArtPolicy.EventImage : FakeMerchantEventArtPolicy.EncounterBackgroundScene, null);
+                // A package resource is isolated on demand: global ResourceLoader.Exists cannot
+                // determine availability before its private overlay has been mounted.
+                if (TryProbeBackground(option)) result.Add(option);
             }
-
-            if (!seen.Add(provider + "::" + FakeMerchantEventOptionToken))
-            {
-                return;
-            }
-
-            // The pack's tent bottom is one huge Spine atlas page, not a wallpaper: rendered as a
-            // still image it is off-centre and mostly empty. The event portrait is authored as a
-            // full-frame picture, so that is the one offered as a background.
-            var imagePath = FakeMerchantEventArtPolicy.EventImage;
-            if (!ResourceLoader.Exists(imagePath))
-            {
-                ModLog.Info(
-                    "假商人事件包没有可用的满屏立绘，背景列表保留游戏自带的帐篷场景。");
-                return;
-            }
-
-            var option = new BackgroundOption(
-                BackgroundSkinPolicy.ProviderOptionId(provider, FakeMerchantEventOptionToken),
-                FakeMerchantEventBackgroundName,
-                provider,
-                imagePath,
-                null);
-            if (!TryProbeBackground(option))
-            {
-                // A registered entry that renders nothing is worse than no entry at all: it leaves
-                // the fight without any background when selected.
-                ModLog.Warn($"{FakeMerchantEventBackgroundName} 无法渲染为背景，已从列表移除。");
-                return;
-            }
-
-            result.Add(option);
-            ModLog.Info(
-                $"已把假商人事件背景图加入可切换列表：{FakeMerchantEventBackgroundName}（来源={provider}，图={imagePath}）。");
         }
 
         void AddGame(string title)
@@ -3571,9 +3529,10 @@ internal static class BackgroundSkinService
                              id,
                              FakeMerchantEventBackgroundName,
                              provider,
-                             FakeMerchantEventArtPolicy.EventImage,
+                             SkinService.Catalog!.HasFakeMerchantEventImage(provider)
+                                 ? FakeMerchantEventArtPolicy.EventImage : FakeMerchantEventArtPolicy.EncounterBackgroundScene,
                              null);
-            var replacement = CreateImageBackground(option);
+            var replacement = CreateOptionBackground(option, CreatePreviewRng()!);
             if (replacement == null || !GodotObject.IsInstanceValid(replacement))
             {
                 return false;

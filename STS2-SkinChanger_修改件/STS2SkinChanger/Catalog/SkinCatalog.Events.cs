@@ -165,19 +165,39 @@ internal sealed partial class SkinCatalog
     /// The mod that redrew the fake merchant event picture, if any. Preferred over the game's own
     /// copy so the background list names the pack instead of pretending this is vanilla art.
     /// </summary>
-    public string? FindFakeMerchantEventArtProvider()
+    public IReadOnlyList<SkinModDescriptor> FindFakeMerchantEventArtProviders() =>
+        _cosmeticIndexes.Where(index => index.TryBuildAsset(FakeMerchantEventArtPolicy.EventImage) != null ||
+            index.Archive.Paths.Any(FakeMerchantEventArtPolicy.IsRedrawnArtPath))
+            .Select(index => index.Mod).DistinctBy(mod => mod.Id).ToArray();
+
+    public bool HasFakeMerchantEventImage(string providerId) => _cosmeticIndexes.Any(index =>
+        index.Mod.Id == providerId && index.TryBuildAsset(FakeMerchantEventArtPolicy.EventImage) != null);
+
+    private static void AddFakeMerchantBackgroundProviders(IEnumerable<PckResourceIndex> indexes,
+        IDictionary<string, SkinGroup> groups)
     {
-        var tent = FakeMerchantTentRoot + "shop_fake_merchant_bottom.png";
-        foreach (var index in _cosmeticIndexes)
+        foreach (var index in indexes)
         {
-            if (index.Archive.Contains(tent) || index.Archive.Contains(tent + ".import"))
+            var assets = index.Archive.Paths.Where(path => IsFakeMerchantEventPresentationPath(path) || FakeMerchantEventArtPolicy.IsRedrawnArtPath(path))
+                .Select(path => path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ? path[..^7] : path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ? path[..^6] : path)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Select(index.TryBuildAsset).OfType<ResourceAsset>()
+                .ToDictionary(asset => asset.SourcePath, StringComparer.OrdinalIgnoreCase);
+            if (assets.Count == 0) continue;
+            var id = FakeMerchantEventArtPolicy.MonsterGroupId;
+            if (!groups.TryGetValue(id, out var group)) groups[id] = group = new SkinGroup(id, DisplayName(id));
+            var position = group.Options.FindIndex(option => option.Id == index.Mod.Id);
+            if (position < 0) group.Options.Add(new SkinOption(index.Mod.Id, index.Mod.Name, assets));
+            else
             {
-                return index.Mod.Id;
+                var old = group.Options[position];
+                var merged = new Dictionary<string, ResourceAsset>(old.Assets, StringComparer.OrdinalIgnoreCase);
+                foreach (var pair in assets) merged[pair.Key] = pair.Value;
+                group.Options[position] = old with { Assets = merged };
             }
         }
-
-        return null;
     }
+
+    public string? FindFakeMerchantEventArtProvider() => FindFakeMerchantEventArtProviders().FirstOrDefault()?.Id;
 
     /// <summary>The fake merchant event art, mounted last so a provider pack cannot shadow it.</summary>
     public IReadOnlyDictionary<string, ResourceFile> FakeMerchantEventPresentation() =>

@@ -4,7 +4,7 @@
   "title": "Skin Changer",
   "statementHeading": "Statement",
   "version": "1.0.36",
-  "internalTestVersion": "1.0.36.1",
+  "internalTestVersion": "1.0.36.2",
   "featureUpdate": "[h2]1.0.36[/h2]\nAdded Osty, evolved Byrd and Wuppy to the creature compendium, depending on game-version support. Osty shares saved skin choices with character select and supports action and frame-animation previews. Restored the native full-screen Byrd attack, trail and sound with original timing and cleanup when replaying or leaving.",
   "cardPriorityUpdate": "",
   "multiplayerUpdate": "",
