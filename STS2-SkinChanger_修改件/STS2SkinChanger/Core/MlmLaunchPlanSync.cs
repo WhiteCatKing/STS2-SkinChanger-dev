@@ -163,7 +163,43 @@ internal static class MlmLaunchPlanSync
             ["written_utc"] = DateTimeOffset.UtcNow.ToString("O"),
             ["entries"] = entries
         };
-        File.WriteAllText(path, root.ToJsonString(JsonOptions) + System.Environment.NewLine, new UTF8Encoding(false));
+        ReplaceFileAtomically(path, root.ToJsonString(JsonOptions) + System.Environment.NewLine);
+    }
+
+    /// <summary>
+    /// 同目录写临时文件 → flush 到磁盘 → 原子替换。失败时保留原文件、清掉临时文件再抛出，
+    /// 避免 MLM 在下次启动时读到半截的 JSON。
+    /// </summary>
+    internal static void ReplaceFileAtomically(string path, string payload)
+    {
+        // MLM reads this file before the game loads mods, so a half-written plan would be worse
+        // than a stale one: write a sibling temp file, flush it to disk, then replace atomically.
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = new System.IO.FileStream(temporary, System.IO.FileMode.CreateNew, System.IO.FileAccess.Write, System.IO.FileShare.None))
+            using (var writer = new System.IO.StreamWriter(stream, new UTF8Encoding(false)))
+            {
+                writer.Write(payload);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            System.IO.File.Move(temporary, path, overwrite: true);
+        }
+        catch
+        {
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch
+            {
+                // Leaving a stray temp file is harmless; keeping the original plan intact is what matters.
+            }
+
+            throw;
+        }
     }
 
     private static string? WorkshopItemId(Mod mod)

@@ -20,10 +20,11 @@ internal static class AppearanceControlContractTests
         {
             var binding = createBinding.Invoke(null, [petGroup, true, companion])!;
             bool Flag(string name) => (bool)binding.GetType().GetProperty(name)!.GetValue(binding)!;
-            if (Flag("CanSelectSkin") != !companion || !Flag("SupportsCombatControls") ||
+            // Known companions keep an independent skin row even when following their owner.
+            if (!Flag("CanSelectSkin") || !Flag("SupportsCombatControls") ||
                 Flag("SupportsIntent") != !companion || Flag("UsesMonsterScale") != !companion)
             {
-                throw new InvalidOperationException("奥斯提只能跟随主人皮肤，但模型与血条调整必须保留；怪物不受影响。");
+                throw new InvalidOperationException("奥斯提须可独立选皮肤并保留模型与血条调整；怪物的意图与缩放控制须保留。");
             }
         }
         var harmony = new Harmony("Gurio.SkinChanger.Tests.AppearanceControlContracts");

@@ -1376,14 +1376,14 @@ internal static class MultiplayerSkinSync
         }
     }
 
-    internal static void OnLobbyCharacterChanged(StartRunLobby lobby, ulong playerId, bool isRotatingDread)
+    internal static void OnLobbyCharacterChanged(StartRunLobby lobby, ulong playerId)
     {
         // Only the owner may advertise their choice; never publish this machine's default for
         // somebody else's resolved character.
         if (!ReferenceEquals(_lobby, lobby) || _netService?.Type.IsMultiplayer() != true ||
             playerId != _netService.NetId)
             return;
-        PublishLocalCharacterSelection(isRotatingDread ? "大厅角色改变（轮转恐惧）" : "大厅角色改变");
+        PublishLocalCharacterSelection("大厅角色改变");
         lock (Sync) PendingIconRefreshes.Add(playerId);
     }
 
@@ -2695,13 +2695,13 @@ internal static class MultiplayerSkinLobbyTickPatch
 [HarmonyPatch(typeof(StartRunLobby), "ChangeCharacter")]
 internal static class MultiplayerLobbyCharacterChangedPatch
 {
-    // v0.113.0 renamed the third parameter to isRotatingDread: it no longer means "a random
-    // character was resolved", so it only picks the log reason now.
-    private static void Postfix(StartRunLobby __instance, ulong playerId, bool isRotatingDread)
+    // The game branches give the third argument different meanings. Every local character
+    // change needs the same skin sync regardless of that argument.
+    private static void Postfix(StartRunLobby __instance, ulong playerId)
     {
         try
         {
-            MultiplayerSkinSync.OnLobbyCharacterChanged(__instance, playerId, isRotatingDread);
+            MultiplayerSkinSync.OnLobbyCharacterChanged(__instance, playerId);
         }
         catch (Exception exception)
         {

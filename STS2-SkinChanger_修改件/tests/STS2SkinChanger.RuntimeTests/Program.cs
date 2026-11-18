@@ -71,6 +71,19 @@ if (args.Length == 2 && args[0] == "--test-mlm-context")
     return;
 }
 
+
+if (args.Length == 1 && args[0] == "--test-relic-ownership")
+{
+    RelicOwnershipTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-card-pool-ownership")
+{
+    CardPoolOwnershipTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-character-select-modes")
 {
     CharacterSelectModeTests.Run();
@@ -109,6 +122,30 @@ if (args.Length == 1 && args[0] == "--test-protected-boundaries")
     ScopedSkinBehaviorTests.Run();
     AnimatorPatchDiscoveryTests.Run();
     CharacterCatalogOwnershipTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-cache-write-notice")
+{
+    CacheWriteNoticeTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-large-provider-overlay")
+{
+    LargeProviderOverlayTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-card-portrait-session")
+{
+    CardPortraitSessionTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-provider-assembly-reuse")
+{
+    ProviderAssemblyReuseTests.Run();
     return;
 }
 
@@ -749,7 +786,14 @@ if (args.Length == 3 && args[0] == "--audit-part-takeover")
     return;
 }
 
+LateTakeoverGuardTests.Run();
+OrchisRoomCallbackTests.Run();
+SpineResourcePreflightTests.Run();
 BaselinePartTakeoverTests.Run();
+CacheWriteNoticeTests.Run();
+LargeProviderOverlayTests.Run();
+CardPortraitSessionTests.Run();
+ProviderAssemblyReuseTests.Run();
 MerchantFigureScopeTests.Run();
 StorageLifecycleTests.Run();
 StorageLifecycleTests.TestQuitAndLockedFiles();
@@ -999,45 +1043,24 @@ var availableSelectionsField = multiplayerSyncType.GetField(
                                    BindingFlags.Static | BindingFlags.NonPublic) ??
                                throw new InvalidOperationException("找不到联机玩家皮肤快照缓存。");
 
-sendChangesProperty.SetValue(testConfig, false);
-receiveChangesProperty.SetValue(testConfig, false);
-var disabledSyncWriter = new PacketWriter();
-appendCapabilityTrailer.Invoke(null, [disabledSyncWriter]);
-if (disabledSyncWriter.BitPosition != 0)
+var multiplayerModeProperty = skinConfigType.GetProperty("MultiplayerSkinMode")!;
+// The legacy toggles are migration inputs. All three current display modes announce
+// this player's appearance; only Shared applies announcements from other players.
+foreach (var mode in new[] { 0, 1, 2 })
 {
-    throw new InvalidOperationException(
-        "关闭联机皮肤同步后仍修改了游戏握手包；未安装 Skin Changer 的玩家仍会收到额外数据。");
-}
-
-sendChangesProperty.SetValue(testConfig, false);
-receiveChangesProperty.SetValue(testConfig, true);
-var enabledSyncWriter = new PacketWriter();
-appendCapabilityTrailer.Invoke(null, [enabledSyncWriter]);
-if (enabledSyncWriter.BitPosition != 72)
-{
-    throw new InvalidOperationException(
-        "只接收皮肤改变时没有写入能力标记，其他玩家将无法确认本机能够接收。");
-}
-
-sendChangesProperty.SetValue(testConfig, false);
-receiveChangesProperty.SetValue(testConfig, false);
-object?[] disabledReadArguments = [enabledSyncWriter.Buffer, (byte)0];
-if (readCapabilityTrailer.Invoke(null, disabledReadArguments) is not false)
-{
-    throw new InvalidOperationException(
-        "关闭联机皮肤同步后仍解析了其他玩家的能力握手。");
-}
-
-sendChangesProperty.SetValue(testConfig, true);
-receiveChangesProperty.SetValue(testConfig, false);
-object?[] enabledReadArguments = [enabledSyncWriter.Buffer, (byte)0];
-if (readCapabilityTrailer.Invoke(null, enabledReadArguments) is not true ||
-    enabledReadArguments[1] is not byte protocolVersion ||
-    protocolVersion != 9 ||
-    System.Text.Encoding.ASCII.GetString(enabledSyncWriter.Buffer, 0, 8) != "GSCAP09!")
-{
-    throw new InvalidOperationException(
-        "只发送皮肤改变时无法读取当前协议的能力握手。");
+    multiplayerModeProperty.SetValue(testConfig, mode);
+    sendChangesProperty.SetValue(testConfig, false);
+    receiveChangesProperty.SetValue(testConfig, false);
+    var writer = new PacketWriter();
+    appendCapabilityTrailer.Invoke(null, [writer]);
+    object?[] readArguments = [writer.Buffer, (byte)0];
+    if (writer.BitPosition != 72 || readCapabilityTrailer.Invoke(null, readArguments) is not true ||
+        readArguments[1] is not byte protocolVersion || protocolVersion != 9 ||
+        System.Text.Encoding.ASCII.GetString(writer.Buffer, 0, 8) != "GSCAP09!")
+        throw new InvalidOperationException($"联机显示模式 {mode} 必须保留当前协议的能力握手。");
+    object?[] invalidRead = [Array.Empty<byte>(), (byte)0];
+    if (readCapabilityTrailer.Invoke(null, invalidRead) is not false)
+        throw new InvalidOperationException("不含能力标记的原版数据不能被识别为支持同步。");
 }
 
 var netMessageType = typeof(Entry).Assembly.GetType(
@@ -1140,16 +1163,18 @@ var availableSelections = availableSelectionsField.GetValue(null) as System.Coll
                           throw new InvalidOperationException("联机玩家皮肤快照缓存类型不兼容。");
 availableSelections[99UL] = staleSelection;
 receiveChangesProperty.SetValue(testConfig, false);
+multiplayerModeProperty.SetValue(testConfig, 0);
 var disabledSelectionMaps = getAvailableSelectionMaps.Invoke(null, null)
                             as System.Collections.IEnumerable ??
-                            throw new InvalidOperationException("无法读取关闭同步后的远端皮肤映射。");
+                            throw new InvalidOperationException("无法读取离线状态的远端皮肤映射。");
 if (disabledSelectionMaps.Cast<object>().Any())
 {
     throw new InvalidOperationException(
-        "关闭接收皮肤改变后仍向运行时暴露旧的远端玩家皮肤，可能继续覆盖模型或头像。");
+        "未连接联机会话时仍向运行时暴露旧的远端玩家皮肤，可能继续覆盖模型或头像。");
 }
 availableSelections.Clear();
 receiveChangesProperty.SetValue(testConfig, true);
+multiplayerModeProperty.SetValue(testConfig, 1);
 var characterPreviewApply = skinServiceType.GetMethod(
     "ApplyCharacterPreviewSelection",
     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
@@ -1753,6 +1778,7 @@ CardPriorityPerformanceTests.Run();
 ExportedCardSurfaceTests.Run();
 StatefulCardArtTests.CheckObservers();
 GitHubFolderSwapTests.Run();
+MlmLaunchPlanSyncTests.Run();
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 RequiredLibraryVisualGuardTests.Run(args);
 WorkshopTests.Run();

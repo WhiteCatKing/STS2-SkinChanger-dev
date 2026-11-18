@@ -2057,7 +2057,9 @@ FakeMerchantEventArtPolicyTests.Run();
 MerchantFigureRestorePolicyTests.Run();
 FeatureRegistryTests.Run();
 SkinCacheStorageTests.Run();
+CacheWriteBudgetTests.Run();
 ProviderActivationSchedulePolicyTests.Run();
+MonsterSettingsCopyPolicyTests.Run();
 RuntimeResourceRestoreTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 

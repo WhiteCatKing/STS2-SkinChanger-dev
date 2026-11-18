@@ -1,5 +1,7 @@
 # Skin Changer 开发约定
 
+动手前先读 [docs/agents/maintenance-rules.md](docs/agents/maintenance-rules.md)：这是维护者共同遵守的规矩，列了不许丢的修复、改完必须做的双引用构建与测试、需要停下来先问的产品取舍，以及交接格式。
+
 ## 当前环境
 
 - 主环境为 Windows 原生 PowerShell。仓库位于 `C:/Users/gurio/Documents/ChatGPT/STS2-SkinChanger`。

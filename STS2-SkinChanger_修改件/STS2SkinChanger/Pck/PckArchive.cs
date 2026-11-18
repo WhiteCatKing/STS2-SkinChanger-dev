@@ -5,6 +5,8 @@ namespace STS2SkinChanger.Pck;
 
 internal sealed class PckArchive : IDisposable
 {
+    // Runtime storage supplies the shared budget. Standalone PCK tools keep their own output paths.
+    internal static Action<string, long, Action>? WriteOutput { get; set; }
     private const uint HeaderMagic = 0x43504447;
     private const uint DirectoryEncrypted = 1;
     private const uint RelativeFileBase = 2;
@@ -285,6 +287,14 @@ internal sealed class PckArchive : IDisposable
             cursor = Align(cursor + entry.Size, 16);
         }
 
+        if (WriteOutput is { } writeOutput)
+            writeOutput(outputPath, cursor, () => WritePreparedEntries(outputPath, orderedFiles, fileBase));
+        else
+            WritePreparedEntries(outputPath, orderedFiles, fileBase);
+    }
+
+    private static void WritePreparedEntries(string outputPath, OutputEntry[] orderedFiles, long fileBase)
+    {
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(outputPath)!);
         using var stream = File.Open(outputPath, FileMode.Create, FileAccess.Write, FileShare.Read);
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false);

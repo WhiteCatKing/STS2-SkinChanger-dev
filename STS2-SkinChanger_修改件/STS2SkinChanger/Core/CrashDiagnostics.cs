@@ -76,7 +76,7 @@ internal static class CrashDiagnostics
         ProcessId = process.Id, ProcessName = process.ProcessName,
         ProcessStartedUtc = process.StartTime.ToUniversalTime().ToString("O"),
         LogPath = Path.GetFullPath(log), ReportDirectory = Path.GetFullPath(report),
-        SessionId = session, ModVersion = version, HangSeconds = 30
+        SessionId = session, ModVersion = version, HangSeconds = 30, DumpTimeoutSeconds = 20
     };
 
     internal static ProcessStartInfo CreateWatcherStart(string script, string config)
@@ -149,22 +149,121 @@ internal static class CrashDiagnostics
         catch { }
     }
 
-    internal static void PruneCompleted(string root)
+    // Diagnostics are useful only for recent crashes; keep the directory bounded on disk too.
+    private const long MaxDiagnosticsBytes = 512L * 1024 * 1024;
+    private static readonly TimeSpan Retention = TimeSpan.FromDays(14);
+    private const int KeepNormalSessions = 3;
+    private const int KeepAbnormalSessions = 8;
+    private const int KeepUnfinishedSessions = 4;
+
+    internal static void PruneCompleted(string root) => Prune(root, keepDirectory: null);
+
+    internal static void Prune(string root, string? keepDirectory) => Prune(root, keepDirectory, MaxDiagnosticsBytes);
+
+    /// <summary>
+    /// Bounds the diagnostics folder by age, count and total bytes. Unfinished reports from a
+    /// previous run take part in pruning (an abandoned session never shrinks by itself), and the
+    /// session currently being observed is never touched.
+    /// </summary>
+    internal static void Prune(string root, string? keepDirectory, long maxBytes)
     {
         var prefix = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var completed = Directory.EnumerateDirectories(root)
-            .Where(path => Guid.TryParseExact(Path.GetFileName(path), "N", out _) &&
-                (File.Exists(Path.Combine(path, "normal-exit")) || File.Exists(Path.Combine(path, "appended")) || File.Exists(Path.Combine(path, "recovered"))))
-            .OrderByDescending(Directory.GetCreationTimeUtc).ToArray();
-        var normal = 0; var abnormal = 0;
-        foreach (var path in completed)
+        var keep = keepDirectory == null ? null : Path.GetFullPath(keepDirectory);
+        var now = DateTime.UtcNow;
+        var sessions = new List<(string Path, bool Normal, bool Completed, DateTime Newest, long Bytes)>();
+        try
         {
-            var keep = File.Exists(Path.Combine(path, "normal-exit")) ? ++normal <= 3 : ++abnormal <= 8;
-            var absolute = Path.GetFullPath(path);
-            if (keep || !absolute.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
-                File.GetAttributes(absolute).HasFlag(FileAttributes.ReparsePoint)) continue;
-            try { Directory.Delete(absolute, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            foreach (var path in Directory.EnumerateDirectories(root))
+            {
+                if (!Guid.TryParseExact(Path.GetFileName(path), "N", out _)) continue;
+                var absolute = Path.GetFullPath(path);
+                if (keep != null && absolute.Equals(keep, StringComparison.OrdinalIgnoreCase)) continue;
+                if (File.GetAttributes(absolute).HasFlag(FileAttributes.ReparsePoint)) continue;
+                var isNormal = File.Exists(Path.Combine(absolute, "normal-exit"));
+                var completed = isNormal || File.Exists(Path.Combine(absolute, "appended")) ||
+                    File.Exists(Path.Combine(absolute, "recovered"));
+                sessions.Add((absolute, isNormal, completed, NewestWriteUtc(absolute), DirectoryBytes(absolute)));
+            }
         }
+        catch (IOException) { return; }
+        catch (UnauthorizedAccessException) { return; }
+
+        var removable = sessions
+            .OrderByDescending(session => session.Newest)
+            .ToList();
+
+        // 1) Age: an old report is not worth keeping whether or not it finished.
+        removable.RemoveAll(session =>
+        {
+            if (now - session.Newest <= Retention) return false;
+            return DeleteSession(session.Path, prefix);
+        });
+
+        // 2) Counts: finished reports keep the existing 3/8 split; abandoned ones get their own cap.
+        var normal = 0;
+        var abnormal = 0;
+        var unfinished = 0;
+        removable.RemoveAll(session =>
+        {
+            var over = session.Normal ? ++normal > KeepNormalSessions
+                : session.Completed ? ++abnormal > KeepAbnormalSessions
+                : ++unfinished > KeepUnfinishedSessions;
+            return over && DeleteSession(session.Path, prefix);
+        });
+
+        // 3) Total bytes: drop the oldest reports until the folder fits the budget.
+        var total = removable.Sum(session => session.Bytes);
+        foreach (var session in removable.OrderBy(session => session.Newest))
+        {
+            if (total <= maxBytes) break;
+            if (!DeleteSession(session.Path, prefix)) continue;
+            total -= session.Bytes;
+        }
+    }
+
+    private static DateTime NewestWriteUtc(string directory)
+    {
+        var newest = Directory.GetCreationTimeUtc(directory);
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                var written = File.GetLastWriteTimeUtc(file);
+                if (written > newest) newest = written;
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return newest;
+    }
+
+    private static long DirectoryBytes(string directory)
+    {
+        long total = 0;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                try { total += new FileInfo(file).Length; }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return total;
+    }
+
+    private static bool DeleteSession(string path, string prefix)
+    {
+        if (!Path.GetFullPath(path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        try
+        {
+            Directory.Delete(path, true);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     internal static void RecoverPending(string root)

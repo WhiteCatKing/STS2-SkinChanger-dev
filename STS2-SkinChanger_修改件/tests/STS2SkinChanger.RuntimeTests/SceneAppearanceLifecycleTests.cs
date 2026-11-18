@@ -144,7 +144,7 @@ internal static class SceneAppearanceLifecycleTests
         }
 
         // The state-machine tests above need no native Godot process. Check that the real
-        // Harmony boundaries actually use it, including both possible merchant Create results.
+        // Harmony boundaries use it on the live room's Ready, after the factory was removed.
         foreach (var patchName in new[] { "MerchantRoomPreviewExitTreePatch", "FakeMerchantPreviewExitTreePatch" })
         {
             var exit = assembly.GetType("STS2SkinChanger.Ui." + patchName, true)!.GetMethod("Postfix", Static)!;
@@ -152,10 +152,14 @@ internal static class SceneAppearanceLifecycleTests
         }
         var create = assembly.GetType("STS2SkinChanger.Ui.MerchantRoomCreateAppearancePatch", true)!;
         Require(create.GetMethod("Prefix", Static)!.GetParameters().Any(p => p.Name == "__state" && p.IsOut),
-            "商店创建前取得的范围必须通过 Harmony __state 交给实际创建的房间。");
+            "商店 Ready 前取得的范围必须通过 Harmony __state 交给实际房间。");
+        Require(create.GetCustomAttributes<HarmonyPatch>().Any(patch =>
+                patch.info.declaringType == typeof(MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom) &&
+                patch.info.methodName == "_Ready"), "商店范围必须挂接现用的 Ready 入口。");
         Require(PatchProcessor.GetOriginalInstructions(create.GetMethod("Postfix", Static)!)
-                .Count(instruction => Equals(instruction.operand, record)) == 2,
-            "预加载回退房间与当前选择的替代房间都必须登记清理所有权。");
+                .Count(instruction => Equals(instruction.operand, record)) == 1 &&
+                create.GetMethod("Postfix", Static)!.GetParameters().Any(p => p.Name == "__instance"),
+            "Ready 中实际房间必须登记一次清理所有权，不再创建替代房间。");
         var fakeReady = assembly.GetType("STS2SkinChanger.Ui.FakeMerchantAppearancePatch", true)!.GetMethod("Prefix", Static)!;
         Require(Calls(fakeReady, record), "假商人也必须登记自身的范围所有权。");
         var runtime = assembly.GetType("STS2SkinChanger.Ui.CharacterAppearanceRuntime", true)!;

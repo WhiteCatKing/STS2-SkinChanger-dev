@@ -47,6 +47,7 @@ internal static partial class SkinService
     private const int MaxCardPortraitCacheEntries = 64;
     private static readonly BoundedLruCache<string, Texture2D> CardPortraitCache =
         new(MaxCardPortraitCacheEntries, StringComparer.OrdinalIgnoreCase);
+    private static readonly CardPortraitSessionCache SessionCardPortraits = new();
     private static readonly Dictionary<string, string> ExternalCardProviderIdentityPaths =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> BaselineRelicAtlasCache =
@@ -161,10 +162,12 @@ internal static partial class SkinService
     // is evidence of a player's deliberate manual move, not a first-install ordering.
     public static bool LoadOrderMovedBehindSkinMods { get; private set; }
 
-    private static string GetVisualSelection(string groupId) =>
-        MultiplayerSkinSync.GetScopedSelection(groupId) ??
-        CharacterPreviewSelections.GetValueOrDefault(groupId) ??
-        Config.GetSelection(groupId);
+    private static string GetVisualSelection(string groupId)
+    {
+        var selection = MultiplayerSkinSync.GetScopedSelection(groupId) ??
+                        CharacterPreviewSelections.GetValueOrDefault(groupId) ?? Config.GetSelection(groupId);
+        return Catalog?.ResolveSpineSelection(groupId, selection) ?? selection;
+    }
 
     /// <summary>
     /// The selection the game is currently showing for a group, including multiplayer scope and
@@ -182,7 +185,8 @@ internal static partial class SkinService
         // The Osty impostor mod owns that summon with its own SpineSprite. Mounting a skin's osty
         // resources on top of it made the model render dark and stay dark after an attack.
         if (merged.Count == 0 ||
-            !merged.Keys.Any(key => OstyImpostorCompat.MustDefer(key)))
+            (!merged.Keys.Any(key => OstyImpostorCompat.MustDefer(key)) &&
+             !merged.Any(pair => Catalog?.IsSpineSelectionRejected(pair.Key, pair.Value) == true)))
         {
             return merged;
         }
@@ -192,7 +196,7 @@ internal static partial class SkinService
         {
             if (!OstyImpostorCompat.MustDefer(pair.Key))
             {
-                filtered[pair.Key] = pair.Value;
+                filtered[pair.Key] = Catalog?.ResolveSpineSelection(pair.Key, pair.Value) ?? pair.Value;
             }
         }
 
@@ -1189,13 +1193,9 @@ internal static partial class SkinService
                 RuntimeResourceCache.Clear();
                 PreparedRuntimeOverlays.Clear();
                 RuntimeResourceBundles.Clear();
-                _sessionPreparedCount = 0;
-                _sessionPreparedBytes = 0;
-                CardPortraitCache.Clear();
-                ExternalCardProviderIdentityPaths.Clear();
+                ResetCardPortraitSession();
                 BaselineRelicAtlasCache.Clear();
                 BaselineRelicIconCache.Clear();
-                FailedCardPortraitRequests.Clear();
                 IsolatedCardOverlayCache.Clear();
                 CardCanonicalResourceOwners.Reset();
                 CharacterPreviewSelections.Clear();
@@ -1206,9 +1206,6 @@ internal static partial class SkinService
                 MountedOverlayCache.Clear();
                 _cachedOverlayPlan = null;
                 MountedOverlayOwners.Clear();
-                _mountedOverlayBytes = 0;
-                _mountedOverlayLayers = 0;
-                _nextMountedOverlayWarningBytes = 2L * 1024 * 1024 * 1024;
                 // 第三方随从 Mod 的发现/适配器按每次初始化重扫一遍：Mod 列表可能在重载后变化。
                 SummonModCompat.Reset();
                 MountedScopedRuntimeProviderPacks.Clear();
@@ -1231,9 +1228,9 @@ internal static partial class SkinService
                 if (cleaned.RemovedFiles > 0) ModLog.Info($"已清理 {cleaned.RemovedFiles} 个过期皮肤缓存文件。");
                 foreach (var error in cleaned.Errors) ModLog.Warn("部分旧缓存清理失败：" + error);
                 // 退出清理在崩溃/卡死/强退时会整份跳过，孤儿会话会堆到几十 GB；这里按总量再兜一次底。
-                var trimmed = SkinChangerPaths.Storage.TrimCacheBudget(8L * 1024 * 1024 * 1024);
+                var trimmed = SkinChangerPaths.Storage.TrimCacheBudget(CacheWriteBudget.DefaultLimit);
                 if (trimmed.RemovedSessions > 0)
-                    ModLog.Info($"皮肤缓存超出 8 GB 预算，已删除 {trimmed.RemovedSessions} 个旧会话（{trimmed.RemovedBytes / (1024 * 1024)} MB），剩余约 {trimmed.RemainingBytes / (1024 * 1024)} MB。");
+                    ModLog.Info($"皮肤缓存超出 16 GB 预算，已删除 {trimmed.RemovedSessions} 个旧会话（{trimmed.RemovedBytes / (1024 * 1024)} MB），剩余约 {trimmed.RemainingBytes / (1024 * 1024)} MB。");
                 foreach (var error in trimmed.Errors) ModLog.Warn("皮肤缓存预算清理失败：" + error);
                 var gamePckPath = GamePackLocator.Resolve(
                     OS.GetExecutablePath(),
@@ -1275,6 +1272,7 @@ internal static partial class SkinService
                 OstyImpostorCompat.Decoupled = Config.CompanionSelectionDecoupled;
                 // 接管独立奥斯提 Mod：禁用它在选人界面的接管 + 绑定它自己的换肤按钮。
                 CharSelectTakeoverSuppressor.Install(OnImpostorSelectionChanged);
+                OrchisSkinFixCompat.Install();
                 SanitizeSelections();
                 MountOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
                 Config.Save(ConfigPath);
@@ -3163,6 +3161,25 @@ internal static partial class SkinService
         }
     }
 
+    /// <summary>
+    /// Whether the card's pool is one the catalog actually classifies. Cards from an unrecognised
+    /// Mod pool (for example a mod card whose pool title never became a card group) own their own
+    /// art; neither a card-art provider nor a framework character may repaint them.
+    /// </summary>
+    internal static bool HasKnownCardPool(CardModel card)
+    {
+        lock (Sync)
+        {
+            return GetCardLookup(card).Group != null;
+        }
+    }
+
+    /// <summary>
+    /// Pure form of the ownership rule used by <see cref="FrameworkCardVisualGuard"/>.
+    /// </summary>
+    internal static bool KeepsIntrinsicModCardArt(bool isGameCard, bool hasKnownCardPool) =>
+        !isGameCard && !hasKnownCardPool;
+
     public static string GetCardOverrideSelection(CardModel card)
     {
         lock (Sync)
@@ -3683,11 +3700,7 @@ internal static partial class SkinService
         try
         {
             var loadStarted = Stopwatch.GetTimestamp();
-            var loaded = LoadIsolatedCardPortrait(
-                request.GroupId,
-                request.Selection,
-                request.ResourcePath,
-                request.UseSelectedProvider);
+            var portrait = LoadIsolatedCardPortrait(request);
             var loadElapsed = Stopwatch.GetElapsedTime(loadStarted);
             if (loadElapsed >= TimeSpan.FromMilliseconds(30))
             {
@@ -3698,31 +3711,15 @@ internal static partial class SkinService
                     $"{request.ResourcePath}，耗时={loadElapsed.TotalMilliseconds:F1} ms。");
             }
 
-            if (loaded == null)
+            if (portrait == null)
             {
                 throw new InvalidOperationException("资源包未返回可用卡牌贴图。");
             }
 
-            // ResourceLoader normally returns a CompressedTexture2D for imported card images;
-            // those need an AtlasTexture wrapper for the card model's atlas-based path.  The
-            // raw-image fallback above creates a real ImageTexture, which is already a complete
-            // canvas.  Wrapping it as an AtlasTexture changes the texture-size metadata used by
-            // NCard and makes exported portraits appear horizontally compressed, so preserve
-            // the original ImageTexture shape.
-            var portrait = request.WrapAtlas &&
-                           loaded is not AtlasTexture &&
-                           loaded is not ImageTexture
-                ? new AtlasTexture
-                {
-                    Atlas = loaded,
-                    Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
-                }
-                : loaded;
             if (CardPortraitCache.Set(request.CacheKey, portrait, out var evicted))
             {
-                // Existing NCard nodes keep their own texture reference. Dropping only the cache
-                // reference lets Godot release high-resolution portraits after those nodes leave
-                // the tree, instead of retaining every card ever viewed for the whole session.
+                // Evict only the fast request lookup. The session still owns the source and
+                // any atlas view, so this request's return does not need another native load.
                 ExternalCardProviderIdentityPaths.Remove(evicted.Key);
             }
             return portrait;
@@ -3993,18 +3990,18 @@ internal static partial class SkinService
             : GetCardPoolGroupId(card);
     }
 
-    private static Texture2D? LoadIsolatedCardPortrait(
-        string groupId,
-        string selection,
-        string resourcePath,
-        bool useSelectedProvider)
+    private static Texture2D? LoadIsolatedCardPortrait(CardPortraitRequest request)
     {
+        var (groupId, selection, resourcePath, _, useSelectedProvider, wrapAtlas) = request;
         // Raw raster entries are not Godot resources. Calling ResourceLoader for them first emits
         // two engine errors per card ("No loader found" + "Error loading resource") before the
         // direct-image fallback gets a chance to run. Large card-art packs can therefore flood
         // the log and stall the card library even though their bytes are perfectly valid. Resolve
         // direct provider images first; imported .ctex/.tres resources still take the overlay path
         // below because TryReadCardImageBytes deliberately accepts only raster source files.
+        var rawKey = $"raw\n{request.OverlayKey}\n{resourcePath}";
+        if (SessionCardPortraits.TryGet(rawKey, wrapAtlas, out var raw))
+            return raw;
         var catalog = Catalog;
         if (catalog != null && catalog.TryReadCardImageBytes(
                 groupId,
@@ -4013,8 +4010,11 @@ internal static partial class SkinService
                 useSelectedProvider,
                 out var directBytes))
         {
-            using var image = LoadRasterImageFromBuffer(directBytes, resourcePath);
-            return ImageTexture.CreateFromImage(image);
+            return SessionCardPortraits.GetOrLoad(rawKey, wrapAtlas, () =>
+            {
+                using var image = LoadRasterImageFromBuffer(directBytes, resourcePath);
+                return ImageTexture.CreateFromImage(image);
+            });
         }
 
         var overlay = EnsureIsolatedCardOverlay(
@@ -4027,23 +4027,12 @@ internal static partial class SkinService
             return null;
         }
 
-        var loaded = ResourceLoader.Load<Texture2D>(
+        return SessionCardPortraits.GetOrLoad(isolatedPath, wrapAtlas, () => ResourceLoader.Load<Texture2D>(
             isolatedPath,
             null,
             overlay.CanReuseExternalDependencies
                 ? ResourceLoader.CacheMode.Ignore
-                : ResourceLoader.CacheMode.IgnoreDeep);
-        if (loaded != null)
-        {
-            return loaded;
-        }
-
-        // Some exported card providers ship raw raster files without Godot's imported
-        // .import/.ctex pair.  The generated PCK is still useful for the normal resource path,
-        // but ResourceLoader cannot decode that raw entry.  Read the selected provider's source
-        // bytes directly and create an in-memory texture instead of falling back to the game
-        // portrait.  This is deliberately provider-agnostic.
-        return null;
+                : ResourceLoader.CacheMode.IgnoreDeep));
     }
 
     private static Image LoadRasterImageFromBuffer(byte[] bytes, string imagePath)
@@ -4148,7 +4137,7 @@ internal static partial class SkinService
                 SkinChangerPaths.CacheDirectory,
                 $"sts2_skin_overlay_{_sessionId}_{generation:D3}_card_{sourceName}.pck");
             SkinChangerPaths.WriteCache(overlayPath, () => PckArchive.Write(overlayPath, newFiles));
-            if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(overlayPath, replaceFiles: true))
             {
                 throw new InvalidOperationException("Godot 拒绝加载批量独立卡牌资源包。");
             }
@@ -4202,7 +4191,7 @@ internal static partial class SkinService
         foreach (var overlayPath in state.OverlayPaths)
         {
             if (!File.Exists(overlayPath) ||
-                !ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+                !SkinChangerPaths.LoadResourcePack(overlayPath, replaceFiles: true))
             {
                 throw new InvalidOperationException(
                     "Godot 拒绝重新激活已缓存的独立卡牌资源包。");
@@ -4605,49 +4594,53 @@ internal static partial class SkinService
         lock (Sync)
         {
             var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-            var selection = GetVisualSelection(groupId);
-            var prepared = GetOrPrepareRuntimeOverlay(
-                catalog,
-                groupId,
-                selection,
-                resourcePaths,
-                includeProviderDependencies: true);
-            // The local selection was already mounted with its correction overlay. Only
-            // a different remote selection needs a temporary full-pack promotion here.
-            if (CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
-                    selection, Config.GetSelection(groupId)))
-                MountContextualFullRuntimeProviderPacks(catalog, selection);
-            if (prepared.OverlayPath != null &&
-                !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+            return WithSpinePageFallback<IDisposable>(catalog, groupId, GetVisualSelection(groupId), selection =>
             {
-                throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
-            }
-
-            if (prepared.CanonicalDependencyPaths.Count > 0)
-            {
-                if (!RuntimeCanonicalDependencyPaths.TryGetValue(groupId, out var trackedPaths))
+                var prepared = GetOrPrepareRuntimeOverlay(
+                    catalog,
+                    groupId,
+                    selection,
+                    resourcePaths,
+                    includeProviderDependencies: true);
+                // The local selection was already mounted with its correction overlay. Only
+                // a different remote selection needs a temporary full-pack promotion here.
+                if (CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
+                        selection, Config.GetSelection(groupId)))
+                    MountContextualFullRuntimeProviderPacks(catalog, selection);
+                if (prepared.OverlayPath != null &&
+                    !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
                 {
-                    trackedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    RuntimeCanonicalDependencyPaths[groupId] = trackedPaths;
+                    throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
                 }
 
-                trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
-            }
+                _ = LoadSpinePages(prepared);
 
-            // A remote provider is not necessarily selected in the local config, so its Godot
-            // scripts may not have been registered by the normal global mount yet.  Register
-            // them after the private files are visible, before any _Ready callback can resolve
-            // script-backed nodes.
-            if (catalog.IsRuntimeProviderOption(groupId, selection) &&
-                catalog.ProviderUsesManagedGodotScripts(selection))
-            {
-                ManagedSkinModLoader.EnsureProviderGodotScripts(
-                    catalog.ResolveVisualProviderId(selection));
-            }
+                if (prepared.CanonicalDependencyPaths.Count > 0)
+                {
+                    if (!RuntimeCanonicalDependencyPaths.TryGetValue(groupId, out var trackedPaths))
+                    {
+                        trackedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        RuntimeCanonicalDependencyPaths[groupId] = trackedPaths;
+                    }
 
-            var restoreGroups = RuntimeResourceRestorePolicy.GetGroups(groupId, prepared.RestoreGroups,
-                selection, Config.GetSelection(groupId));
-            return new MountedRuntimeResourceScope(restoreGroups, ManualCharacterVariantBridge.BeginScope(groupId));
+                    trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
+                }
+
+                // A remote provider is not necessarily selected in the local config, so its Godot
+                // scripts may not have been registered by the normal global mount yet.  Register
+                // them after the private files are visible, before any _Ready callback can resolve
+                // script-backed nodes.
+                if (catalog.IsRuntimeProviderOption(groupId, selection) &&
+                    catalog.ProviderUsesManagedGodotScripts(selection))
+                {
+                    ManagedSkinModLoader.EnsureProviderGodotScripts(
+                        catalog.ResolveVisualProviderId(selection));
+                }
+
+                var restoreGroups = RuntimeResourceRestorePolicy.GetGroups(groupId, prepared.RestoreGroups,
+                    selection, Config.GetSelection(groupId));
+                return new MountedRuntimeResourceScope(restoreGroups, ManualCharacterVariantBridge.BeginScope(groupId));
+            });
         }
     }
 
@@ -4836,7 +4829,7 @@ internal static partial class SkinService
                 includeProviderDependencies: false,
                 isolateRelicCanonicalPaths: true);
             if (prepared.OverlayPath != null &&
-                !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+                !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
             {
                 throw new InvalidOperationException("Godot 拒绝加载原版遗物私有图集。");
             }
@@ -4898,7 +4891,7 @@ internal static partial class SkinService
             isolateRelicCanonicalPaths: true);
 
         if (prepared.OverlayPath != null &&
-            !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+            !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
         {
             throw new InvalidOperationException("Godot 拒绝加载遗物皮肤资源包。");
         }
@@ -5910,6 +5903,40 @@ internal static partial class SkinService
         bool takeOverCanonicalPaths)
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        return WithSpinePageFallback(catalog, groupId, selection, effectiveSelection =>
+            WithPreparedRuntimeResources(catalog, groupId, effectiveSelection, resourcePaths, callback,
+                includeProviderDependencies, takeOverCanonicalPaths));
+    }
+
+    internal static T WithSpinePageFallback<T>(
+        SkinCatalog catalog, string groupId, string selection, Func<string, T> load)
+    {
+        selection = catalog.ResolveSpineSelection(groupId, selection);
+        try
+        {
+            return load(selection);
+        }
+        catch (MissingSpinePageException exception) when (selection != SkinCatalog.BaseOptionId)
+        {
+            if (catalog.RejectSpineSelection(groupId, selection))
+            {
+                ClearRuntimeResourceCache(groupId);
+                ModLog.Warn($"[资源检查] {selection} 缺少贴图页 {exception.PagePath}，已回退原版");
+                MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
+            }
+            return load(SkinCatalog.BaseOptionId);
+        }
+    }
+
+    private static T WithPreparedRuntimeResources<T>(
+        SkinCatalog catalog,
+        string groupId,
+        string selection,
+        IReadOnlyCollection<string> resourcePaths,
+        Func<IReadOnlyDictionary<string, Resource>, T> callback,
+        bool includeProviderDependencies,
+        bool takeOverCanonicalPaths)
+    {
         var loadStarted = Stopwatch.GetTimestamp();
         var prepared = GetOrPrepareRuntimeOverlay(
             catalog,
@@ -5918,7 +5945,7 @@ internal static partial class SkinService
             resourcePaths,
             includeProviderDependencies);
         if (prepared.OverlayPath != null &&
-            !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+            !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
         {
             throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
         }
@@ -5946,10 +5973,14 @@ internal static partial class SkinService
             try
             {
                 RuntimeLoadSafety.RequireHeadroom(prepared.CanBindDependencies ? 32L * 1024 * 1024 : prepared.EstimatedBytes);
+                // A Spine atlas can appear valid even when its native texture callback failed.
+                // Decode the pages as textures before loading any scene/skeleton/atlas root.
+                var spinePages = LoadSpinePages(prepared);
                 foreach (var path in prepared.LoadOrder.Count == 0 ? prepared.ResourcePaths.Keys : prepared.LoadOrder)
                 {
                     var alias = prepared.ResourcePaths[path];
-                    var resource = (prepared.CanBindDependencies ? TryGetBoundRuntimeDependency(path, alias) : null) ?? LoadCheckedRuntimeResource(alias,
+                    var resource = spinePages?.GetValueOrDefault(alias) ??
+                        (prepared.CanBindDependencies ? TryGetBoundRuntimeDependency(path, alias) : null) ?? LoadCheckedRuntimeResource(alias,
                         prepared.CanBindDependencies || prepared.CanReuseExternalDependencies,
                         prepared.CanBindDependencies ? prepared.RootBytes.GetValueOrDefault(path) : prepared.EstimatedBytes);
 
@@ -6014,7 +6045,7 @@ internal static partial class SkinService
             callbackResult = callback(resources);
             if (!CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
                     MultiplayerSkinSync.GetScopedSelection(groupId), Config.GetSelection(groupId)))
-                loadBindings.RemoveAll(entry => Catalog.GetRuntimeDependencyRestoreGroups(
+                loadBindings.RemoveAll(entry => catalog.GetRuntimeDependencyRestoreGroups(
                     groupId, [entry.CanonicalPath]).Count == 0);
         }
         catch
@@ -6071,6 +6102,27 @@ internal static partial class SkinService
             : NoopDisposable.Instance;
     }
 
+    private static Dictionary<string, Resource>? LoadSpinePages(PreparedRuntimeOverlay prepared)
+    {
+        if (prepared.SpinePages.Count == 0) return null;
+        var textures = new Dictionary<string, Resource>(StringComparer.Ordinal);
+        foreach (var page in prepared.SpinePages)
+        {
+            if (!ResourceLoader.HasCached(page))
+            {
+                var source = prepared.ResourcePaths.FirstOrDefault(pair => pair.Value.Equals(page, StringComparison.Ordinal)).Key;
+                var estimate = source == null ? prepared.EstimatedBytes : prepared.RootBytes.GetValueOrDefault(source, prepared.EstimatedBytes);
+                RuntimeLoadSafety.RequireHeadroom(Math.Max(32L * 1024 * 1024, estimate));
+            }
+            var texture = ResourceLoader.Load<Texture2D>(page, nameof(Texture2D), ResourceLoader.CacheMode.Reuse);
+            if (texture == null || !GodotObject.IsInstanceValid(texture) ||
+                texture.GetWidth() <= 0 || texture.GetHeight() <= 0)
+                throw new MissingSpinePageException(page);
+            textures[page] = texture;
+        }
+        return textures;
+    }
+
     private static PreparedRuntimeOverlay GetOrPrepareRuntimeOverlay(
         SkinCatalog catalog,
         string groupId,
@@ -6115,7 +6167,7 @@ internal static partial class SkinService
 
         RuntimeResourceBundles.Remove(key);
 
-        RuntimeLoadSafety.RequireHeadroom(64L * 1024 * 1024);
+        RuntimeLoadSafety.RequirePreparationHeadroom();
         var generation = ++_overlayGeneration;
         var aliasToken = $"{_sessionId}/{generation:D3}";
         var overlay = isolateRelicCanonicalPaths
@@ -6134,7 +6186,7 @@ internal static partial class SkinService
         var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
             groupId,
             overlay.CanonicalDependencyPaths);
-        var estimatedBytes = RuntimeLoadSafety.EstimateTextureBytes(overlay.Files);
+        var estimatedBytes = RuntimeLoadSafety.EstimateOverlayTextureBytes(overlay.Files);
         if (estimatedBytes > RuntimeLoadSafety.MaximumSingleLoadBytes)
             throw new AppearanceResourceUnavailableException("单次外观解码预算超过 1536 MiB，已停止加载。");
         if (_sessionPreparedCount >= 256 ||
@@ -6167,7 +6219,8 @@ internal static partial class SkinService
             overlay.CanReuseExternalDependencies,
             overlay.LoadOrder,
             overlay.RootBytes,
-            overlay.CanBindDependencies);
+            overlay.CanBindDependencies)
+        { SpinePages = overlay.SpinePages };
         PreparedRuntimeOverlays[key] = prepared;
         LastPreparedRuntimeOverlays[groupId] = prepared;
         return prepared;
@@ -6582,7 +6635,9 @@ internal static partial class SkinService
                 files,
                 "visual",
                 "Godot 拒绝加载生成的皮肤资源包。");
-        }        catch (Exception exception)
+        }
+        catch (CacheWriteRejectedException) { throw; }
+        catch (Exception exception)
         {
             // 覆盖包生成/挂载失败时保留上一次的外观继续玩，不要让一次写盘失败把整个
             // 初始化（或当前场景构建）带崩。下一次重建会重新尝试。
@@ -6865,7 +6920,7 @@ internal static partial class SkinService
         foreach (var resourcePackPath in catalog.GetProviderResourcePackPaths(selection))
         {
             var normalizedPath = System.IO.Path.GetFullPath(resourcePackPath);
-            if (!ProjectSettings.LoadResourcePack(normalizedPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(normalizedPath, replaceFiles: true))
             {
                 throw new InvalidOperationException(
                     $"无法为联机玩家挂载 {selection} 的完整运行时资源包。");
@@ -6897,7 +6952,7 @@ internal static partial class SkinService
                 // skeleton alone. Mount its original PCK as a low-priority dependency namespace.
                 // Canonical game paths remain owned by the game/current generated overlay because
                 // replaceFiles is false, while provider-private res:// paths become available.
-                if (!ProjectSettings.LoadResourcePack(normalizedPath, replaceFiles: false))
+                if (!SkinChangerPaths.LoadResourcePack(normalizedPath, replaceFiles: false))
                 {
                     MountedScopedRuntimeProviderPacks.Remove(normalizedPath);
                     throw new InvalidOperationException(
@@ -6990,7 +7045,7 @@ internal static partial class SkinService
                     continue;
                 }
 
-                if (!ProjectSettings.LoadResourcePack(packPath, replaceFiles: false))
+                if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: false))
                 {
                     MountedCompanionOnlyProviderPacks.Remove(packPath);
                     ModLog.Warn(
@@ -7030,7 +7085,7 @@ internal static partial class SkinService
             // 注意：这里**不能**因为「本次会话已提权过」就跳过。校正覆盖层每次都挂在整包上面，
             // 它会把整包里的规范路径再写一遍；如果不再把整包压回栈顶，像 Orchis 的
             // 原版特效替换这类「靠整包压栈顶生效」的资源就会被游戏原版盖掉（1.0.30.195 的教训）。
-            if (!ProjectSettings.LoadResourcePack(packPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: true))
             {
                 throw new InvalidOperationException(
                     $"无法直接挂载完整外观资源包：{System.IO.Path.GetFileName(packPath)}");
@@ -7040,12 +7095,11 @@ internal static partial class SkinService
                 path.Equals(packPath, StringComparison.OrdinalIgnoreCase));
             PromotedPackOrder.Add(packPath);
 
-            // 这个整包现在压在**所有**已挂载的覆盖层上面，它带的每条路径都重新由它提供。
-            // 把归属记录清掉，接下来的校正覆盖包才会把这些路径重新写一遍（否则增量层会误以为
-            // "栈顶还是原来那一份"，切走以后皮肤看起来没变）。
+            // The full pack now owns its paths at the top of the stack. Recording its actual
+            // source skips identical copies while still requiring corrections from other sources.
             foreach (var ownedPath in MountedLargeRuntimeProviderPacks[packPath].ResourcePaths)
             {
-                MountedOverlayOwners.Remove(ownedPath);
+                MountedOverlayOwners[ownedPath] = new OverlayOwner(packPath, ownedPath);
             }
 
             ModLog.Info(
@@ -7364,8 +7418,7 @@ internal static partial class SkinService
         foreach (var pair in files)
         {
             if (MountedOverlayOwners.TryGetValue(pair.Key, out var owner) &&
-                owner.ArchivePath.Equals(pair.Value.ArchivePath, StringComparison.OrdinalIgnoreCase) &&
-                owner.Path.Equals(pair.Value.Path, StringComparison.OrdinalIgnoreCase))
+                owner.Matches(pair.Value))
             {
                 continue;
             }
@@ -7476,7 +7529,6 @@ internal static partial class SkinService
                 var writeWatch = Stopwatch.StartNew();
                 try
                 {
-                    EnsureCacheSpace(overlayPath, files.Count);
                     System.IO.Directory.CreateDirectory(
                         System.IO.Path.GetDirectoryName(overlayPath)!);
                     PckArchive.WriteFromArchives(overlayPath, sources);
@@ -7487,6 +7539,11 @@ internal static partial class SkinService
                         writeWatch.Elapsed.TotalMilliseconds,
                         files.Count);
                     OverlayCacheStore.AfterWrite();
+                }
+                catch (CacheWriteRejectedException)
+                {
+                    MountedOverlayCache.Remove(signature);
+                    throw;
                 }
                 catch (Exception exception)
                 {
@@ -7510,7 +7567,7 @@ internal static partial class SkinService
         // runtime pack without writing another multi-hundred-megabyte copy to disk.
         var mountWatch = Stopwatch.StartNew();
         ModLog.Info($"[资源挂载] 开始 {category}：{System.IO.Path.GetFileName(overlayPath)}；文件={files.Count}。");
-        if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+        if (!SkinChangerPaths.LoadResourcePack(overlayPath, replaceFiles: true))
         {
             MountedOverlayCache.Remove(signature);
             throw new InvalidOperationException(failureMessage);
@@ -7653,44 +7710,6 @@ internal static partial class SkinService
 
     private sealed record OverlayPlan(string Signature, Dictionary<string, ResourceFile> Files);
 
-    /// <summary>
-    /// 写覆盖包之前的空间闸门。一个完整外观覆盖包在这些大型皮肤包上实测 100-400 MB，
-    /// 而缓存在 C: 盘（`%APPDATA%\SlayTheSpire2\Gurio.SkinChanger\cache`）。磁盘写满时
-    /// Godot 会在场景构建中途失败，表现为黑屏或整局崩掉；提前失败至少能保留当前外观。
-    /// </summary>
-    private static void EnsureCacheSpace(string overlayPath, int fileCount)
-    {
-        try
-        {
-            var root = Path.GetPathRoot(Path.GetFullPath(overlayPath));
-            if (string.IsNullOrEmpty(root) || new DriveInfo(root) is not { IsReady: true } drive)
-            {
-                return;
-            }
-
-            // 阈值按文件数给一个保守估计：导入载荷平均 0.5 MB/文件，留 128 MB 余量。
-            var estimatedBytes = Math.Min((long)fileCount * 512 * 1024, 2L * 1024 * 1024 * 1024);
-            var required = estimatedBytes / 4 + 128L * 1024 * 1024;
-            if (drive.AvailableFreeSpace >= required)
-            {
-                return;
-            }
-
-            throw new IOException(
-                $"缓存盘 {drive.Name} 只剩 {drive.AvailableFreeSpace / 1024 / 1024} MB，" +
-                $"本次覆盖包（{fileCount} 个文件）需要约 {required / 1024 / 1024} MB。" +
-                "请清理磁盘后重试：缓存目录 " + SkinChangerPaths.CacheDirectory);
-        }
-        catch (IOException)
-        {
-            throw;
-        }
-        catch
-        {
-            // 拿不到磁盘信息时不要因为诊断代码本身阻断换肤。
-        }
-    }
-
     private static void TryDelete(string path)
     {
         try
@@ -7750,7 +7769,10 @@ internal static partial class SkinService
         bool CanReuseExternalDependencies,
         IReadOnlyList<string> LoadOrder,
         IReadOnlyDictionary<string, long> RootBytes,
-        bool CanBindDependencies);
+        bool CanBindDependencies)
+    {
+        internal IReadOnlyList<string> SpinePages { get; init; } = [];
+    }
 
     private sealed record RuntimeResourceBundleState(
         Dictionary<string, Resource> Resources, long EstimatedBytes)
@@ -7860,6 +7882,17 @@ internal static partial class SkinService
         if (restored > 0)
         {
             ModLog.Info($"已将 {groupId} 的 {restored} 个存量遗物图标恢复到游戏图集。");
+        }
+    }
+
+    internal static void ResetCardPortraitSession()
+    {
+        lock (Sync)
+        {
+            CardPortraitCache.Clear();
+            ExternalCardProviderIdentityPaths.Clear();
+            FailedCardPortraitRequests.Clear();
+            SessionCardPortraits.Clear();
         }
     }
 
@@ -8512,7 +8545,7 @@ internal static partial class SkinService
                 SkinChangerPaths.CacheDirectory,
                 $"base_scene_{hash}_{sequence:D3}.pck");
             SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));
-            if (!ProjectSettings.LoadResourcePack(packPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: true))
             {
                 ModLog.Warn($"恢复原版场景失败（Godot 拒绝加载）：{scenePath}");
                 return;
@@ -8634,8 +8667,9 @@ internal static partial class SkinService
             var packPath = System.IO.Path.Combine(
                 SkinChangerPaths.CacheDirectory,
                 $"base_alias_{hash}.pck");
-            SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));
-            if (!ProjectSettings.LoadResourcePack(packPath, replaceFiles: true))
+            if (!File.Exists(packPath))
+                SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));
+            if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: true))
             {
                 ModLog.Warn($"[原版] 别名场景包可能已挂载过，继续尝试读取：{packPath}");
             }
@@ -8686,8 +8720,9 @@ internal static partial class SkinService
             var packPath = System.IO.Path.Combine(
                 SkinChangerPaths.CacheDirectory,
                 $"base_alias_{hash}.pck");
-            SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));
-            if (!ProjectSettings.LoadResourcePack(packPath, replaceFiles: true))
+            if (!File.Exists(packPath))
+                SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));
+            if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: true))
             {
                 ModLog.Warn($"[原版] 别名场景包可能已挂载过，继续尝试读取：{packPath}");
             }
@@ -9617,7 +9652,18 @@ internal sealed record MountedProviderPackState(
     IReadOnlyList<string> ResourcePaths);
 
 /// <summary>某一层覆盖包给某个路径提供的具体来源（归档 + 包内路径）。</summary>
-internal readonly record struct OverlayOwner(string ArchivePath, string Path);
+internal readonly record struct OverlayOwner(string ArchivePath, string Path)
+{
+    internal bool Matches(ResourceFile file)
+    {
+        if (!Path.Equals(file.Path, StringComparison.OrdinalIgnoreCase)) return false;
+        if (ArchivePath.Equals(file.ArchivePath, StringComparison.OrdinalIgnoreCase)) return true;
+        if (file.IsInline || !System.IO.Path.IsPathFullyQualified(ArchivePath)) return false;
+        // PckArchive preserves the spelling of the path it was opened with, while promotion
+        // uses GetFullPath. Normalize on a mismatch without treating inline tokens as paths.
+        return ArchivePath.Equals(System.IO.Path.GetFullPath(file.ArchivePath), StringComparison.OrdinalIgnoreCase);
+    }
+}
 
 internal sealed record LargeProviderMountPlan(
     IReadOnlySet<string> PromotedPackPaths,

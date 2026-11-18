@@ -26,6 +26,9 @@ internal enum ModText
     DoNotShowAgain,
     PrioritizeAndRestart,
     LoadOrderFailure,
+    CacheBudgetRejected,
+    CacheDiskSpaceRejected,
+    CacheWriteBlocked,
     DefaultVariant,
     CardSkinPriority,
     CardPriorityTooltip,
@@ -1615,6 +1618,9 @@ internal static partial class ModLocalization
         };
 
     public static string Get(ModText text) =>
+        text is ModText.CacheBudgetRejected or ModText.CacheDiskSpaceRejected or ModText.CacheWriteBlocked
+            ? CacheWriteMessage(text, CurrentLanguage)
+        :
         text == ModText.LoadOrderChoiceMessage
             ? LoadOrderChoiceMessageTexts.GetValueOrDefault(CurrentLanguage, LoadOrderChoiceMessageTexts["eng"])
         : text == ModText.LoadOrderDecline

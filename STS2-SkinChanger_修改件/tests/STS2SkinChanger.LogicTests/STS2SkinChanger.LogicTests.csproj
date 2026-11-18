@@ -7,6 +7,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../STS2SkinChanger/Core/CacheWriteBudget.cs" Link="CacheWriteBudget.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/MonsterSettingsCopyPolicy.cs" Link="MonsterSettingsCopyPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Pck/PckArchive.cs" Link="PckArchive.cs" />
     <Compile Include="../../STS2SkinChanger/Core/WorkshopPagePool.cs" Link="WorkshopPagePool.cs" />
     <!-- The quit path is deliberately engine-free: the same filesystem code the game runs is
          exercised here, so the start-up regression cannot come back unnoticed. -->

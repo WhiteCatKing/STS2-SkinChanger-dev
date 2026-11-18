@@ -47,11 +47,23 @@ public static class ScCrashDump {
   }
   return reopened;
  }
- public static string Save(Process process, string path) {
-  using(var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read)) {
-   if (!MiniDumpWriteDump(process.Handle, (uint)process.Id, file.SafeFileHandle.DangerousGetHandle(), 0x1000, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero))
-    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+ public static string Save(Process process, string path, int timeoutMilliseconds) {
+  Exception failure = null;
+  var worker = new System.Threading.Thread(delegate() {
+   try {
+    using(var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read)) {
+     if (!MiniDumpWriteDump(process.Handle, (uint)process.Id, file.SafeFileHandle.DangerousGetHandle(), 0x1000, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero))
+      throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    }
+   } catch (Exception error) { failure = error; }
+  });
+  worker.IsBackground = true;
+  worker.Start();
+  if (!worker.Join(timeoutMilliseconds)) {
+   try { File.Delete(path); } catch {}
+   throw new System.TimeoutException("MiniDumpWriteDump did not finish within " + timeoutMilliseconds + " ms.");
   }
+  if (failure != null) throw failure;
   return path;
  }
 }
@@ -60,7 +72,8 @@ public static class ScCrashDump {
 function Capture-HangDump {
     try {
         Ensure-CrashNative
-        return [ScCrashDump]::Save($target, (Join-Path $report 'hang.dmp'))
+        $timeout = if ($cfg.DumpTimeoutSeconds) { [int]$cfg.DumpTimeoutSeconds * 1000 } else { 20000 }
+        return [ScCrashDump]::Save($target, (Join-Path $report 'hang.dmp'), $timeout)
     } catch { Write-Text 'dump-error.txt' $_.Exception.Message; return '' }
 }
 

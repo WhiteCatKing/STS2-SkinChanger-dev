@@ -47,8 +47,9 @@ internal static class QuitCacheCleanup
         watchdog.Start();
     }
 
-    private static bool Prefix(NGame __instance) =>
-        Coordinator.HandleQuit(
+    private static bool Prefix(NGame __instance)
+    {
+        var canQuit = Coordinator.HandleQuit(
             () =>
             {
                 // 引擎关停时会等后台加载任务收尾；先把皮肤预加载队列清空，
@@ -58,6 +59,9 @@ internal static class QuitCacheCleanup
             },
             () => { if (GodotObject.IsInstanceValid(__instance)) __instance.Quit(); },
             ModLog.Info);
+        if (canQuit) SkinService.ResetCardPortraitSession();
+        return canQuit;
+    }
 
     // 原版 Quit 返回意味着它内部的设置与进度保存已经执行完；只在这之后才启动兜底计时。
     // Prefix 拦下本次调用（异步清理未完成）时原方法不会执行，__runOriginal 为 false，不提前计时。

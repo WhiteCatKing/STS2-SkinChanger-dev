@@ -20,6 +20,18 @@ internal static class RuntimeSafetyTests
         BinaryPrimitives.WriteUInt32BigEndian(png.AsSpan(16), 1024); BinaryPrimitives.WriteUInt32BigEndian(png.AsSpan(20), 512);
         Require(RuntimeLoadSafety.EstimateTextureBytes(new Dictionary<string, byte[]> { ["raw.png"] = png }) == 1024L * 512 * 8,
             "Raw provider PNG bypassed the memory estimate.");
+        var overlay = new Dictionary<string, byte[]>
+        {
+            ["res://raw.png"] = png,
+            ["res://raw.png.import"] = System.Text.Encoding.UTF8.GetBytes("[remap]\npath=\"res://decoded.ctex\"\n"),
+            ["res://decoded.ctex"] = texture
+        };
+        Require(RuntimeLoadSafety.EstimateOverlayTextureBytes(overlay) == 4096L * 2048 * 8 &&
+                RuntimeLoadSafety.EstimateOverlayTextureBytes(overlay, ["res://raw.png", "res://decoded.ctex"]) == 4096L * 2048 * 8,
+            "The same imported texture must not be charged again for its source PNG.");
+        overlay["res://raw.png.import"] = System.Text.Encoding.UTF8.GetBytes("[remap]\npath=\"res://missing.ctex\"\n");
+        Require(RuntimeLoadSafety.EstimateOverlayTextureBytes(overlay) == (4096L * 2048 + 1024L * 512) * 8,
+            "Unknown or missing imports must not exempt source bytes.");
         try
         {
             RuntimeLoadSafety.EstimateTextureBytes(new Dictionary<string, byte[]> { ["broken.ctex"] = "GST2"u8.ToArray() });
@@ -29,6 +41,14 @@ internal static class RuntimeSafetyTests
         Require(!RuntimeLoadSafety.HasHeadroom(400L * 1024 * 1024, 1), "Native reserve missing.");
         Require(!RuntimeLoadSafety.HasHeadroom(600L * 1024 * 1024, 200L * 1024 * 1024), "Expected decode must fit after reserve.");
         Require(RuntimeLoadSafety.HasHeadroom(1024L * 1024 * 1024, 32L * 1024 * 1024), "Normal loading blocked.");
+        const long mib = 1024 * 1024;
+        Require(RuntimeLoadSafety.HasPreparationHeadroom(520 * mib, 1024 * mib) &&
+                !RuntimeLoadSafety.HasHeadroom(520 * mib, 64 * mib),
+            "Overlay staging can use available commit while native decoding still needs physical memory.");
+        Require(!RuntimeLoadSafety.HasPreparationHeadroom(511 * mib, 1024 * mib) &&
+                !RuntimeLoadSafety.HasPreparationHeadroom(1024 * mib, 575 * mib) &&
+                RuntimeLoadSafety.HasPreparationHeadroom(512 * mib, 576 * mib),
+            "Staging must keep the physical floor and enough commit for both reserve and managed buffers.");
         var circuit = new ResourceFailureCircuit();
         var now = DateTime.UtcNow;
         circuit.Fail("broken", now);
@@ -102,6 +122,7 @@ internal static class RuntimeSafetyTests
         }
         finally { guard.UnpatchAll(guard.Id); }
         QuitBoundaryTests.Run();
+        CacheWriteFallbackTests.Run();
         Console.WriteLine("Runtime safety passed: decoded texture budgets, reserve, bounded circuit, weighted eviction and missing-resource fail-fast.");
     }
 

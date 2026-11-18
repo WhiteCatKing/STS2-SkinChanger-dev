@@ -17,6 +17,7 @@ internal sealed class SkinChangerStorage : IDisposable
     public string TempDirectory { get; }
     public string RootDirectory { get; }
     public string CacheDirectory { get; }
+    internal CacheWriteBudget PckBudget { get; }
     public List<string> Warnings { get; } = [];
 
     public SkinChangerStorage(string userDirectory, string tempDirectory, string sessionId)
@@ -27,6 +28,10 @@ internal sealed class SkinChangerStorage : IDisposable
         TempDirectory = Path.GetFullPath(tempDirectory);
         RootDirectory = Path.Combine(UserDirectory, "Gurio.SkinChanger");
         CacheDirectory = Path.Combine(RootDirectory, "cache", sessionId);
+        PckBudget = new CacheWriteBudget([
+            Path.Combine(RootDirectory, "cache"),
+            Path.Combine(RootDirectory, "overlay-cache")
+        ], currentSession: CacheDirectory);
     }
 
     public void MigrateConfiguration()

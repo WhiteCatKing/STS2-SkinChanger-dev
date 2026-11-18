@@ -1,17 +1,55 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace STS2SkinChanger.Core;
 
 internal sealed class AppearanceResourceUnavailableException(string message) : InvalidOperationException(message);
 
 // Pure preflight checks: reject before asking a native decoder to allocate memory.
-internal static class RuntimeLoadSafety
+internal static partial class RuntimeLoadSafety
 {
     internal const long ResidentCacheBudget = 512L * 1024 * 1024;
     internal const long MaximumSingleLoadBytes = 1536L * 1024 * 1024;
     internal const int BundleLimit = 8;
     internal const long MinimumHeadroom = 512L * 1024 * 1024;
+    internal const long OverlayPreparationBytes = 64L * 1024 * 1024;
+
+    // The same logical texture may ship its authoring PNG and the imported CTEX Godot uses.
+    // Count the source too when the redirect is incomplete or points outside this overlay.
+    internal static long EstimateOverlayTextureBytes(IReadOnlyDictionary<string, byte[]> files,
+        IEnumerable<string>? paths = null)
+    {
+        var candidates = paths?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return EstimateTextureBytes((candidates as IEnumerable<string> ?? files.Keys)
+            .Where(path => files.ContainsKey(path) && !UsesPackedTextureImport(path, files, candidates))
+            .Select(path => KeyValuePair.Create(path, files[path])));
+    }
+
+    private static bool UsesPackedTextureImport(string path, IReadOnlyDictionary<string, byte[]> files,
+        IReadOnlySet<string>? candidates)
+    {
+        if (!path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+            !files.TryGetValue(path + ".import", out var redirect)) return false;
+
+        var text = Encoding.UTF8.GetString(redirect);
+        if (InvalidImport().IsMatch(text)) return false;
+        var targets = ImportPaths().Matches(text);
+        return targets.Count != 0 && targets.All(match =>
+        {
+            var target = match.Groups[1].Value;
+            return target.EndsWith(".ctex", StringComparison.OrdinalIgnoreCase) &&
+                (candidates == null || candidates.Contains(target)) &&
+                files.TryGetValue(target, out var data) && data.AsSpan().StartsWith("GST2"u8);
+        });
+    }
+
+    [GeneratedRegex(@"(?mi)^\s*path(?:\.[a-z0-9_]+)?\s*=\s*""(res://[^""\r\n]+)""")]
+    private static partial Regex ImportPaths();
+
+    [GeneratedRegex(@"(?mi)^\s*valid\s*=\s*false\b")]
+    private static partial Regex InvalidImport();
 
     internal static long EstimateTextureBytes(IEnumerable<KeyValuePair<string, byte[]>> files)
     {
@@ -51,13 +89,34 @@ internal static class RuntimeLoadSafety
     internal static bool HasHeadroom(long available, long estimated) =>
         available >= MinimumHeadroom && estimated <= Math.Max(0, available - MinimumHeadroom);
 
-    internal static void RequireHeadroom(long estimated)
+    internal static bool HasPreparationHeadroom(long physical, long commit) =>
+        physical >= MinimumHeadroom && HasHeadroom(commit, OverlayPreparationBytes);
+
+    internal static void RequirePreparationHeadroom() =>
+        RequireMemory(OverlayPreparationBytes, preparingOverlay: true);
+
+    internal static void RequireHeadroom(long estimated) => RequireMemory(estimated, preparingOverlay: false);
+
+    private static void RequireMemory(long estimated, bool preparingOverlay)
     {
         if (!OperatingSystem.IsWindows()) return;
         var status = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
-        if (GlobalMemoryStatusEx(ref status) && !HasHeadroom(
-                (long)Math.Min(status.AvailablePhysical, status.AvailablePageFile), estimated))
-            throw new AppearanceResourceUnavailableException("内存余量不足，已停止本次外观加载并保留现有模型。");
+        if (!GlobalMemoryStatusEx(ref status)) return;
+        var physical = (long)status.AvailablePhysical;
+        var commit = (long)status.AvailablePageFile;
+        // Overlay staging allocates managed buffers. Require their commit budget plus a physical
+        // floor, then check the actual native decode estimate against both limits separately.
+        var allowed = preparingOverlay ? HasPreparationHeadroom(physical, commit) :
+            HasHeadroom(Math.Min(physical, commit), estimated);
+        if (!allowed)
+        {
+            const long mib = 1024 * 1024;
+            var stage = preparingOverlay ? "组装外观资源包" : "加载外观资源";
+            throw new AppearanceResourceUnavailableException(
+                $"内存余量不足，已停止{stage}并保留现有模型。可用物理内存 {physical / mib} MiB，" +
+                $"可用提交量 {commit / mib} MiB，本阶段需约 {(long)Math.Ceiling(estimated / (double)mib)} MiB，" +
+                $"保护预留 {MinimumHeadroom / mib} MiB。");
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]

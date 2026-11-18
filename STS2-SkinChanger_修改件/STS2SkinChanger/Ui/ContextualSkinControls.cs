@@ -1623,6 +1623,7 @@ internal static partial class ContextualSkinControls
         if (!applied)
         {
             ModLog.Error($"界面切换失败：{SkinService.LastError}");
+            CacheWriteNotice.ShowInteractiveFailure(SkinService.LastError);
             var current = HasMonsterPriorityContext(selector)
                 ? SkinService.GetMonsterOverrideSelection(groupId)
                 : SkinService.Config.GetSelection(groupId);
@@ -1656,6 +1657,7 @@ internal static partial class ContextualSkinControls
                 Populate(selector, FindGroup(groupId));
                 RunRefresh(characterRefresh);
                 ModLog.Warn("角色外观未完整就绪，已回滚本次选择：" + error.GetBaseException().Message);
+                CacheWriteNotice.ShowInteractiveFailure(error.GetBaseException().Message);
                 return false;
             }
         }
