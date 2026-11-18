@@ -2315,6 +2315,18 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _compareButton.Disabled = !transformEnabled || _targetCreature == null;
     }
 
+    internal static bool ShowCacheWriteWarning(string message)
+    {
+        var shown = false;
+        foreach (var screen in LiveScreens.ToArray())
+        {
+            if (!GodotObject.IsInstanceValid(screen) || !screen.IsVisibleInTree() || screen._status == null) continue;
+            screen.SetStatus(message, warning: true);
+            shown = true;
+        }
+        return shown;
+    }
+
     private void SetStatus(string text, bool warning)
     {
         _status.Text = text;

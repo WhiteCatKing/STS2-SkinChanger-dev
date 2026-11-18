@@ -897,7 +897,7 @@ internal sealed partial class SkinCatalog : IDisposable
             // importedToSource 有意跨索引共享：皮肤 Mod 的 PCK 常常只携带
             // .godot/imported/ 载荷而不带 .import/.remap，需要借助游戏 PCK
             // 先登记的 remap 映射把载荷归到正确源路径。相同哈希的导入文件内容
-            // 必然一致，后注册覆盖先注册在视觉上没有差别。
+            // 标识源路径，不代表不同包里的像素一致。
             var importedToSource = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             baselineIndexes.Add(PckResourceIndex.Build(
                 new SkinModDescriptor("game", "游戏原版", gamePckPath, true),
@@ -1354,17 +1354,21 @@ internal sealed partial class SkinCatalog : IDisposable
         var servedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (baselineIndexes.Count > 0)
         {
+            // Merchant-family fallback copies (1.0.34.3) only make a package selectable in the other
+            // merchant room; they carry no art of their own and must not count as a served group.
             var groups = BuildGroups([index], baselineIndexes)
-                .Where(group => group.Options.Count > 0)
+                .Where(group => group.Options.Any(option => !option.IsMerchantVariantFallback))
                 .ToArray();
             AddGroupSources(groups, servedSources);
             // A group this package only serves through a baseline part override is not an
             // appearance of its own: it must not make the package look like a skin provider.
             var anchored = groups
-                .Where(group => group.Options.Any(option => !option.IsBaselinePartOverride))
+                .Where(group => group.Options.Any(option =>
+                    !option.IsMerchantVariantFallback && !option.IsBaselinePartOverride))
                 .ToArray();
             var parts = groups
-                .Where(group => group.Options.All(option => option.IsBaselinePartOverride))
+                .Where(group => group.Options.Where(option => !option.IsMerchantVariantFallback)
+                    .All(option => option.IsBaselinePartOverride))
                 .ToArray();
             return (
                 anchored.Length,
@@ -3400,15 +3404,24 @@ internal sealed partial class SkinCatalog : IDisposable
 
             var selected = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
-            if (selected != null &&
-                IsCharacterAppearanceOption(selected) &&
-                TryResolveProviderAsset(selected, normalizedPath, out var asset))
+            // Relic art is not tied to character appearance: an Ancient/event pack ships the relic
+            // icons of the relics it introduces, and those must be servable from the group that
+            // provides them (AncientWaifus' orobas relics were dropped here only because its group
+            // is not a character-appearance group). Provider-wide relic assets count as ownership
+            // too: a pack's relic atlas never lands in a group's own option.Assets.
+            var providerRelic = GetProviderRelicAssets(selected?.EffectiveProviderId ?? string.Empty)
+                .ContainsKey(normalizedPath);
+            ResourceAsset? asset = null;
+            var ownsAsset = selected != null && TryResolveProviderAsset(selected, normalizedPath, out asset);
+            if (selected != null && (providerRelic || ownsAsset))
             {
-                var assetProviderId = asset.Files
-                    .Select(file => _cosmeticIndexes.FirstOrDefault(index =>
-                        ReferenceEquals(index.Archive, file.Archive))?.Mod.Id)
-                    .FirstOrDefault(providerId => providerId != null) ??
-                    selected.EffectiveProviderId;
+                var assetProviderId = providerRelic || !ownsAsset
+                    ? selected.EffectiveProviderId
+                    : asset!.Files
+                        .Select(file => _cosmeticIndexes.FirstOrDefault(index =>
+                            ReferenceEquals(index.Archive, file.Archive))?.Mod.Id)
+                        .FirstOrDefault(providerId => providerId != null) ??
+                      selected.EffectiveProviderId;
                 candidates.Add((group, selected, assetProviderId));
             }
         }
@@ -3448,8 +3461,8 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var owner = Groups.FirstOrDefault(group => group.Options.Any(option =>
-            IsCharacterAppearanceOption(option) &&
-            TryResolveProviderAsset(option, normalizedPath, out _)))?.Id;
+            TryResolveProviderAsset(option, normalizedPath, out _) ||
+            GetProviderRelicAssets(option.EffectiveProviderId).ContainsKey(normalizedPath)))?.Id;
         _relicOwnerGroups[normalizedPath] = owner;
         return owner;
     }
@@ -3564,6 +3577,19 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (var pair in index.Assets.Where(pair => IsRelicAtlasSpritePath(pair.Key)))
             {
                 assets[NormalizeTakeoverPath(pair.Key)] = pair.Value;
+            }
+
+            // 只替换图集切片的包（.tres.remap）不一定进 index.Assets：这里按归档路径补一遍，
+            // 让遗物图仍然能被认成该提供者的资源。
+            foreach (var path in index.Archive.Paths)
+            {
+                var source = path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ? path[..^6] :
+                    path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ? path[..^7] : path;
+                if (!IsRelicAtlasSpritePath(source)) continue;
+                var normalized = NormalizeTakeoverPath(source);
+                if (assets.ContainsKey(normalized)) continue;
+                var built = index.TryBuildAsset(source);
+                if (built != null) assets[normalized] = built;
             }
         }
 
@@ -4946,7 +4972,7 @@ internal sealed partial class SkinCatalog : IDisposable
             // preview/combat scene is rebuilt. Copying the same complete provider package into
             // every per-monster alias PCK is redundant and, for large animated packs, can create
             // hundreds of multi-hundred-megabyte cache files while browsing the Bestiary.
-            return overlay;
+            return ValidateSpinePages(overlay);
         }
 
         var dependencyFiles = CollectSelectedProviderDependencies(
@@ -4956,7 +4982,7 @@ internal sealed partial class SkinCatalog : IDisposable
             overlay.PayloadAliases);
         if (dependencyFiles.Count == 0)
         {
-            return overlay;
+            return ValidateSpinePages(overlay);
         }
 
         var files = overlay.Files.ToDictionary(
@@ -4975,14 +5001,11 @@ internal sealed partial class SkinCatalog : IDisposable
             .Concat(dependencyFiles.Keys)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        return new RuntimeResourceOverlay(
-            overlay.ResourcePaths,
-            files,
-            overlay.SourceAliases,
-            overlay.PayloadAliases,
-            canonicalDependencyPaths)
-        { LoadOrder = overlay.LoadOrder, RootBytes = overlay.RootBytes, CanBindDependencies = overlay.CanBindDependencies };
+        return ValidateSpinePages(overlay with { Files = files, CanonicalDependencyPaths = canonicalDependencyPaths });
     }
+
+    private static RuntimeResourceOverlay ValidateSpinePages(RuntimeResourceOverlay overlay) =>
+        overlay with { SpinePages = SpineAtlasPagePolicy.ValidateOverlay(overlay.Files) };
 
     internal RuntimeResourceOverlay BuildIsolatedRelicResourceOverlay(
         string groupId,
@@ -5058,9 +5081,8 @@ internal sealed partial class SkinCatalog : IDisposable
             ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             : GetOptionProviderIds(selected).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var discoveredResourcePaths = resources
-            .Select(resource => resource.SourcePath)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var aliasedPaths = resources.Select(resource => resource.SourcePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var discoveredResourcePaths = new HashSet<string>(aliasedPaths, StringComparer.OrdinalIgnoreCase);
         if (availableSourcePaths != null)
         {
             discoveredResourcePaths.UnionWith(availableSourcePaths);
@@ -5105,11 +5127,24 @@ internal sealed partial class SkinCatalog : IDisposable
                 // Text resources can safely be rewritten to private copies of their imported
                 // Spine/texture payloads. Binary .scn/.res files cannot: their embedded strings
                 // must keep resolving through the temporary canonical bridge instead.
+                if (aliasedPaths.Contains(resource.SourcePath) && SpineAtlasPagePolicy.IsAtlas(dependencyFile.Path))
+                {
+                    foreach (var page in SpineAtlasPagePolicy.PagePaths(resource.SourcePath, dependencyFile.Read()))
+                    {
+                        if (TryResolveSelected(page, null, out var texture, out var textureIndex))
+                            IncludeResource(page, texture, textureIndex, requiresAliasedLocation: true);
+                        else if (ResolveBaseline(page) is { } baselineTexture)
+                            IncludeResource(page, baselineTexture, FindOwningIndex(baselineTexture), requiresAliasedLocation: true);
+                    }
+                }
                 var allowImportedPayloadAlias = IsRewritableTextResource(dependencyFile.Path);
                 foreach (var sourcePath in EnumerateDependencyPaths(dependencyFile))
                 {
                     if (discoveredResourcePaths.Contains(sourcePath) ||
-                        !CanAliasDependency(sourcePath, allowImportedPayloadAlias))
+                        !CanAliasDependency(sourcePath, allowImportedPayloadAlias) ||
+                        ReferenceEquals(dependencyFile, resource.RemapFile) &&
+                        ImportedTexturePathPolicy.SourceKey(sourcePath) != null &&
+                        MatchImportedFile(sourcePath, resource.PayloadFiles) != null)
                     {
                         continue;
                     }
@@ -5143,7 +5178,8 @@ internal sealed partial class SkinCatalog : IDisposable
             PckResourceIndex? index,
             bool requiresAliasedLocation = false)
         {
-            if (discoveredResourcePaths.Contains(sourcePath))
+            if (discoveredResourcePaths.Contains(sourcePath) &&
+                (!requiresAliasedLocation || aliasedPaths.Contains(sourcePath)))
             {
                 return;
             }
@@ -5154,8 +5190,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 return;
             }
 
-            discoveredResourcePaths.Add(sourcePath);
-            queue.Enqueue(runtimeResource);
+            if (discoveredResourcePaths.Add(sourcePath)) queue.Enqueue(runtimeResource);
 
             // The globally mounted visual overlay already exposes the selected provider's
             // dependency graph. Keep provider-exclusive paths there to avoid copying a large
@@ -5173,6 +5208,7 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             resources.Add(runtimeResource);
+            aliasedPaths.Add(sourcePath);
 
             if (index == null)
             {
@@ -5724,11 +5760,7 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (Match match in ResourcePathRegex().Matches(remapText))
             {
                 var originalPath = match.Groups[1].Value;
-                if (replacements.ContainsKey(originalPath))
-                {
-                    continue;
-                }
-
+                // Resolve an import against this resource's payload before any generic source alias.
                 var payloadFile = MatchImportedFile(originalPath, resource.PayloadFiles);
                 if (payloadFile != null)
                 {
@@ -5797,8 +5829,9 @@ internal sealed partial class SkinCatalog : IDisposable
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var canBind = unbound.Length == 0;
         var costs = resources.ToDictionary(resource => resource.SourcePath, resource =>
-            RuntimeLoadSafety.EstimateTextureBytes(files.Where(pair => pair.Key == sourceAliases[resource.SourcePath] ||
-                resource.PayloadFiles.Any(payload => payloadAliases[payload.Path] == pair.Key))), StringComparer.OrdinalIgnoreCase);
+            RuntimeLoadSafety.EstimateOverlayTextureBytes(files,
+                resource.PayloadFiles.Select(payload => payloadAliases[payload.Path]).Prepend(sourceAliases[resource.SourcePath])),
+            StringComparer.OrdinalIgnoreCase);
         return new RuntimeResourceOverlay(
             aliasedResourcePaths,
             files,
@@ -9086,6 +9119,18 @@ internal sealed partial class SkinCatalog : IDisposable
             return exact;
         }
 
+        if (ImportedTexturePathPolicy.SourceKey(targetPath) is { } sourceKey)
+        {
+            // A format-neutral export is preferable when the baseline uses another GPU format.
+            var generic = files.FirstOrDefault(file => file.Path.Equals(sourceKey + ".ctex", StringComparison.OrdinalIgnoreCase));
+            if (generic != null) return generic;
+            if (targetPath.EndsWith(".s3tc.ctex", StringComparison.OrdinalIgnoreCase))
+                return files.FirstOrDefault(file => file.Path.Equals(sourceKey + ".bptc.ctex", StringComparison.OrdinalIgnoreCase));
+            if (targetPath.EndsWith(".bptc.ctex", StringComparison.OrdinalIgnoreCase))
+                return files.FirstOrDefault(file => file.Path.Equals(sourceKey + ".s3tc.ctex", StringComparison.OrdinalIgnoreCase));
+            return null;
+        }
+
         var suffix = targetPath.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase) ? ".spatlas"
             : targetPath.EndsWith(".spskel", StringComparison.OrdinalIgnoreCase) ? ".spskel"
             : targetPath.EndsWith(".ctex", StringComparison.OrdinalIgnoreCase) ? ".ctex"
@@ -9761,6 +9806,7 @@ internal sealed record RuntimeResourceOverlay(
     internal IReadOnlyDictionary<string, long> RootBytes { get; init; } = new Dictionary<string, long>();
     internal bool CanBindDependencies { get; init; }
     internal IReadOnlyList<string> UnboundDependencies { get; init; } = [];
+    internal IReadOnlyList<string> SpinePages { get; init; } = [];
 }
 
 internal readonly record struct RelicTextureRect(float X, float Y, float Width, float Height);
@@ -9912,9 +9958,13 @@ internal sealed partial class PckResourceIndex : IDisposable
             index.GetAsset(sourcePath).AddFile(archive, path);
         }
 
+        Dictionary<string, string>? textureSources = null;
         foreach (var importedPath in archive.Paths.Where(IsImportedPath))
         {
-            if (importedToSource.TryGetValue(importedPath, out var sourcePath))
+            if (importedToSource.TryGetValue(importedPath, out var sourcePath) ||
+                (ImportedTexturePathPolicy.SourceKey(importedPath) is { } textureKey &&
+                 (textureSources ??= ImportedTexturePathPolicy.UnambiguousSources(importedToSource))
+                     .TryGetValue(textureKey, out sourcePath)))
             {
                 index.GetAsset(sourcePath).AddFile(archive, importedPath);
             }

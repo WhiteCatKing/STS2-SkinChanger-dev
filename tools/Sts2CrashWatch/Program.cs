@@ -50,6 +50,11 @@ internal static class Program
             return 0;
         }
 
+        if (args.Contains("--selftest-wer"))
+        {
+            return WerDumpSelfTest.Run();
+        }
+
         var launchGame = !args.Contains("--no-launch");
         var hangSeconds = ReadIntArg(args, "--hang-seconds", 30);
 

@@ -288,6 +288,9 @@ internal static class MultiplayerAppearanceIdentityTests
                 AccessTools.Field(sync, "_snapshotStage").SetValue(null, 2);
                 var pending = (HashSet<ulong>)AccessTools.Field(sync, "PendingRefreshes").GetValue(null)!;
                 var pendingIcons = (HashSet<ulong>)AccessTools.Field(sync, "PendingIconRefreshes").GetValue(null)!;
+                // Tick also sweeps intent depth through Godot.Time, which needs the engine.
+                harmony.Patch(AccessTools.Method(sync.Assembly.GetType("STS2SkinChanger.Ui.CreatureIntentDepth", true), "Tick"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(SkipEngine)));
                 var tick = AccessTools.Method(sync, "Tick");
                 tick.Invoke(null, [0.01d]);
                 Require(AccessTools.Field(sync, "_runtimeProvidersDirty").GetValue(null) is true && pending.Contains(202UL),

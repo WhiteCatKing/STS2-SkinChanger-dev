@@ -46,6 +46,7 @@ internal static class CardPresentationLifecycleTests
             Patch(AccessTools.Method(Controls, "Descendants"), nameof(Descendants));
             Patch(AccessTools.Method(Controls, "ApplyBuiltInOverlay"), nameof(Skip));
             Patch(AccessTools.Method(Controls, "ApplyManagedCardPresentation"), nameof(Skip));
+            Patch(AccessTools.Method(Controls, "SendPresentationBehindCardVfx"), nameof(Skip));
             Patch(AccessTools.Method(typeof(SkinService), nameof(SkinService.GetCardPresentation)), nameof(Presentation));
             _card = Bare<NCard>(); _description = Bare<Control>(); _plaque = Bare<Control>(); _foreign = Bare<Control>();
             if (!ownershipOnly) CheckReuse();

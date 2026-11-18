@@ -229,7 +229,7 @@ internal static class ManagedSkinModLoader
         ProviderIdsByAssembly.TryGetValue(assembly, out var providers) && providers.Contains(providerId);
 
     internal static Assembly? GetActiveProviderAssembly(string providerId) =>
-        ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ? runtime.Assembly : null;
+        ActiveProviderRuntimes.TryGetValue(ResolveBehaviorProviderId(providerId), out var runtime) ? runtime.Assembly : null;
 
     /// <summary>
     /// Loads a managed provider assembly for read-only metadata inspection (for example a
@@ -1096,7 +1096,7 @@ internal static class ManagedSkinModLoader
     {
         foreach (var providerId in selectedProviderIds.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (ActiveProviderRuntimes.ContainsKey(providerId) ||
+            if (IsBehaviorActiveFor(providerId) ||
                 !ProviderAssemblies.TryGetValue(providerId, out var provider))
             {
                 continue;
@@ -1150,6 +1150,18 @@ internal static class ManagedSkinModLoader
             assemblyLoadedAt = Stopwatch.GetTimestamp();
             if (assembly == null)
             {
+                return;
+            }
+
+            if (AdoptedGameAssemblies.Contains(assembly))
+                return;
+
+            var behaviorId = ResolveBehaviorProviderId(providerId);
+            if (!behaviorId.Equals(providerId, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!ActiveProviderRuntimes.ContainsKey(behaviorId) &&
+                    ProviderAssemblies.TryGetValue(behaviorId, out var behaviorProvider))
+                    ActivateProvider(behaviorId, behaviorProvider);
                 return;
             }
 
@@ -3640,18 +3652,23 @@ internal static class ManagedSkinModLoader
 
     private static Assembly? GetOrLoadProviderAssembly(ProviderAssembly provider)
     {
-        if (!provider.CanActivateBehavior)
-        {
-            return null;
-        }
-
         if (LoadedProviderAssemblies.TryGetValue(provider.AssemblyPath, out var loadedProviderAssembly))
         {
             return loadedProviderAssembly;
         }
 
+        var loadContext = AssemblyLoadContext.GetLoadContext(typeof(ManagedSkinModLoader).Assembly) ??
+                          AssemblyLoadContext.Default;
+        var requestedName = ReadProviderAssemblyName(provider.AssemblyPath);
+        var occupied = FindAssemblyBySimpleName(loadContext, requestedName);
+        if (occupied != null && TryReuseSiblingBehavior(provider, requestedName!, occupied))
+            return occupied;
+
+        if (!provider.CanActivateBehavior)
+            return null;
+
         var fingerprint = ComputeProviderAssemblyFingerprint(provider.AssemblyPath);
-        var assemblyIdentity = TryReadProviderAssemblyIdentity(provider.AssemblyPath);
+        var assemblyIdentity = requestedName?.FullName;
         if (LoadedProviderAssembliesByFingerprint.TryGetValue(
                 fingerprint,
                 out loadedProviderAssembly))
@@ -3758,7 +3775,13 @@ internal static class ManagedSkinModLoader
             }
         }
 
-        var loadContext = AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly());
+        if (occupied != null)
+        {
+            ReportProviderAssemblyIdentityConflict(provider, assemblyIdentity!, fingerprint,
+                TryComputeLoadedAssemblyFingerprint(occupied));
+            return null;
+        }
+
         var compatibility = ProviderAssemblyCompatibility.PrepareForCurrentGame(provider.AssemblyPath);
         var report = compatibility.Report;
         if (report.UnresolvedReferences.Count > 0)
@@ -3773,7 +3796,7 @@ internal static class ManagedSkinModLoader
             {
                 using var settingsAssembly = RewriteProviderSettings(rewrittenAssembly!, provider.Name, provider.AssemblyPath);
                 var input = settingsAssembly ?? rewrittenAssembly!;
-                assembly = loadContext?.LoadFromStream(input) ?? Assembly.Load(input.ToArray());
+                assembly = loadContext.LoadFromStream(input);
             }
 
             CacheLoadedProviderAssembly(
@@ -3798,46 +3821,23 @@ internal static class ManagedSkinModLoader
         {
             if (settingsAssembly != null)
             {
-                assembly = loadContext?.LoadFromStream(settingsAssembly) ?? Assembly.Load(settingsAssembly.ToArray());
+                assembly = loadContext.LoadFromStream(settingsAssembly);
             }
             else
             {
                 try
                 {
-                    assembly = loadContext?.LoadFromAssemblyPath(provider.AssemblyPath)
-                               ?? Assembly.LoadFrom(provider.AssemblyPath);
+                    assembly = loadContext.LoadFromAssemblyPath(provider.AssemblyPath);
                 }
                 catch (FileLoadException)
                 {
-                    // 游戏自己已经按同一文件名加载过这个包了（"Assembly with same name is already
-                    // loaded"）。再加载一份会让它的补丁装到另一个副本上、行为补丁等于没装（贞德的
-                    // 点击换装就是这样炸的）。能复用游戏那份就复用，复不了的退回纯资源模式。
-                    var existing = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(candidate =>
-                    {
-                        try
-                        {
-                            return !candidate.IsDynamic &&
-                                   string.Equals(
-                                       candidate.GetName().Name,
-                                       Path.GetFileNameWithoutExtension(provider.AssemblyPath),
-                                       StringComparison.OrdinalIgnoreCase);
-                        }
-                        catch
-                        {
-                            return false;
-                        }
-                    });
-                    if (existing == null)
-                    {
-                        throw;
-                    }
-
-                    ModLog.Info($"复用游戏已加载的 {provider.Name} 程序集（{existing.GetName().Name}），不再重复加载。");
-                    // 这份程序集的补丁是游戏启动时它自己的初始化器装的，不是我们装的。
-                    // 记下来：既不重复装，也绝不能在切走时把它卸掉——卸了它的动画补丁就没人再装回来
-                    // （十字军「换过一次皮肤后动作全丢」就是这样来的）。
-                    AdoptedGameAssemblies.Add(existing);
-                    assembly = existing;
+                    // A competing loader can occupy the name after the initial check.
+                    var existing = FindAssemblyBySimpleName(loadContext, requestedName);
+                    if (existing == null) throw;
+                    if (TryReuseSiblingBehavior(provider, requestedName!, existing)) return existing;
+                    ReportProviderAssemblyIdentityConflict(provider, assemblyIdentity!, fingerprint,
+                        TryComputeLoadedAssemblyFingerprint(existing));
+                    return null;
                 }
             }
         }
@@ -3850,10 +3850,39 @@ internal static class ManagedSkinModLoader
     }
 
 
-    /// <summary>
-    /// Loads a package whose assembly identity is already taken by another package into its own load
-    /// context. The bit-for-bit content differs, so this is a real second pack (a re-export), and both
-    /// copies run side by side; which one acts is decided per selection by
+    private static Assembly? FindAssemblyBySimpleName(AssemblyLoadContext context, AssemblyName? requested) =>
+        requested?.Name is { } name
+            ? context.Assemblies.FirstOrDefault(candidate => !candidate.IsDynamic &&
+                string.Equals(candidate.GetName().Name, name, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+    private static bool TryReuseSiblingBehavior(ProviderAssembly requested, AssemblyName name, Assembly loaded)
+    {
+        if (string.IsNullOrWhiteSpace(requested.ProviderId)) return false;
+        var loadedName = loaded.GetName();
+        if (!string.Equals(name.CultureName, loadedName.CultureName, StringComparison.OrdinalIgnoreCase) ||
+            !(name.GetPublicKeyToken() ?? []).AsSpan().SequenceEqual(loadedName.GetPublicKeyToken() ?? []))
+            return false;
+
+        var logicalId = NormalizeProviderIdentity(requested.ProviderId);
+        var source = ProviderAssemblies.Values.FirstOrDefault(candidate =>
+            !candidate.AssemblyPath.Equals(requested.AssemblyPath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(NormalizeProviderIdentity(candidate.ProviderId), logicalId, StringComparison.OrdinalIgnoreCase) &&
+            (LoadedProviderAssemblies.TryGetValue(candidate.AssemblyPath, out var cached)
+                ? ReferenceEquals(cached, loaded)
+                : string.Equals(candidate.AssemblyPath, loaded.Location, StringComparison.OrdinalIgnoreCase)));
+        if (source == null) return false;
+
+        // The selected package keeps its own PCK and source ID. Delegate only behaviour to
+        // the registered sibling that owns the loaded assembly, including in-memory rewrites.
+        if (BehaviorProviderAliases.TryAdd(requested.ProviderId, source.ProviderId))
+        {
+            if (!LoadedProviderAssemblies.ContainsKey(source.AssemblyPath))
+                AdoptedGameAssemblies.Add(loaded);
+            ModLog.Info($"同 ID 皮肤包 {requested.ProviderId} 复用 {source.ProviderId} 的行为程序集 {name.Name}，资源继续来自所选包。");
+        }
+        return true;
+    }
 
     private static MemoryStream? RewriteProviderSettings(Stream source, string name, string assemblyPath)
     {
@@ -3902,11 +3931,14 @@ internal static class ManagedSkinModLoader
         }
     }
 
-    private static string? TryReadProviderAssemblyIdentity(string assemblyPath)
+    private static string? TryReadProviderAssemblyIdentity(string assemblyPath) =>
+        ReadProviderAssemblyName(assemblyPath)?.FullName;
+
+    private static AssemblyName? ReadProviderAssemblyName(string assemblyPath)
     {
         try
         {
-            return AssemblyName.GetAssemblyName(assemblyPath).FullName;
+            return AssemblyName.GetAssemblyName(assemblyPath);
         }
         catch
         {

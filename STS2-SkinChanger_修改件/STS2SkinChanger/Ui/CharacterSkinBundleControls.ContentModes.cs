@@ -34,11 +34,62 @@ internal static partial class CharacterSkinBundleControls
         header.AddChild(mode);
         header.AddChild(SkinWorkshopEntry.CreatePriorityButton(state.Screen, monsters ? "monster" : "cards", "",
             () => BuildEditor(state)));
+        if (monsters)
+        {
+            // Its own row: the header already holds the label, the mode dropdown and the workshop
+            // button, and adding this button there squeezed the dropdown down to its arrows.
+            var copyRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            copyRow.AddThemeConstantOverride("separation", 12);
+            fields.AddChild(copyRow);
+            copyRow.AddChild(new Control
+            {
+                CustomMinimumSize = new Vector2(250f, 0f),
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            });
+            // Merchant skins are monsters in this Mod, so players set them up hero by hero. This
+            // button copies the current hero's monster section to every other hero's bundles.
+            var copy = CreateButton(ModLocalization.CopyMonsterSettingsToAllHeroes);
+            copy.Name = "CopyMonsterSettingsToAllHeroes";
+            // German/Russian buttons are long and the confirm text is longer still: wrap instead of
+            // clipping, and give the row room to grow taller.
+            copy.CustomMinimumSize = new Vector2(320f, 42f);
+            copy.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            copy.ClipText = false;
+            copy.AddThemeFontSizeOverride("font_size", 17);
+            if (state.PendingMonsterCopy)
+            {
+                copy.Text = ModLocalization.ConfirmCopyMonsterSettingsToAllHeroes;
+                ApplyDeleteWarning(copy);
+            }
+            copy.Pressed += () => CopyMonsterSettingsToAllHeroes(state, copy);
+            copyRow.AddChild(copy);
+            copyRow.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+        }
         if (selected == BundleContentMode.ModPriority)
             AddModPriorityRows(state, fields, monsters);
         else
             AddPresetRows(state, fields, categories,
                 monsters ? state.Draft.MonsterPresetNames : state.Draft.CardPresetNames);
+    }
+
+    private static void CopyMonsterSettingsToAllHeroes(EditorState state, Button button)
+    {
+        // Two-step confirm: a misclick would otherwise overwrite every other hero's monster list.
+        if (!state.PendingMonsterCopy)
+        {
+            state.PendingMonsterCopy = true;
+            button.Text = ModLocalization.ConfirmCopyMonsterSettingsToAllHeroes;
+            ApplyDeleteWarning(button);
+            return;
+        }
+
+        var count = SkinService.CopyMonsterSettingsToAllCharacterBundles(state.GroupId, state.Draft);
+        state.PendingMonsterCopy = false;
+        state.Status = count > 0
+            ? ModLocalization.MonsterSettingsCopied(count)
+            : ModLocalization.MonsterSettingsNothingToCopy;
+        BuildEditor(state);
+        state.Refresh?.Invoke();
     }
 
     private static void AddModPriorityRows(EditorState state, VBoxContainer fields, bool monsters)

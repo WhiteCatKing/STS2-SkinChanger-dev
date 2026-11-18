@@ -1,4 +1,5 @@
 using Godot;
+using STS2SkinChanger.Pck;
 
 namespace STS2SkinChanger.Core;
 
@@ -7,6 +8,7 @@ internal static class SkinChangerPaths
     private static readonly Lazy<SkinChangerStorage> Current = new(() =>
     {
         var storage = new SkinChangerStorage(OS.GetUserDataDir(), Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        PckArchive.WriteOutput = (path, bytes, write) => WritePckOutput(storage.PckBudget, path, bytes, write);
         try { storage.MigrateConfiguration(); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         { ModLog.Warn("配置迁移未完成，将保留并尝试读取旧配置：" + e.Message); }
@@ -17,6 +19,19 @@ internal static class SkinChangerPaths
         ModLog.Info("配置目录：" + storage.RootDirectory);
         return storage;
     });
+
+    internal static void WritePckOutput(CacheWriteBudget budget, string path, long bytes, Action write)
+    {
+        try { budget.Write(path, bytes, write); }
+        catch (IOException error)
+        {
+            var detail = error.Message;
+            if (error is CacheWriteRejectedException rejected)
+                rejected.DisplayMessage = Ui.CacheWriteNotice.Report(rejected.Reason);
+            ModLog.Warn("皮肤资源包写入已停止：" + detail);
+            throw;
+        }
+    }
     public static SkinChangerStorage Storage => Current.Value;
     public static string Configuration(string name) => Storage.ConfigurationFile(name);
     public static string CacheDirectory => Storage.CacheDirectory;
@@ -31,6 +46,11 @@ internal static class SkinChangerPaths
     public static void WriteCache(string path, Action write)
     {
         if (!Storage.WriteCache(path, write)) throw new OperationCanceledException("Skin Changer is quitting.");
+    }
+    internal static bool LoadResourcePack(string path, bool replaceFiles)
+    {
+        Storage.PckBudget.Protect(path);
+        return ProjectSettings.LoadResourcePack(path, replaceFiles);
     }
     public static void Initialize() => _ = Storage;
 }

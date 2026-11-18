@@ -118,6 +118,16 @@ internal static class FrameworkCardVisualGuard
         }
         else
         {
+            // A Mod card whose pool the catalog does not classify must keep its own intrinsic
+            // portrait. Letting the framework borrow a character's card art here is what repainted
+            // every unknown-pool card (久留美) with another pack's ironclad strike art.
+            if (SkinService.KeepsIntrinsicModCardArt(
+                    __0.GetType().Assembly == typeof(CardModel).Assembly,
+                    SkinService.HasKnownCardPool(__0)))
+            {
+                return true;
+            }
+
             // Lookup may itself read portrait identities. Do not recursively create the same
             // weak-cache entry or interfere with other cards queried by optional frameworks.
             if (_checkingOwnership) return true;

@@ -106,6 +106,53 @@ internal static partial class SkinService
     public static bool OverwriteCharacterSkinBundle(string currentName, CharacterSkinBundle draft) =>
         SaveCharacterSkinBundle(currentName, draft);
 
+    /// <summary>
+    /// Copies the monster section (content mode + Mod priority enabled flags and order) of
+    /// <paramref name="source"/> to every existing skin bundle of every character, including Mod
+    /// heroes. Merchant skins are classified as monsters in this Mod, so this is the "set the
+    /// merchant skin for every hero" action. Heroes without a bundle are skipped: no <c>[P]</c>
+    /// option is invented for a hero the player has not configured. The character skin, the card
+    /// section and the preset names of the targets are left alone.
+    /// </summary>
+    internal static int CopyMonsterSettingsToAllCharacterBundles(string sourceGroupId, CharacterSkinBundle source)
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                return 0;
+            }
+
+            var settings = MonsterSettingsCopyPolicy.Capture(source);
+            var targets = new List<CharacterSkinBundle>();
+            foreach (var group in Catalog.Groups.Where(group => Catalog.IsCharacterAppearanceGroup(group.Id)))
+            {
+                foreach (var bundle in GetCharacterSkinBundles(group.Id))
+                {
+                    if (group.Id.Equals(sourceGroupId, StringComparison.OrdinalIgnoreCase) &&
+                        bundle.Name.Equals(source.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    targets.Add(bundle);
+                }
+            }
+
+            var changed = 0;
+            foreach (var target in targets)
+            {
+                MonsterSettingsCopyPolicy.Apply(target, settings);
+                if (OverwriteCharacterSkinBundle(target.Name, target))
+                {
+                    changed++;
+                }
+            }
+
+            return changed;
+        }
+    }
+
     public static bool RenameCharacterSkinBundle(string groupId, string currentName, string newName)
     {
         lock (Sync)

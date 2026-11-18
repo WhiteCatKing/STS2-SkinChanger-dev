@@ -45,89 +45,79 @@ internal static class CharSelectTakeoverSuppressor
             NotifyArgumentCount: 1)
     ];
 
-    private static bool _installed;
+    private static readonly Harmony Patcher = new(Entry.ModId + ".char-select-takeover-guard");
+    private static readonly object Sync = new();
+    private static readonly HashSet<MethodBase> InstalledMethods = [];
+    private static volatile CharSelectTakeoverTarget[] _plan = [];
+    private static bool _watching;
     private static Action<string>? _onNotified;
     private static bool _skipLogged;
 
     /// <summary>本 Mod 自己触发对方切换时置位，避免把自己的调用当成"玩家在对方界面里改了"。</summary>
     internal static bool EchoSuppressed { get; set; }
 
-    /// <summary>
-    /// 安装拦截。<paramref name="onNotified"/> 收到对方切换后的标识（例如皮肤 id）。
-    /// 可以重复调用；也可以传入自定义目标表来适配别的同类 Mod。
-    /// </summary>
+    /// <summary>安装拦截并为晚加载的目标补装，同一个方法只装一次。</summary>
     internal static void Install(Action<string>? onNotified = null,
         IEnumerable<CharSelectTakeoverTarget>? targets = null)
     {
-        _onNotified = onNotified;
-        if (_installed)
+        lock (Sync)
         {
-            return;
-        }
-
-        var plan = (targets ?? DefaultTargets).ToArray();
-        if (plan.Length == 0)
-        {
-            return;
-        }
-
-        try
-        {
-            var harmony = new Harmony(Entry.ModId + ".char-select-takeover-guard");
-            var patched = 0;
-            foreach (var target in plan)
+            _onNotified = onNotified;
+            _plan = (targets ?? DefaultTargets).ToArray();
+            if (!_watching)
             {
-                var assembly = FindAssembly(target.AssemblyName);
-                if (assembly == null)
-                {
-                    continue;
-                }
-
-                var patchType = assembly.GetType(target.PatchTypeName, throwOnError: false);
-                var postfix = patchType?.GetMethod(
-                    target.PatchMethodName,
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                if (postfix != null)
-                {
-                    harmony.Patch(postfix, prefix: new HarmonyMethod(
-                        typeof(CharSelectTakeoverSuppressor), nameof(SkipTakeoverPrefix)));
-                    patched++;
-                }
-
-                if (target.NotifyTypeName == null || target.NotifyMethodName == null)
-                {
-                    continue;
-                }
-
-                var notifyType = assembly.GetType(target.NotifyTypeName, throwOnError: false);
-                var notify = notifyType?.GetMethod(
-                    target.NotifyMethodName,
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
-                    binder: null,
-                    types: Enumerable.Repeat(typeof(string), target.NotifyArgumentCount).ToArray(),
-                    modifiers: null);
-                if (notify != null)
-                {
-                    harmony.Patch(notify, postfix: new HarmonyMethod(
-                        typeof(CharSelectTakeoverSuppressor), nameof(NotifyPostfix)));
-                    patched++;
-                }
+                AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoad;
+                _watching = true;
             }
 
-            _installed = patched > 0;
-            ModLog.Info(patched > 0
-                ? $"[兼容] 已拦截 {plan.Length} 个第三方选人界面接管入口，并绑定其切换回调（{patched} 处补丁）。"
-                : "[兼容] 未找到可拦截的第三方选人界面接管入口。");
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn("[兼容] 安装选人界面拦截失败：" + exception.GetBaseException().Message);
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                InstallAssembly(assembly);
         }
     }
 
-    private static System.Reflection.Assembly? FindAssembly(string name) =>
-        AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(candidate =>
-            string.Equals(candidate.GetName()?.Name, name, StringComparison.OrdinalIgnoreCase));
+    private static void OnAssemblyLoad(object? sender, AssemblyLoadEventArgs args)
+    {
+        if (args.LoadedAssembly.IsDynamic ||
+            !_plan.Any(target => Matches(args.LoadedAssembly, target)))
+            return;
+        lock (Sync) InstallAssembly(args.LoadedAssembly);
+    }
+
+    private static bool Matches(Assembly assembly, CharSelectTakeoverTarget target) =>
+        string.Equals(assembly.GetName().Name, target.AssemblyName, StringComparison.OrdinalIgnoreCase);
+
+    private static void InstallAssembly(Assembly assembly)
+    {
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        foreach (var target in _plan.Where(target => Matches(assembly, target)))
+        {
+            try
+            {
+                var postfix = assembly.GetType(target.PatchTypeName, throwOnError: false)?
+                    .GetMethod(target.PatchMethodName, flags);
+                InstallMethod(postfix, nameof(SkipTakeoverPrefix), isPrefix: true);
+
+                if (target.NotifyTypeName == null || target.NotifyMethodName == null) continue;
+                var notify = assembly.GetType(target.NotifyTypeName, throwOnError: false)?
+                    .GetMethod(target.NotifyMethodName, flags, binder: null,
+                        types: Enumerable.Repeat(typeof(string), target.NotifyArgumentCount).ToArray(),
+                        modifiers: null);
+                InstallMethod(notify, nameof(NotifyPostfix), isPrefix: false);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn("[兼容] 安装选人界面拦截失败：" + exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static void InstallMethod(MethodInfo? target, string name, bool isPrefix)
+    {
+        if (target == null || InstalledMethods.Contains(target)) return;
+        var patch = new HarmonyMethod(typeof(CharSelectTakeoverSuppressor), name);
+        Patcher.Patch(target, prefix: isPrefix ? patch : null, postfix: isPrefix ? null : patch);
+        InstalledMethods.Add(target);
+    }
 
     /// <summary>短路对方的选人界面 Postfix：不再往选人背景里塞显示层。</summary>
     private static bool SkipTakeoverPrefix()

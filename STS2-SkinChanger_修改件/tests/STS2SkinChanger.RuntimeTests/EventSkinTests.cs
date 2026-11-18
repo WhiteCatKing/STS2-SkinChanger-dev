@@ -11,7 +11,13 @@ internal static class EventSkinTests
 
     internal static void Run()
     {
-        _ = AuditLogSilencer.Install();
+        var logging = AuditLogSilencer.Install();
+        try { RunOffline(); }
+        finally { logging.UnpatchAll(logging.Id); }
+    }
+
+    private static void RunOffline()
+    {
         OtherCompendiumUiTests.Run();
         EventPriorityTests.Run();
         var previewPolicy = Assembly.GetType("STS2SkinChanger.Core.EventPreviewPolicy");

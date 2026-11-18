@@ -17,3 +17,11 @@ public partial class FirstScript : Control;
 
 [ScriptPath("res://sc-script-path-fixture/second.cs")]
 public partial class SecondScript : Control;
+
+// Loaded by the runtime tests after the guard is registered.
+internal static class LateTakeoverFixture
+{
+    internal static int TakeoverCalls { get; private set; }
+    internal static void Takeover() => TakeoverCalls++;
+    internal static void Apply(string selection) { }
+}

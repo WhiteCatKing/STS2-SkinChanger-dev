@@ -30,6 +30,7 @@ internal static class CrashDiagnosticsTests
             }
             finally { silence.UnpatchAll(silence.Id); }
             CheckRetention(root);
+            CheckPruneLimits(root);
             Console.WriteLine("Crash diagnostics passed: real hidden observer/fixture processes, clean exit, nonzero exit despite quit marker, old log rotation, read-only fallback and one-time recovery. No game process was launched.");
         }
         finally { try { Directory.Delete(root, true); } catch { } }
@@ -170,6 +171,59 @@ if ([Text.Encoding]::ASCII.GetString($bytes,0,4) -ne 'MDMP') { throw 'Invalid mi
         Require(owned.Count(d => File.Exists(Path.Combine(d, "normal-exit"))) == 3 &&
             owned.Count(d => File.Exists(Path.Combine(d, "appended")) || File.Exists(Path.Combine(d, "recovered"))) == 8,
             "Completed normal/crash history must be bounded separately.");
+    }
+
+    private static void CheckPruneLimits(string root)
+    {
+        var sandbox = Path.Combine(root, "prune limits " + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(sandbox);
+        var stale = NewSessionDirectory(sandbox);
+        File.WriteAllText(Path.Combine(stale, "pending-recovery"), "abandoned run");
+        Age(stale, 20);
+        var current = NewSessionDirectory(sandbox);
+        File.WriteAllText(Path.Combine(current, "pending-recovery"), "the session being observed");
+        Age(current, 30);
+        CrashDiagnostics.Prune(sandbox, current, 512L * 1024 * 1024);
+        Require(!Directory.Exists(stale), "Abandoned old reports must be pruned by the same age rule.");
+        Require(Directory.Exists(current), "The session currently being observed must never be pruned.");
+
+        var budget = Path.Combine(root, "prune budget " + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(budget);
+        var oldest = NewSessionDirectory(budget);
+        var middle = NewSessionDirectory(budget);
+        var newest = NewSessionDirectory(budget);
+        foreach (var directory in new[] { (oldest, 3), (middle, 2), (newest, 1) })
+        {
+            File.WriteAllBytes(Path.Combine(directory.Item1, "payload.bin"), new byte[1024 * 1024]);
+            File.WriteAllText(Path.Combine(directory.Item1, "normal-exit"), "fixture");
+            Age(directory.Item1, directory.Item2);
+        }
+
+        // 三份各约 1 MB，预算 2.5 MB：只够删掉最旧的一份。
+        CrashDiagnostics.Prune(budget, null, 2500L * 1024);
+        Require(!Directory.Exists(oldest) && Directory.Exists(middle) && Directory.Exists(newest),
+            "The total byte budget must drop the oldest report first.");
+        Directory.Delete(budget, true);
+        Directory.Delete(sandbox, true);
+    }
+
+    private static string NewSessionDirectory(string root)
+    {
+        var directory = Path.Combine(root, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
+
+    private static void Age(string directory, int days)
+    {
+        var when = DateTime.UtcNow.AddDays(-days);
+        foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        {
+            File.SetLastWriteTimeUtc(file, when);
+        }
+
+        Directory.SetCreationTimeUtc(directory, when);
+        Directory.SetLastWriteTimeUtc(directory, when);
     }
 
     private static string ReadError(string report) => File.Exists(Path.Combine(report, "watcher-error.txt"))

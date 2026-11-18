@@ -91,6 +91,7 @@ internal static class OverlayCacheStore
 
                 File.SetLastAccessTimeUtc(path, DateTime.UtcNow);
                 Lifetime.Pin(path);
+                SkinChangerPaths.Storage.PckBudget.Protect(path);
                 return path;
             }
             catch

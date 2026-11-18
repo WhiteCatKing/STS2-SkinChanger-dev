@@ -343,6 +343,7 @@ internal static partial class CharacterSkinBundleControls
     {
         state.Dirty = true;
         state.PendingDelete = false;
+        state.PendingMonsterCopy = false;
         state.StatusLabel.Text = string.Empty;
         state.Status = string.Empty;
         state.DeleteButton.Text = ModLocalization.Get(ModText.DeleteCharacterSkinMerge);
@@ -415,11 +416,13 @@ internal static partial class CharacterSkinBundleControls
         return label;
     }
 
-    private static Button CreateButton(ModText text)
+    private static Button CreateButton(ModText text) => CreateButton(ModLocalization.Get(text));
+
+    private static Button CreateButton(string text)
     {
         var button = new Button
         {
-            Text = ModLocalization.Get(text),
+            Text = text,
             CustomMinimumSize = new Vector2(100f, 42f),
             FocusMode = Control.FocusModeEnum.None,
             MouseDefaultCursorShape = Control.CursorShape.PointingHand
@@ -471,6 +474,7 @@ internal static partial class CharacterSkinBundleControls
         public string Status = string.Empty;
         public bool Dirty;
         public bool PendingDelete;
+        public bool PendingMonsterCopy;
         public Button DeleteButton = null!;
         public Label StatusLabel = null!;
         public IReadOnlyList<SkinPresetCategory> CardCategories = [];
