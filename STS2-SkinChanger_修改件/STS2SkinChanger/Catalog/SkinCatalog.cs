@@ -101,6 +101,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlySet<string> _managedGodotScriptProviders;
     private readonly IReadOnlySet<string> _cosmeticLocalizationProviders;
     private readonly IReadOnlySet<string> _cosmeticLocalizationPaths;
+    private readonly ILookup<string, CharacterDialogueLocalization> _characterDialogueLocalization;
     private readonly IReadOnlyDictionary<string, ResourceFile> _passthroughLocalizationFiles;
     private readonly IReadOnlySet<string> _fullRuntimeProviders;
     private readonly IReadOnlySet<string> _directCharacterRuntimeProviders;
@@ -113,8 +114,10 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyList<ProviderInstanceIdentity> _providerInstanceIdentities;
     private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceFile>>
         _fullRuntimeProviderBaselineOverlays = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceAsset>>
+    private readonly Dictionary<string, IReadOnlyDictionary<string, ScopedRelicAsset>>
         _providerRelicAssets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceAsset>>
+        _providerEpochPortraits = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IReadOnlySet<string>>
         _isolatedRelicProviderPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string?>
@@ -188,9 +191,8 @@ internal sealed partial class SkinCatalog : IDisposable
         }
         AddImageRuntimeProviderOptions(mods);
         AddVakuuVanillaArtOption();
-        // Only the character table of an actual character appearance has a skin-owned lifetime.
-        // A visual provider can also add events, cards or other gameplay text; those tables must
-        // remain mounted regardless of which cosmetic option is selected.
+        // A provider can ship both character text and global UI or gameplay tables.
+        // Only tables with character ownership follow the selected appearance.
         var characterVisualProviderIds = _groups.SelectMany(group => group.Options)
             .Where(option => !option.IsCharacterIconOnly && IsCharacterAppearanceOption(option))
             .Select(option => option.EffectiveProviderId)
@@ -200,10 +202,30 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Where(path => IsProviderLocalizationFile(path, index.Mod.ResourceNamespaceId))
                 .Select(path => (Index: index, Path: path)))
             .ToArray();
+        var dialogueFiles = providerLocalizationFiles
+            .Where(file => file.Path.EndsWith("/ancients.json", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var dialogueProviders = dialogueFiles.Select(file => file.Index.Mod.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool IsDialogueProviderOption(SkinOption option) =>
+            dialogueProviders.Contains(option.EffectiveProviderId) && !option.IsCharacterIconOnly &&
+            (option.IsDirectCharacterRuntimeProvider || IsCharacterAppearanceOption(option));
+        var characterGroupsByProvider = _groups
+            .Where(group => group.Options.Any(IsDialogueProviderOption) && IsGameCharacterGroup(group.Id, baselineIndexes))
+            .SelectMany(group => group.Options.Where(IsDialogueProviderOption)
+                .Select(option => (ProviderId: option.EffectiveProviderId, GroupId: group.Id)))
+            .ToLookup(pair => pair.ProviderId, pair => pair.GroupId, StringComparer.OrdinalIgnoreCase);
+        _characterDialogueLocalization = dialogueFiles
+            .Where(file => characterGroupsByProvider.Contains(file.Index.Mod.Id))
+            .Select(file => ClassifyCharacterDialogueLocalization(
+                file.Index, file.Path, characterGroupsByProvider[file.Index.Mod.Id]))
+            .OfType<CharacterDialogueLocalization>()
+            .ToLookup(table => table.File.Path, StringComparer.OrdinalIgnoreCase);
         _cosmeticLocalizationPaths = providerLocalizationFiles
             .Where(file => characterVisualProviderIds.Contains(file.Index.Mod.Id) &&
                            IsCharacterLocalizationFile(file.Path))
             .Select(file => file.Path)
+            .Concat(_characterDialogueLocalization.Select(tables => tables.Key))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         _cosmeticLocalizationProviders = providerLocalizationFiles
             .Where(file => _cosmeticLocalizationPaths.Contains(file.Path))
@@ -839,21 +861,13 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var selectedProviderPriority = GetSelectedLocalizationProviderPriority(selections);
-        var selectedProviders = selectedProviderPriority.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var passthrough = paths.Where(path =>
-            !_cosmeticLocalizationPaths.Contains(path) ||
-            !TryGetLocalizationProviderId(path, out _));
+        var passthrough = paths.Where(path => !_cosmeticLocalizationPaths.Contains(path));
         var selectedCosmetic = selectedProviderPriority
             .Reverse()
             .SelectMany(providerId => paths.Where(path =>
                 _cosmeticLocalizationPaths.Contains(path) &&
-                TryGetLocalizationProviderId(path, out var pathProviderId) &&
-                pathProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase)));
+                LocalizationOwnerMatches(path, providerId, selections)));
         return passthrough.Concat(selectedCosmetic)
-            .Where(path =>
-                !_cosmeticLocalizationPaths.Contains(path) ||
-                !TryGetLocalizationProviderId(path, out var providerId) ||
-                selectedProviders.Contains(providerId))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -3031,8 +3045,8 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
         // Skin providers are mounted through generated overlays instead of their original PCKs.
-        // Keep every non-character localization table visible at all times so event/card/gameplay
-        // text cannot disappear merely because the same provider also contains cosmetic assets.
+        // Keep global UI and gameplay tables visible even when the provider's cosmetic assets
+        // are deselected.
         foreach (var file in _passthroughLocalizationFiles)
         {
             files[file.Key] = file.Value;
@@ -3191,8 +3205,13 @@ internal sealed partial class SkinCatalog : IDisposable
                 // A character skin may replace one character-specific relic slice while bundling
                 // the entire (often older) shared relic atlas. Keep every public atlas resource
                 // on the game baseline; the selected slice is loaded through an isolated alias by
-                // the RelicModel getter patch instead.
+                // the RelicModel getter patch instead. Timeline epoch portraits and epoch atlases
+                // are also served via isolated runtime overrides so unselected packs stay vanilla
+                // and Beta/Stable atlas layouts never collide.
                 var asset = !IsRelicAtlasSpritePath(takeoverSourcePath) &&
+                            !IsRelicBigIconPath(takeoverSourcePath) &&
+                            !IsEpochPortraitPath(takeoverSourcePath) &&
+                            !IsEpochAtlasPath(takeoverSourcePath) &&
                             selected != null &&
                             selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
                     ? selectedAsset
@@ -3317,6 +3336,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // else so an installed event pack (NSFW化原版事件…) paints the tent it authored while the
         // selected merchant skin still paints the merchant figure inside it.
         AddFakeMerchantEventPresentation(files);
+        ApplyCharacterDialogueLocalization(files, selections);
 
         return files;
     }
@@ -3336,7 +3356,8 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             foreach (var asset in index.Assets.Where(pair =>
                          IsRelicAtlasSpritePath(pair.Key) ||
-                         IsRelicAtlasTexturePath(pair.Key)))
+                         IsRelicAtlasTexturePath(pair.Key) ||
+                         IsRelicBigIconPath(pair.Key)))
             {
                 paths.Add(NormalizeTakeoverPath(asset.Key));
                 foreach (var file in asset.Value.Files)
@@ -3355,10 +3376,28 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     internal IReadOnlyList<string> GetProviderRelicSpritePaths(SkinOption selected) =>
+        GetProviderRelicSpritePaths(groupId: null, selected);
+
+    internal IReadOnlyList<string> GetProviderRelicSpritePaths(string? groupId, SkinOption selected) =>
         selected.Assets.Keys
             .Where(IsRelicAtlasSpritePath)
             .Concat(GetOptionProviderIds(selected)
-                .SelectMany(providerId => GetProviderRelicAssets(providerId).Keys))
+                .SelectMany(providerId => GetProviderRelicAssets(providerId)
+                    .Where(pair => IsRelicAtlasSpritePath(pair.Key) &&
+                                   RelicAssetMatchesGroup(pair.Value.OwnerGroupId, groupId))
+                    .Select(pair => pair.Key)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    internal IReadOnlyList<string> GetProviderRelicResourcePaths(string? groupId, SkinOption selected) =>
+        selected.Assets.Keys
+            .Where(path => IsRelicAtlasSpritePath(path) || IsRelicBigIconPath(path))
+            .Concat(GetOptionProviderIds(selected)
+                .SelectMany(providerId => GetProviderRelicAssets(providerId)
+                    .Where(pair => (IsRelicAtlasSpritePath(pair.Key) || IsRelicBigIconPath(pair.Key)) &&
+                                   RelicAssetMatchesGroup(pair.Value.OwnerGroupId, groupId))
+                    .Select(pair => pair.Key)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -3389,7 +3428,7 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyList<string> providerPriority)
     {
         var normalizedPath = NormalizeTakeoverPath(resourcePath);
-        if (!IsRelicAtlasSpritePath(normalizedPath))
+        if (!IsRelicAtlasSpritePath(normalizedPath) && !IsRelicBigIconPath(normalizedPath))
         {
             return null;
         }
@@ -3407,12 +3446,17 @@ internal sealed partial class SkinCatalog : IDisposable
             // Relic art is not tied to character appearance: an Ancient/event pack ships the relic
             // icons of the relics it introduces, and those must be servable from the group that
             // provides them (AncientWaifus' orobas relics were dropped here only because its group
-            // is not a character-appearance group). Provider-wide relic assets count as ownership
-            // too: a pack's relic atlas never lands in a group's own option.Assets.
-            var providerRelic = GetProviderRelicAssets(selected?.EffectiveProviderId ?? string.Empty)
-                .ContainsKey(normalizedPath);
+            // is not a character-appearance group). Multi-Ancient packs that scope assets under
+            // res://waifu_assets/<ancient>/... only own the relics matching that Ancient's group.
+            var providerRelic = selected != null &&
+                                TryGetProviderRelicAsset(
+                                    selected.EffectiveProviderId,
+                                    group.Id,
+                                    normalizedPath,
+                                    out _);
             ResourceAsset? asset = null;
-            var ownsAsset = selected != null && TryResolveProviderAsset(selected, normalizedPath, out asset);
+            var ownsAsset = selected != null &&
+                            TryResolveProviderAsset(selected, normalizedPath, out asset, group.Id);
             if (selected != null && (providerRelic || ownsAsset))
             {
                 var assetProviderId = providerRelic || !ownsAsset
@@ -3450,7 +3494,7 @@ internal sealed partial class SkinCatalog : IDisposable
     public string? FindRelicIconOwnerGroup(string resourcePath)
     {
         var normalizedPath = NormalizeTakeoverPath(resourcePath);
-        if (!IsRelicAtlasSpritePath(normalizedPath))
+        if (!IsRelicAtlasSpritePath(normalizedPath) && !IsRelicBigIconPath(normalizedPath))
         {
             return null;
         }
@@ -3461,8 +3505,8 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var owner = Groups.FirstOrDefault(group => group.Options.Any(option =>
-            TryResolveProviderAsset(option, normalizedPath, out _) ||
-            GetProviderRelicAssets(option.EffectiveProviderId).ContainsKey(normalizedPath)))?.Id;
+            TryResolveProviderAsset(option, normalizedPath, out _, group.Id) ||
+            TryGetProviderRelicAsset(option.EffectiveProviderId, group.Id, normalizedPath, out _)))?.Id;
         _relicOwnerGroups[normalizedPath] = owner;
         return owner;
     }
@@ -3527,7 +3571,8 @@ internal sealed partial class SkinCatalog : IDisposable
     internal bool TryResolveProviderAsset(
         SkinOption selected,
         string sourcePath,
-        out ResourceAsset asset)
+        out ResourceAsset asset,
+        string? groupId = null)
     {
         var normalizedPath = NormalizeTakeoverPath(sourcePath);
         if (selected.Assets.TryGetValue(normalizedPath, out asset!) ||
@@ -3538,7 +3583,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
         foreach (var providerId in GetOptionProviderIds(selected))
         {
-            if (GetProviderRelicAssets(providerId).TryGetValue(normalizedPath, out asset!))
+            if (TryGetProviderRelicAsset(providerId, groupId, normalizedPath, out asset!))
             {
                 return true;
             }
@@ -3562,40 +3607,304 @@ internal sealed partial class SkinCatalog : IDisposable
             .ToArray();
     }
 
-    private IReadOnlyDictionary<string, ResourceAsset> GetProviderRelicAssets(string providerId)
+    private bool TryGetProviderRelicAsset(
+        string providerId,
+        string? groupId,
+        string normalizedPath,
+        out ResourceAsset asset)
+    {
+        if (GetProviderRelicAssets(providerId).TryGetValue(normalizedPath, out var scoped) &&
+            RelicAssetMatchesGroup(scoped.OwnerGroupId, groupId))
+        {
+            asset = scoped.Asset;
+            return true;
+        }
+
+        asset = null!;
+        return false;
+    }
+
+    private static bool RelicAssetMatchesGroup(string? ownerGroupId, string? targetGroupId) =>
+        ownerGroupId == null ||
+        (targetGroupId != null && ownerGroupId.Equals(targetGroupId, StringComparison.OrdinalIgnoreCase));
+
+    private static string? TryGetScopedRelicOwnerGroupId(string rawPath, ResourceAsset asset)
+    {
+        var owner = TryGetWaifuAssetOwnerGroupId(rawPath);
+        if (owner != null)
+        {
+            return owner;
+        }
+
+        foreach (var file in asset.Files)
+        {
+            owner = TryGetWaifuAssetOwnerGroupId(file.Path);
+            if (owner != null)
+            {
+                return owner;
+            }
+        }
+
+        return null;
+    }
+
+    internal static string? TryGetWaifuAssetOwnerGroupId(string path)
+    {
+        var match = WaifuAssetsOwnerRegex().Match(path);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var owner = match.Groups["owner"].Value.ToLowerInvariant();
+        if (owner.Equals("tezcatara_waifu", StringComparison.OrdinalIgnoreCase))
+        {
+            return "tezcatara";
+        }
+
+        return owner;
+    }
+
+    private IReadOnlyDictionary<string, ScopedRelicAsset> GetProviderRelicAssets(string providerId)
     {
         if (_providerRelicAssets.TryGetValue(providerId, out var cached))
         {
             return cached;
         }
 
-        var assets = new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
+        var assets = new Dictionary<string, ScopedRelicAsset>(StringComparer.OrdinalIgnoreCase);
         foreach (var index in _cosmeticIndexes.Where(index => index.Mod.Id.Equals(
                      providerId,
                      StringComparison.OrdinalIgnoreCase)))
         {
-            foreach (var pair in index.Assets.Where(pair => IsRelicAtlasSpritePath(pair.Key)))
+            foreach (var pair in index.Assets.Where(pair =>
+                         IsRelicAtlasSpritePath(pair.Key) || IsRelicBigIconPath(pair.Key)))
             {
-                assets[NormalizeTakeoverPath(pair.Key)] = pair.Value;
+                var normalized = NormalizeTakeoverPath(pair.Key);
+                assets[normalized] = new ScopedRelicAsset(
+                    pair.Value,
+                    TryGetScopedRelicOwnerGroupId(pair.Key, pair.Value));
             }
 
-            // 只替换图集切片的包（.tres.remap）不一定进 index.Assets：这里按归档路径补一遍，
-            // 让遗物图仍然能被认成该提供者的资源。
+            // 只替换图集切片或独立遗物图的包（.tres.remap / .png.import）不一定进 index.Assets：
+            // 这里按归档路径补一遍，并保留 waifu_assets/<owner>/ 归属信息。
             foreach (var path in index.Archive.Paths)
             {
                 var source = path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ? path[..^6] :
                     path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ? path[..^7] : path;
-                if (!IsRelicAtlasSpritePath(source)) continue;
+                if (!IsRelicAtlasSpritePath(source) && !IsRelicBigIconPath(source)) continue;
                 var normalized = NormalizeTakeoverPath(source);
                 if (assets.ContainsKey(normalized)) continue;
                 var built = index.TryBuildAsset(source);
-                if (built != null) assets[normalized] = built;
+                if (built != null)
+                {
+                    assets[normalized] = new ScopedRelicAsset(
+                        built,
+                        TryGetScopedRelicOwnerGroupId(source, built));
+                }
             }
         }
 
         _providerRelicAssets[providerId] = assets;
         return assets;
     }
+
+    private IReadOnlyDictionary<string, ResourceAsset> GetProviderEpochPortraits(string providerId)
+    {
+        if (_providerEpochPortraits.TryGetValue(providerId, out var cached))
+        {
+            return cached;
+        }
+
+        var portraits = new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
+        foreach (var index in _cosmeticIndexes.Where(index => index.Mod.Id.Equals(
+                     providerId,
+                     StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (var pair in index.Assets.Where(pair => IsEpochPortraitPath(pair.Key)))
+            {
+                var epochId = TryGetEpochIdFromPortraitPath(pair.Key);
+                if (epochId != null)
+                {
+                    portraits[epochId] = pair.Value;
+                }
+            }
+
+            foreach (var path in index.Archive.Paths)
+            {
+                var source = path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ? path[..^6] :
+                    path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ? path[..^7] : path;
+                var epochId = TryGetEpochIdFromPortraitPath(source);
+                if (epochId == null || portraits.ContainsKey(epochId))
+                {
+                    continue;
+                }
+
+                var built = index.TryBuildAsset(source);
+                if (built != null)
+                {
+                    portraits[epochId] = built;
+                }
+            }
+        }
+
+        _providerEpochPortraits[providerId] = portraits;
+        return portraits;
+    }
+
+    internal SelectedEpochPortrait? FindSelectedEpochPortrait(
+        string epochId,
+        IReadOnlyDictionary<string, string> selections,
+        IReadOnlyList<string> providerPriority)
+    {
+        if (string.IsNullOrWhiteSpace(epochId))
+        {
+            return null;
+        }
+
+        var normalizedEpochId = epochId.Trim().ToLowerInvariant();
+        var candidates = new List<(SkinGroup Group, SkinOption Option, string ProviderId, ResourceAsset Asset)>();
+        foreach (var group in Groups)
+        {
+            if (!selections.TryGetValue(group.Id, out var selectedId))
+            {
+                continue;
+            }
+
+            var selected = group.Options.FirstOrDefault(option =>
+                option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
+            if (selected == null || selected.Id.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var providerId = selected.EffectiveProviderId;
+            if (!GetProviderEpochPortraits(providerId).TryGetValue(normalizedEpochId, out var asset))
+            {
+                continue;
+            }
+
+            var expectedOwner = ResolveEpochPortraitOwnerGroupId(normalizedEpochId, providerId);
+            if (expectedOwner != null &&
+                !group.Id.Equals(expectedOwner, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            candidates.Add((group, selected, providerId, asset));
+        }
+
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        for (var i = providerPriority.Count - 1; i >= 0; i--)
+        {
+            var providerId = providerPriority[i];
+            var prioritized = candidates.FirstOrDefault(candidate =>
+                candidate.ProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase));
+            if (prioritized.Group != null)
+            {
+                return new SelectedEpochPortrait(
+                    prioritized.Group.Id,
+                    prioritized.Option.Id,
+                    NormalizeTakeoverPath(prioritized.Asset.SourcePath));
+            }
+        }
+
+        var chosen = candidates[^1];
+        return new SelectedEpochPortrait(
+            chosen.Group.Id,
+            chosen.Option.Id,
+            NormalizeTakeoverPath(chosen.Asset.SourcePath));
+    }
+
+    internal string? ResolveEpochPortraitOwnerGroupId(string epochId, string providerId)
+    {
+        var normalizedEpochId = epochId.Trim().ToLowerInvariant();
+        var providerGroups = Groups
+            .Where(group => group.Options.Any(option =>
+                option.EffectiveProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase)))
+            .Select(group => group.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (normalizedEpochId.EndsWith("_epoch", StringComparison.OrdinalIgnoreCase))
+        {
+            var stem = normalizedEpochId[..^6];
+            if (providerGroups.Contains(stem))
+            {
+                return stem;
+            }
+
+            // Character-numbered epochs such as silent7_epoch (Tezcatara's Soup) or
+            // defect7_epoch (Darv's Ooh Shiny!) may be provided either by a character pack
+            // (which owns "silent"/"defect") or by an Ancient pack (which owns "tezcatara"/"darv").
+            var prefix = new string(stem.TakeWhile(char.IsLetter).ToArray());
+            if (prefix.Length > 0 && providerGroups.Contains(prefix))
+            {
+                return prefix;
+            }
+
+            if (KnownAncientEpochOwners.TryGetValue(normalizedEpochId, out var ancientOwner) &&
+                providerGroups.Contains(ancientOwner))
+            {
+                return ancientOwner;
+            }
+        }
+
+        return null;
+    }
+
+    internal RuntimeResourceOverlay BuildIsolatedEpochPortraitOverlay(
+        string groupId,
+        string selectionId,
+        string epochId,
+        string aliasToken)
+    {
+        var group = Groups.First(g => g.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+        var selected = group.Options.FirstOrDefault(option =>
+            option.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
+        if (selected == null ||
+            !GetProviderEpochPortraits(selected.EffectiveProviderId).TryGetValue(
+                epochId.Trim().ToLowerInvariant(),
+                out var asset))
+        {
+            return new RuntimeResourceOverlay(
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        }
+
+        var canonicalPath = NormalizeTakeoverPath(asset.SourcePath);
+        var resource = CreateRuntimeResource(canonicalPath, asset, baseline: null);
+        var overlay = BuildAliasedResourceOverlay(
+            [resource],
+            [canonicalPath],
+            aliasToken,
+            redirectDirectScenesAtCanonicalPath: false);
+        var files = overlay.Files
+            .Where(pair => !overlay.CanonicalDependencyPaths.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        return new RuntimeResourceOverlay(
+            overlay.ResourcePaths,
+            files,
+            overlay.SourceAliases,
+            overlay.PayloadAliases,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static readonly Dictionary<string, string> KnownAncientEpochOwners =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["orobas_epoch"] = "orobas",
+            ["darv_epoch"] = "darv",
+            ["neow_epoch"] = "neow",
+            ["silent7_epoch"] = "tezcatara",
+            ["defect7_epoch"] = "darv",
+        };
 
     private static bool IsCharacterAppearanceOption(SkinOption option) =>
         option.Assets.Keys.Any(path =>
@@ -3623,6 +3932,25 @@ internal sealed partial class SkinCatalog : IDisposable
 
     internal static bool IsRelicAtlasTexturePath(string path) =>
         RelicAtlasTextureRegex().IsMatch(NormalizeTakeoverPath(path));
+
+    internal static bool IsRelicBigIconPath(string path)
+    {
+        var normalized = NormalizeTakeoverPath(path);
+        return RelicBigIconRegex().IsMatch(normalized) &&
+               !normalized.EndsWith("_outline.png", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsEpochPortraitPath(string path) =>
+        EpochPortraitRegex().IsMatch(NormalizeTakeoverPath(path));
+
+    internal static string? TryGetEpochIdFromPortraitPath(string path)
+    {
+        var match = EpochPortraitRegex().Match(NormalizeTakeoverPath(path));
+        return match.Success ? match.Groups["id"].Value.ToLowerInvariant() : null;
+    }
+
+    internal static bool IsEpochAtlasPath(string path) =>
+        EpochAtlasRegex().IsMatch(NormalizeTakeoverPath(path));
 
     private IReadOnlyDictionary<string, ResourceFile> CollectFullRuntimeProviderBaselineOverlay(
         string providerId)
@@ -3676,7 +4004,10 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlySet<string> selectableProviderFiles)
     {
         var takeoverPath = NormalizeTakeoverPath(dependencyPath);
-        if (AncientBackgroundSceneRegex().IsMatch(StripResourceRedirectSuffix(takeoverPath)))
+        var strippedTakeoverPath = StripResourceRedirectSuffix(takeoverPath);
+        if (AncientBackgroundSceneRegex().IsMatch(strippedTakeoverPath) ||
+            IsEpochPortraitPath(strippedTakeoverPath) ||
+            IsEpochAtlasPath(strippedTakeoverPath))
         {
             return false;
         }
@@ -3951,9 +4282,8 @@ internal sealed partial class SkinCatalog : IDisposable
 
         var queue = new Queue<(PckResourceIndex Index, ResourceFile File)>();
         var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        // Character localization tables are discovered by LocManager rather than referenced from
-        // the character scenes, so dependency walking can never reach them. Other localization
-        // tables are mounted permanently by BuildOverlay and must never follow a skin selection.
+        // LocManager discovers character localization tables outside the scene dependency graph.
+        // BuildOverlay finalizes character dialogue tables using the active character selections.
         foreach (var index in indexes)
         {
             foreach (var path in index.Archive.Paths.Where(path =>
@@ -4909,8 +5239,9 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var sourcePath in sourcePaths)
         {
             var baseline = ResolveBaseline(sourcePath);
-            var providerRelic = selected != null && IsRelicAtlasSpritePath(sourcePath) &&
-                                TryResolveProviderAsset(selected, sourcePath, out var providerRelicAsset)
+            var providerRelic = selected != null &&
+                                (IsRelicAtlasSpritePath(sourcePath) || IsRelicBigIconPath(sourcePath)) &&
+                                TryResolveProviderAsset(selected, sourcePath, out var providerRelicAsset, groupId)
                 ? providerRelicAsset
                 : null;
             // A provider may override a canonical scene the character option never declares:
@@ -4919,7 +5250,9 @@ internal sealed partial class SkinCatalog : IDisposable
             // PCK before falling back to the game baseline, so "a teammate's skin also changes
             // orbs / frames / panels" works for every pack with the same layout, not only for
             // full-runtime ones.
-            var providerCanonical = selected == null || IsRelicAtlasSpritePath(sourcePath)
+            var providerCanonical = selected == null ||
+                                    IsRelicAtlasSpritePath(sourcePath) ||
+                                    IsRelicBigIconPath(sourcePath)
                 ? null
                 : GetSelectionProviderIndexes(selected)
                     .Select(index => index.Assets.GetValueOrDefault(sourcePath))
@@ -5015,10 +5348,11 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         if (resourcePaths.Any(path =>
                 !IsRelicAtlasSpritePath(path) &&
-                !IsRelicAtlasTexturePath(path)))
+                !IsRelicAtlasTexturePath(path) &&
+                !IsRelicBigIconPath(path)))
         {
             throw new ArgumentException(
-                "遗物私有资源包只能包含遗物图集或其切片。",
+                "遗物私有资源包只能包含遗物图集、切片或独立遗物图标。",
                 nameof(resourcePaths));
         }
 
@@ -5043,7 +5377,10 @@ internal sealed partial class SkinCatalog : IDisposable
             files,
             overlay.SourceAliases,
             overlay.PayloadAliases,
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+        {
+            RelicSpriteTextures = overlay.RelicSpriteTextures
+        };
     }
 
     private RuntimeResource CreateRuntimeResource(
@@ -5832,6 +6169,27 @@ internal sealed partial class SkinCatalog : IDisposable
             RuntimeLoadSafety.EstimateOverlayTextureBytes(files,
                 resource.PayloadFiles.Select(payload => payloadAliases[payload.Path]).Prepend(sourceAliases[resource.SourcePath])),
             StringComparer.OrdinalIgnoreCase);
+        var relicSpriteTextures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in dependencies)
+        {
+            if (!IsRelicAtlasSpritePath(pair.Key))
+            {
+                continue;
+            }
+
+            var textureDep = pair.Value.FirstOrDefault(dep =>
+                aliasedResourcePaths.ContainsKey(dep) &&
+                (IsRelicAtlasTexturePath(dep) ||
+                 dep.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+                 dep.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ||
+                 dep.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                 dep.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)));
+            if (textureDep != null)
+            {
+                relicSpriteTextures[pair.Key] = textureDep;
+            }
+        }
+
         return new RuntimeResourceOverlay(
             aliasedResourcePaths,
             files,
@@ -5839,7 +6197,13 @@ internal sealed partial class SkinCatalog : IDisposable
             payloadAliases,
             canonicalRedirectPaths,
             canReuseExternalDependencies)
-        { LoadOrder = RuntimeDependencyPlan.Order(dependencies), RootBytes = costs, CanBindDependencies = canBind, UnboundDependencies = unbound };
+        {
+            LoadOrder = RuntimeDependencyPlan.Order(dependencies),
+            RootBytes = costs,
+            CanBindDependencies = canBind,
+            UnboundDependencies = unbound,
+            RelicSpriteTextures = relicSpriteTextures
+        };
     }
 
     internal static byte[] RewriteAliasedResourceBytes(
@@ -9361,6 +9725,21 @@ internal sealed partial class SkinCatalog : IDisposable
     private static partial Regex RelicAtlasTextureRegex();
 
     [GeneratedRegex(
+        "^res://images/relics/[^/]+\\.png$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex RelicBigIconRegex();
+
+    [GeneratedRegex(
+        "^res://images/timeline/epoch_portraits/(?:placeholder/)?(?<id>[^/.]+)\\.png$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex EpochPortraitRegex();
+
+    [GeneratedRegex(
+        "^res://images/atlases/epoch_atlas(?:_beta)?\\.(?:png|tpsheet)$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex EpochAtlasRegex();
+
+    [GeneratedRegex(
         "(?m)^\\s*(?<property>region|margin)\\s*=\\s*Rect2\\(\\s*(?<x>-?[0-9.]+)\\s*,\\s*(?<y>-?[0-9.]+)\\s*,\\s*(?<width>-?[0-9.]+)\\s*,\\s*(?<height>-?[0-9.]+)\\s*\\)",
         RegexOptions.IgnoreCase)]
     private static partial Regex AtlasTextureRectRegex();
@@ -9406,6 +9785,9 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("^res://waifu_assets/[^/]+/(.+)$", RegexOptions.IgnoreCase)]
     private static partial Regex WaifuAssetsPathRegex();
+
+    [GeneratedRegex("^res://waifu_assets/(?<owner>[^/]+)/", RegexOptions.IgnoreCase)]
+    private static partial Regex WaifuAssetsOwnerRegex();
 
     [GeneratedRegex("\"(res://[^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex ResourcePathRegex();
@@ -9794,6 +10176,15 @@ internal sealed class AncientCardReplacement
         !string.IsNullOrWhiteSpace(AncientPortrait) ? AncientPortrait : NormalPortrait;
 }
 
+internal sealed record ScopedRelicAsset(
+    ResourceAsset Asset,
+    string? OwnerGroupId);
+
+internal sealed record SelectedEpochPortrait(
+    string GroupId,
+    string SelectionId,
+    string CanonicalPortraitPath);
+
 internal sealed record RuntimeResourceOverlay(
     IReadOnlyDictionary<string, string> ResourcePaths,
     IReadOnlyDictionary<string, byte[]> Files,
@@ -9807,6 +10198,8 @@ internal sealed record RuntimeResourceOverlay(
     internal bool CanBindDependencies { get; init; }
     internal IReadOnlyList<string> UnboundDependencies { get; init; } = [];
     internal IReadOnlyList<string> SpinePages { get; init; } = [];
+    internal IReadOnlyDictionary<string, string> RelicSpriteTextures { get; init; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
 internal readonly record struct RelicTextureRect(float X, float Y, float Width, float Height);

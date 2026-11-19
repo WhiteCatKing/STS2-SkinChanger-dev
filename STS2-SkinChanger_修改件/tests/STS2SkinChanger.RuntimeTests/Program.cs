@@ -75,6 +75,7 @@ if (args.Length == 2 && args[0] == "--test-mlm-context")
 if (args.Length == 1 && args[0] == "--test-relic-ownership")
 {
     RelicOwnershipTests.Run();
+    AncientWaifusSupportTests.Run();
     return;
 }
 
@@ -163,6 +164,12 @@ if (args.Length >= 3 && args[0] == "--test-protected-characters")
 if (args.Length == 2 && args[0] == "--test-crusader-hooks")
 {
     CrusaderHookTests.Run(args[1]);
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-mode-background")
+{
+    CharacterSelectModeBackgroundTests.Run();
     return;
 }
 
@@ -786,6 +793,7 @@ if (args.Length == 3 && args[0] == "--audit-part-takeover")
     return;
 }
 
+FoolWaifuIdentityTests.Run();
 LateTakeoverGuardTests.Run();
 OrchisRoomCallbackTests.Run();
 SpineResourcePreflightTests.Run();
@@ -800,6 +808,7 @@ StorageLifecycleTests.TestQuitAndLockedFiles();
 QuitBoundaryTests.Run();
 CreatureVisualParentTests.Run();
 ProviderToolbarTests.Run();
+CharacterSelectModeBackgroundTests.Run();
 ManualCharacterVariantTests.Run();
 AppearanceResourceBoundaryTests.Run();
 CreatureIntentLayoutTests.Run();
@@ -839,6 +848,7 @@ ModThemeTests.Run();
 AppearanceSelectionHintTests.Run();
 ProviderLookupTests.Run();
 CharacterCatalogOwnershipTests.Run();
+CharacterDialogueLocalizationTests.Run();
 EventSkinTests.Run();
 DuplicateProviderLoadingTests.Run();
 CreatureVisualLifecycleTests.Run();
@@ -856,6 +866,9 @@ ScrollListRebuildContractTests.Run();
 CardSkinRefreshContractTests.Run();
 CardProviderBridgeContractTests.Run();
 SceneAppearanceLifecycleTests.Run();
+MerchantPlayerCharacterIsolationTests.Run();
+RelicOwnershipTests.Run();
+AncientWaifusSupportTests.Run();
 LoadOrderSafetyTests.Run();
 EntryPatchIsolationTests.Run();
 var declaredVersion = Version.Parse(Entry.InternalTestVersion);
