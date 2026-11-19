@@ -1,10 +1,11 @@
 # 皮肤切换器 · 协作维护规矩
 
-来源：维护者（yuinn 一方）2026-11-18 起执行的《给 AI 的维护规矩》，本文件为项目内正式副本。
+来源：维护者（yuinn 一方）《给 AI 的维护规矩》2026-11-19 版（52 行），本文件为项目内正式副本。
 接手或继续开发前，先读本文件，再读下列既有记录：
 
 - [docs/refactor/fix-upstream-1.0.35-gpt.md](../refactor/fix-upstream-1.0.35-gpt.md)
 - [docs/refactor/fix-upstream-1.0.35-dsh.md](../refactor/fix-upstream-1.0.35-dsh.md)
+- [docs/refactor/fix-upstream-1.0.35-gemini.md](../refactor/fix-upstream-1.0.35-gemini.md)
 
 ## 开工前
 
@@ -20,6 +21,15 @@
 - 奥契丝修复包的商店 / 火堆回调按玩家选择限制（`OrchisSkinFixCompat`），**不允许整包禁用该修复包**。测试：`OrchisRoomCallbackTests`。
 - `CharSelectTakeoverSuppressor`（禁止第三方改骨妹选人背景大图，防循环报错崩溃）必须保留，且支持晚载补装。测试：`LateTakeoverGuardTests`。
 - 联机大厅补丁不绑定 `ChangeCharacter` 的第三个参数名（正式版 / 测试版名字不同）。
+
+1.0.36.102 新增（2026-11-19）：
+
+- Fool_Waifu 自恢复补丁的拦截（`FoolWaifuRuntimeCompat`）：未选中 Fool_Waifu 时不许它把切换器停掉的补丁装回来（含头像、选人按钮、商店 `AttachMerchant`）——否则其他愚者皮肤头像被占、商店 Hilde 缩小。测试：`FoolWaifuIdentityTests`。
+- 角色专属先古对话随选择（`SkinCatalog.CharacterDialogue`、`HildeAncientDialogueCompat`）：整表都是 `*.talk.<角色>.*` 的 `ancients.json` 跟随该角色当前皮肤；Hilde 写入 `AncientDialogueSet` 只在选中时生成。设置 / UI 文本表仍全局。测试：`CharacterDialogueLocalizationTests`。
+- 商人热切换：第三方 `_Ready` 前缀**进树后**才重放，只跑一次（`MerchantRuntimeAppearance`）——否则切换后商人点不了。测试：`--test-merchant-lifecycle`。
+- 纯商人提供者不得修改玩家商店形象 `NMerchantCharacter`（`ManagedSkinModLoader` 剥离其补丁，保留 `NMerchantButton` / `NMerchantHand`）。测试：`MerchantPlayerCharacterIsolationTests`。
+- 恐惧 / 极速选人：模式界面背景重做（`CharacterSelectModeBackgroundPatch`、`SetSelectedCharacterVisuals` 后置）、自绘叠加层的包在新背景入树后重挂（`ProviderModeSelectOverlayBridge`）、恐惧界面 `GrayScaler` / `BigRotatingContainer` 只在选中带点击切档的皮肤时放通点击。测试：`--test-mode-background`（`CharacterSelectModeBackgroundTests`）。
+- AncientWaifus：遗物独立 PNG 切片 + `RelicModel.BigIcon`（`RelicSkinResources`）、时间线 `EpochModel.Portrait` / `RealPortrait`（`TimelineEpochSkinResources`）、CznStyleUI 图鉴兼容（`CznRelicCollectionCompat`）、触摸区由先古动画启动时挂载（`InteractiveTouchBoxBridge.AttachToScene`，**不要改回全局 `SceneTree.NodeAdded` 监听**，性能原因）。测试：`AncientWaifusSupportTests`。
 
 ## 改完必须做
 
@@ -45,4 +55,8 @@
 ## 排查第三方 Mod 时
 
 - 先看日志和崩溃诊断，再动代码。
+- 常见的三类坑（2026-11-19 实例）：① 包会自己把补丁装回来（Fool_Waifu），停用后要确认它没有自恢复；② 资源放在包的私有路径、由 DLL 重定向（AncientWaifus、Fool_Waifu 的头像），资源隔离拦不住，要按入口处理；③ 包只在标准选人界面挂自己的叠加层，恐惧 / 极速是另外的界面。
+- 包更新后功能失效：先对比新旧两版 DLL（旧版通常还在工坊目录的备份或用户手里），再看切换器哪条路径没接上。
+- 皮肤包作者让玩家「把它排在切换器上面」的说法不要采纳：切换器必须排第一。
+- 加载顺序：游戏按设置里同 ID **最后一行**的位置排序，忽略 `loadPriority`；同 ID 本地 + 工坊并存会让切换器被挤到后面。排查「皮肤大面积失效 + 主界面报重复 ID」时先查这个。
 - 怀疑某个第三方包本身坏了：用 `ModApiScan` 扫它调用的游戏接口和补丁参数（工具源码由 yuinn 一方提供，需要时向其索取）。
