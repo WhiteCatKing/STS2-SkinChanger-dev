@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
@@ -1599,10 +1599,12 @@ internal static class MerchantRuntimeAppearance
             // and %MerchantSelectionReticle resolve to the freed template and the button's
             // _Ready path receives Nil.
             SetOwnerRecursive(button, button);
-            // SL 能修好，是因为它会在节点进入场景树、原生 _Ready 之前先把该皮肤的外观初始化步骤写上去。
-            // 局内切换必须用同样的顺序，否则包的补丁只能写到一个已经被初始化过的节点上，
-            // 结果就是 a/b 位姿丢失、c 退回原版商人。
-            ReplayNodeReadyBeforeTree(button, groupId);
+            // Do not replay the provider's _Ready prefix here: this node is detached, and prefixes
+            // that call node.GetPath() (Merchant2CuteII's MerchantVisualMotion does) throw and stop
+            // halfway, leaving a stray control on top of the button so the merchant can no longer
+            // be clicked. The in-tree split bridge (MerchantButtonProviderReadyBridgePatch) replays
+            // the same prefix before the native _Ready body once the button is added to the room,
+            // which is the order these callbacks need anyway.
             return button;
         }
 
@@ -1615,44 +1617,6 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
-    /// <summary>
-    /// 在节点加入场景树之前重放选中皮肤的外观初始化步骤（等价于 SL 后的重建顺序）。
-    /// </summary>
-    private static void ReplayNodeReadyBeforeTree(Node node, string groupId)
-    {
-        if (MerchantVariantScenes.IsBlitz(node)) return;
-        try
-        {
-            var providerId = SkinService.GetSelectedFullRuntimeProvider(groupId);
-            if (string.IsNullOrWhiteSpace(providerId) || !GodotObject.IsInstanceValid(node))
-            {
-                return;
-            }
-
-            EnsureSelectedMerchantProviderActive(groupId, providerId);
-            // 第一次切到某个商人皮肤时，它的补丁可能还没装上（激活发生在重放之后），
-            // 此时重放拿不到任何步骤 → 位姿退回基础值。先确保补丁在位再重放。
-            // Activation owns initialization and patch classification. Do not PatchAll a
-            // partially initialized assembly here: that installs a second native owner.
-            var behaviorProviderId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
-            // 只按一个键重放一次：ReplaySelectedNodeReadyPrefixes 开头会 RestoreNodeReadyMutation，
-            // 同一节点重放两次会把自己刚建出来的节点回收掉，表现为“模型消失”。
-            // 必须先全等：Merchant2CuteIIB 也 Contains("Merchant2CuteII")，混用会让 a 命中 b 的运行时，
-            // 重放拿到 b 的步骤 → a 每次切换都错。
-            var runtimeIds = ManagedSkinModLoader.ActiveProviderRuntimeIds();
-            var replayKey = runtimeIds.FirstOrDefault(key => string.Equals(key, providerId, StringComparison.OrdinalIgnoreCase))
-                            ?? runtimeIds.FirstOrDefault(key => string.Equals(key, behaviorProviderId, StringComparison.OrdinalIgnoreCase));
-            var replayed = replayKey == null
-                ? 0
-                : ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(replayKey, node).Count;
-
-            ModLog.Info($"[商人] 建节点前已重放外观初始化步骤：{providerId}（分组={groupId}，重放={replayed}，运行时={string.Join("|", ManagedSkinModLoader.ActiveProviderRuntimeIds())}）。");
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn($"[商人] 建节点前重放失败（分组={groupId}）：{exception.GetBaseException().Message}");
-        }
-    }
     internal static (Node Scene, string ScenePath) InstantiateMerchantPreviewScene(
         string groupId = GroupId, bool blitz = false)
     {

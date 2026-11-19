@@ -10,6 +10,11 @@ internal static class IndependentFoolSkinCompat
     private static readonly HashSet<Assembly> Prepared = [];
     internal static void Prepare(Assembly assembly)
     {
+        if (FoolWaifuRuntimeCompat.IsProvider(assembly))
+        {
+            FoolWaifuRuntimeCompat.Install(assembly);
+            return;
+        }
         if (assembly.GetName().Name != "NailongFool" || !Prepared.Add(assembly)) return;
         var mount = assembly.GetType("NailongFool.NailongFoolMod")?.GetMethod("MountAssets", BindingFlags.Static | BindingFlags.NonPublic);
         if (mount != null) new Harmony(Entry.ModId + ".nailong-pack").Patch(mount,

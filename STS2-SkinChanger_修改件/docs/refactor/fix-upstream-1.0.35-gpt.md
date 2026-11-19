@@ -129,3 +129,27 @@ ManagedSkinModLoader 根据程序集元数据简单名检查实际加载上下�
 v0.111.1 与 v0.113.1 源码构建均为 0 警告、0 错误，两端 LogicTests、完整 RuntimeTests 与十字军、贞德真实包保护回归均通过。修复包和奥契丝本体 DLL 仅做静态读取。日志在 `%TEMP%\sts2-gpt-161-1795007247265`。
 
 请云用测试包看三组。① 骨妹非奥契丝、奥斯提奥契丝，切进战斗、商店、火堆后核对骨妹仍是刚选的外观，奥斯提保留奥契丝。② 骨妹奥契丝、奥斯提原版或其他皮肤，确认骨妹的比例、火堆动画仍正常，奥斯提保持自己的选择。③ 选人对照两种组合的小模型粒子和背景，切一次独立奥斯提皮肤，确认通知生效且背景没有被接管。
+
+## #1/#5 Fool_Waifu 头像
+
+维护者的 1.1.0 日志先记录切换器卸下 17 个行为补丁，随后 `Fool_Waifu` 在加载对局资源前自行恢复 24 个回调。只读反编译工坊 1.1.1 找到 `FoolWaifu.ResumeSkinCompatibility.BeforeRun(RunState)`。作者用独立动态程序集 `FoolWaifu.ResumeBridge` 把此回调挂在 `NGame.StartRun` 和 `NGame.LoadRun`，所以按提供者 DLL 归属捕获回调时看不到这个转发。作者快照收录了初始化时属于 `Fool_Waifu` 的补丁，排除了 `SelectCharacter`。恢复判断读取 `CharacterAnimationSelector.RuntimeSkinService.GetActiveVariantId("fool")`，找不到那套管理器时直接当作已选。它没有读取切换器的当前选择。
+
+作者的 `PortraitPatch`、`PortraitOutlinePatch` 和 `CharacterIconScenePatch` 覆盖局内头像，`PackedIconPatches` 覆盖普通和锁定的选人图标，`CharacterSelectButtonTexturePatch` 还在按钮的初始化、解锁和 `_Process` 等入口直接写两个图标节点。这些图标补丁都在上述作者快照的覆盖范围内。`SkinAssets.UiTextures` 只按文件名保存私有路径加载的贴图。贴图由回调主动返回，没有接管原生资源路径。现有局内 HUD 刷新会重建 `Character.Icon` 子节点，选人刷新会重新设置 `%Icon` 和 `%IconAdd`，因此保留缓存供下次选中使用。
+
+- `Core/FoolWaifuRuntimeCompat.cs` 在当前愚者提供者不是 Waifu 时拦截 `BeforeRun`。共享贴图入口只拦头像、描边、选人图标和地图标记，防止仍在位的回调从私有缓存返回错误贴图。手部、立绘和半眼设置继续走原路径。选中 Waifu 时放行原方法。
+- `Core/SkinService.cs` 安装已加载的目标，`Core/IndependentFoolSkinCompat.cs` 在按需激活时补装。安装按方法幂等。`Core/ManagedSkinModLoader.cs` 在切走时把运行中额外装回的头像回调也纳入原有卸载流程，只识别上述五个补丁类。
+- `tests/STS2SkinChanger.RuntimeTests/FoolWaifuIdentityTests.cs` 和 `Program.cs` 验证预先创建的转发委托、未选时禁止重装、切回后恢复、缓存中的头像无法越权，以及只卸头像回调、保留独立设置。
+
+正式版 v0.111.1 和测试版 v0.113.1 主工程均为 0 警告、0 错误，LogicTests 和完整无参数 RuntimeTests 两端通过。工坊三款真实愚者皮肤专项在测试版通过，正式版正确排除本端不存在的愚者。构建与日志在 `%TEMP%\sts2-gpt-164-1795059287020`。
+
+请云在测试版先选一次 Waifu，再换 Hilde 开局并读档，检查左上角头像是否保留 Hilde。回选人界面查看下方愚者按钮，确认普通与锁定图标没有变成 Waifu。最后切回 Waifu，检查两个入口和独立半眼设置。
+
+### #166 · Hilde 商店模型缩小
+
+云的 `godot2026-11-19T11.41.52.log` 第 2578 行停用了 Waifu 的 17 个行为补丁，第 2729 行由 Waifu 自行恢复 24 个。当时选的是 Hilde。进商店时，第 3963–3979 行显示 Waifu 从原版 `_Ready` 同步触发的 `PlayAnimation` 后置调用 `AttachMerchant`，第 4021–4031 行又显示它从自己的 `MerchantReadyPatch` 调用同一入口，两次都报自带骨架初始化失败。商店越权与头像是同一次自恢复。
+
+核对 1.1.1 的 DLL 与 PCK。此次走的是 `OwnRigSkin.TryAttach`，这条路径没有读取 `MerchantHeight` 或改写 Hilde 骨架的缩放。Waifu 将挂载节点移到原骨架前面，之后才执行 `configure`。失败时只调用 `QueueFree`，到帧末才移除节点。CznCore 在原版 `NMerchantCharacter._Ready` 后置发布 `MerchantCharacterReadyEvent`，Hilde 要求第一个子节点能绑定为 SpineSprite 才进入 `MerchantPresentationRuntime.Apply`。抢占第一个子节点会让 Hilde 跳过自己的商店尺寸。原版 `fool_merchant.tscn` 的 SpineSprite 是 `0.47`，Hilde 的正常商店路径由 `CznMerchantSurface` 设为 `2.021`。这条时序能解释模型缩小，旧日志没有该玩家最终显示尺寸的实测值。
+
+`FoolWaifuRuntimeCompat.cs` 用现有愚者选择判断拦截 `SkinVisuals.AttachMerchant(NMerchantCharacter)`，覆盖 Ready 和动画两条调用。选回 Waifu 仍允许它挂载。变更只涉及该兼容文件与 `FoolWaifuIdentityTests.cs`，未涉及商人热切换实现。离线合成测试验证旧回调尚在时，选中 Hilde 会拦住两次挂载，选中 Waifu 会放行。双端主工程均 0 警告、0 错误，LogicTests 和完整 RuntimeTests 均通过。日志在 `%TEMP%\sts2-gpt-166-1795060091778`。
+
+请云用同样的存档或路线复测。先选一次 Waifu，再换 Hilde 进商店，核对愚者玩家模型尺寸和待机动画，并确认没有 Waifu 挂载警告。最后选回 Waifu 再进商店，确认它自己的商店表现仍在。

@@ -2888,11 +2888,13 @@ internal static class ManagedAncientSceneAnimation
             return;
         }
 
+        InteractiveTouchBoxBridge.AttachToScene(groupId, sceneRoot, spineNode);
+
         try
         {
             var sprite = new MegaSprite(spineNode);
             sceneRoot.RunWhenSpineReady(sprite, animationState =>
-                StartDefaultAnimation(groupId, sprite, animationState));
+                StartDefaultAnimation(groupId, sceneRoot, sprite, animationState));
         }
         catch (Exception exception)
         {
@@ -3031,6 +3033,7 @@ internal static class ManagedAncientSceneAnimation
 
     private static void StartDefaultAnimation(
         string groupId,
+        Node sceneRoot,
         MegaSprite sprite,
         MegaAnimationState animationState)
     {
@@ -3064,6 +3067,7 @@ internal static class ManagedAncientSceneAnimation
                     AddAnimationCompat(animationState, idle, delay: 0f, loop: true);
                 }
 
+                InteractiveTouchBoxBridge.NotifyIntroStarted(sceneRoot);
                 ModLog.Info($"已启动 {groupId} 的先古 Spine 动画：{intro}" +
                             (idle == null ? string.Empty : $" -> {idle}"));
                 return;

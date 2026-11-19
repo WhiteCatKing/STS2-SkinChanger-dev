@@ -19,6 +19,25 @@ internal static class CharacterSelectModePatches
             Bind("_Process", typeof(MultiplayerSkinLobbyTickPatch), null, "Postfix");
             Bind("StartNewSingleplayerRun", typeof(SingleplayerEmbarkSkinSelectorPatch), "Prefix", null);
             Bind("StartNewMultiplayerRun", typeof(MultiplayerEmbarkSkinSelectorPatch), "Prefix", null);
+            // These mode screens also rebuild their background from helpers that run outside
+            // SelectCharacter (Dread's win-streak animation calls SetSelectedCharacterVisuals
+            // directly). Re-apply the selected skin's background after that helper, with Last
+            // priority so no later postfix of ours can undo it.
+            BindBackgroundRefresh(type, "SetSelectedCharacterVisuals");
+
+            void BindBackgroundRefresh(Type screenType, string methodName)
+            {
+                var method = screenType.GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (method == null || method.GetParameters().Length != 1) return;
+                var parameters = method.GetParameters();
+                if (parameters[0].ParameterType != typeof(MegaCrit.Sts2.Core.Models.CharacterModel)) return;
+                harmony.Patch(method, postfix: new HarmonyMethod(
+                    typeof(CharacterSelectModeBackgroundPatch), nameof(CharacterSelectModeBackgroundPatch.Postfix))
+                {
+                    priority = Priority.Last
+                });
+            }
 
             void Bind(string methodName, Type patch, string? prefix, string? postfix)
             {

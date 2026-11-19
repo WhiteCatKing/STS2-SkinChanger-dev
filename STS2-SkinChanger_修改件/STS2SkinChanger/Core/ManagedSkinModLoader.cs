@@ -1359,15 +1359,26 @@ internal static class ManagedSkinModLoader
                 .Where(patch => IsNodeReadyPresentationTarget(patch.Target))
                 .ToArray();
             var providerOwnsOstyPet = ProviderOwnsOstyPet(providerId);
+            var providerIsMerchantOnly = IsMerchantOnlyProvider(providerId);
             bool IsManaged(ProviderPatch patch) =>
                 IsManagedResourceOwnershipPatch(patch) ||
                 IsManagedCharacterPresentationPatch(patch) ||
                 IsManagedNodeReadyPresentationPatch(patch) ||
                 ManagedMerchantSettingsBridge.OwnsSettingsPatch(patch.Callback) ||
-                (!providerOwnsOstyPet && IsOstyPositioningPatch(patch));
+                HildeAncientDialogueCompat.OwnsPatch(patch.Target, patch.Callback) ||
+                (!providerOwnsOstyPet && IsOstyPositioningPatch(patch)) ||
+                ShouldStripPlayerMerchantCharacterPatch(patch.Target, providerIsMerchantOnly);
             var managedPatches = installedPatches
                 .Where(IsManaged)
                 .ToArray();
+            var strippedPlayerMerchantCount = managedPatches.Count(patch =>
+                ShouldStripPlayerMerchantCharacterPatch(patch.Target, providerIsMerchantOnly));
+            if (strippedPlayerMerchantCount > 0)
+            {
+                ModLog.Info(
+                    $"[商人隔离] 已屏蔽纯商人提供者 {provider.Name} 误挂在玩家商店形象 NMerchantCharacter 上的 " +
+                    $"{strippedPlayerMerchantCount} 个补丁（避免覆盖玩家角色外观）。");
+            }
             IReadOnlyList<ProviderPatch> behaviorPatches = installedPatches
                 .Where(patch => !IsManaged(patch))
                 .ToArray();
@@ -1525,7 +1536,7 @@ internal static class ManagedSkinModLoader
         [
             ("恢复场景节点", () => RestoreNodeReadyBehaviors(providerId, runtime)),
             ("恢复角色呈现", () => RestoreCharacterPresentations(runtime)),
-            ("卸载行为补丁", () => UnpatchProviderCallbacks(runtime.Patches)),
+            ("卸载行为补丁", () => UnpatchDeactivatedProviderCallbacks(runtime.Assembly, runtime.Patches)),
             ("停止地区控制器", () =>
                 StopRunEnvironmentControllers(runtime.RunEnvironmentControllers)),
             ("停用提供者节点", () =>
@@ -1546,6 +1557,22 @@ internal static class ManagedSkinModLoader
         ModLog.Info(
             $"已停用未选中皮肤提供者 {providerId} 的 {runtime.Patches.Count} 个行为补丁" +
             (failures.Count == 0 ? "。" : $"；{failures.Count} 个清理阶段失败并已记录。"));
+    }
+
+    private static void UnpatchDeactivatedProviderCallbacks(Assembly assembly, IReadOnlyList<ProviderPatch> patches)
+    {
+        if (!FoolWaifuRuntimeCompat.IsProvider(assembly))
+        {
+            UnpatchProviderCallbacks(patches);
+            return;
+        }
+
+        // The author can restore callbacks during a selected run after our activation snapshot.
+        // Include only that provider's known identity callbacks; its independent settings stay put.
+        var restoredIcons = CaptureProviderPatches(assembly)
+            .Where(patch => FoolWaifuRuntimeCompat.IsIdentityCallback(patch.Callback));
+        UnpatchProviderCallbacks(patches.Concat(restoredIcons)
+            .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind)).ToArray());
     }
 
     private static void RegisterProviderAssembly(string providerId, Assembly assembly)
@@ -1917,6 +1944,75 @@ internal static class ManagedSkinModLoader
              "NMerchantSlot" or
              "NMerchantDialogue" or
              "NFakeMerchant");
+
+    /// <summary>
+    /// <c>NMerchantCharacter</c> renders the player's own hero on the left side of the shop room,
+    /// not the shopkeeper NPC or the Fake Merchant (both use <c>NMerchantButton</c>). Some merchant
+    /// skin packs (e.g. MerchantFeminization) mistakenly patch <c>NMerchantCharacter._Ready</c> /
+    /// <c>PlayAnimation</c> thinking it is the Fake Merchant, overwriting the player's shop figure
+    /// with an unscaled merchant skeleton and breaking character-skin shop hooks (such as CznCore's
+    /// <c>stop</c> loop). Strip <c>NMerchantCharacter</c> patches whenever the provider only serves
+    /// merchant groups and owns no player character appearance group.
+    /// </summary>
+    internal static bool ShouldStripPlayerMerchantCharacterPatch(
+        MethodBase target,
+        bool providerIsMerchantOnly) =>
+        providerIsMerchantOnly && IsPlayerMerchantCharacterTarget(target);
+
+    internal static bool IsPlayerMerchantCharacterTarget(MethodBase target) =>
+        target.DeclaringType?.Name.Equals("NMerchantCharacter", StringComparison.Ordinal) == true;
+
+    internal static bool IsMerchantOnlyProviderGroups(
+        IEnumerable<(string GroupId, bool IsCharacterOrCompanionGroup)> servedGroups)
+    {
+        var hasMerchant = false;
+        foreach (var (groupId, isCharacterOrCompanion) in servedGroups)
+        {
+            if (isCharacterOrCompanion)
+            {
+                return false;
+            }
+
+            if (IsMerchantGroupId(groupId))
+            {
+                hasMerchant = true;
+            }
+        }
+
+        return hasMerchant;
+    }
+
+    private static bool IsMerchantGroupId(string groupId) =>
+        groupId.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
+        groupId.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase) ||
+        groupId.Equals("fake_merchant_event", StringComparison.OrdinalIgnoreCase) ||
+        groupId.Equals("fake_merchant", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMerchantOnlyProvider(string providerId)
+    {
+        try
+        {
+            var catalog = SkinService.Catalog;
+            if (catalog == null)
+            {
+                return false;
+            }
+
+            var servedGroups = catalog.Groups
+                .Where(group => group.Options.Any(option =>
+                    !option.IsComposition &&
+                    option.EffectiveProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase)))
+                .Select(group => (
+                    GroupId: group.Id,
+                    IsCharacterOrCompanionGroup: catalog.IsCharacterAppearanceGroup(group.Id) ||
+                        catalog.IsCompanionGroup(group.Id)));
+            return IsMerchantOnlyProviderGroups(servedGroups);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// Replays presentation-only postfixes after Skin Changer has rebuilt the current character

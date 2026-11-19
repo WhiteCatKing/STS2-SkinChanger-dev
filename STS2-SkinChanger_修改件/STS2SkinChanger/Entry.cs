@@ -74,6 +74,7 @@ public static class Entry
         // Pengo's Tarot paints localized text with its bundled Latin-only Balatro font; give the
         // CJK labels the game's locale font so Chinese/Japanese/Korean stop rendering as boxes.
         PengoTarotFontCompat.Install(harmony);
+        CznRelicCollectionCompat.Install(harmony);
         // v0.113.0 renamed NCreature.OstyScaleToSize; the Osty skin pack still patches the old
         // name, and one unresolved target makes it unpatch all of itself.
         OstyDefectImpostorCompat.Install(harmony);

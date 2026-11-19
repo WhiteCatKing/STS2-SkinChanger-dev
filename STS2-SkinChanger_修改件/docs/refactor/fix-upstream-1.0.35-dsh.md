@@ -71,3 +71,42 @@ tools/Sts2CrashWatch/Program.cs                                         (+5)    
 **测试**：`tests/STS2SkinChanger.LogicTests/MonsterSettingsCopyPolicyTests.cs`（已接进 LogicTests）：三个英雄的皮肤包，复制后目标英雄的怪物模式/条数/顺序/启用状态与源一致；卡牌区（模式、优先级、预设名）、角色皮肤、包名不变；复制的列表互相独立（改一个不影响源/另一个）；空序列返回 0。
 
 **验证**：主工程 0 错误 0 警告；LogicTests 全绿（含新组 `Monster settings copy policy passed`）；完整 RuntimeTests 跑完（SetErrorMode(3) 启动），末行 `Workshop policy tests passed.`。未改版本号、未 commit。UI 位置与两段式确认需要实机看一眼（离线只验证了策略与编译）。
+## 一、局内热切换商人后商人点不了（2026-11-19）
+
+**根因**：热切换重建 `NMerchantButton` 时，`InstantiateMerchantButton` 在节点**还没进树**的时候调 `ReplayNodeReadyBeforeTree`，手动重放了商人包的 `_Ready` **前缀**。Merchant2CuteII 的 `MerchantButtonPatch.Prefix` 里 `MerchantVisualMotion.Apply` 会调 `GetPath()`，节点不在树里必然抛 `Cannot get path of node as it is not in a scene tree`，前缀只执行了一半：它已经挂上去的覆盖层留在了按钮上，于是按钮被自己的视觉层挡住、点不开。
+同一次 `_Ready` 的这套前缀本来就会在按钮进树时由 `MerchantButtonProviderReadyBridgePatch`（Prefix Priority.First）再重放一遍——也就是同一前缀被跑两次，一次失败留下垃圾、一次成功，这才有「能看不能点」。
+
+**改动**（`Core/Features/Merchant/MerchantRuntimeAppearance.cs`）：
+- 删掉 `InstantiateMerchantButton` 里的 `ReplayNodeReadyBeforeTree(...)` 调用与这个只剩调用点的方法。前缀改由既有的**树内**桥（`MerchantButtonProviderReadyBridgePatch`）在原生 `_Ready` 之前重放——顺序同样是「原生初始化前」，但节点已经在树里，`GetPath()` 正常，且只跑一次。
+- 手部 / 库存的 `ReplaySelectedNodeReadyBehavior` 自己就是把节点挂进树之后才重放的，未改。
+
+**验证**：主工程 beta 引用 0/0、官方 v0.111.1 引用 0/0；`--test-merchant-lifecycle` 通过（200 个商店/火堆场景身份、初始化先于建节点、离场提供者隔离）；完整无参数 RuntimeTests 绿色（末行 `Workshop policy tests passed.`）。
+
+**A 大商人没有白色描边**：`MerchantFeminization.pck` 只有自己的 Spine（`nsfw.tres/.spatlas/.spjson/.ctex` + `nsfw_fake.*`）、一只手的素材和 `merchant_room/top/shop_merchant_top.tres` 替换，**没有任何描边资源/网格**；它用自己的骨架替换商人本体，原版描边网格自然套不上去。切换器侧热切换只是复用上一颗按钮的 `MerchantSelectionReticle`（`ReplaceMerchantButtonCore` 里的 `CopyRequiredUniqueNode`），没有删除或禁用描边。判定：**包本身的问题**，不改代码。
+## 二、极速（Blitz）/ 恐惧（Dread）模式选人背景退回原版（2026-11-19）
+
+**根因（已确认的链路）**：两种模式的钩子本来就生效——`CharacterSelectModePatches` 把 `CharacterSelectionSkinPatch` 绑到了 `NBlitzScreen` / `NDreadScreen.SelectCharacter`，玩家日志里能看到 `NDreadScreen.SelectCharacter_Patch1 → ShowCharacter` 和「已从隔离依赖路径重建…选角展示」，也就是背景替换执行过。
+问题出在**替换之后**：反编译确认这两套界面还有绕过 `SelectCharacter` 直接重写 `_bgContainer` 的入口——`NDreadScreen.SetSelectedCharacterVisuals(CharacterModel)`（Dread 连胜动画收尾会直接调它，见 `PlayDreadWinStreakResultAnimation` 的 finally）。它清空 `_bgContainer` 后用 `PreloadManager.Cache.GetScene(characterModel.CharacterSelectBg)` 实例化**原版**背景，没有经过我们的 Patch，于是画面退回原版。
+
+**改动**：
+- `Ui/CharacterSelectModeBackgroundPatch.cs`（新增）：`Postfix(Control __instance, CharacterModel __0)`，只调用「重做背景」这一步。
+- `Ui/ContextualSkinControls.cs`：新增 `ReapplySelectedBackground(screen, character)`——取当前分组、用 `SkinService.WithRuntimeResources` 把选人背景场景从当前选择的隔离依赖里实例化，再走既有的 `ReplaceCharacterBackground`；包里没有规范背景场景时什么都不换（保留它自己画的层）。顺带修好 `DescribeCharacterSelectBackground`：它算了一堆 `AnimatedBg` 子节点状态却**从来没输出**，现在会打一行 `[选角背景] 分组/角色：…`，下一轮实测能直接看到容器里是谁。
+- `Ui/CharacterSelectModePatches.cs`：给模式屏幕的 `SetSelectedCharacterVisuals` 动态挂 `Priority.Last` 的 Postfix（按类型反射，缺这个方法的版本自动跳过）。
+- `tests/.../CharacterSelectModeBackgroundTests.cs`（新增，`--test-mode-background`）：验证 `NDreadScreen.SetSelectedCharacterVisuals` 存在且签名正确、`CharacterSelectModePatches.Install` 确实把 Postfix 挂上去。
+
+**已知未覆盖**：`NBlitzScreen` 里只有 `SelectCharacter` 与随机角色开局的 `DoRandomCharacterChange` 会写 `_bgContainer`，没有单独的 SetSelectedCharacterVisuals 入口；如果极速模式实测仍退回原版，请把新打的 `[选角背景]` 那行发我，就能定位是哪个入口在覆盖。
+
+**验证**：beta 引用 0 错误 0 警告；官方 v0.111.1 引用 0 错误 0 警告；`--test-mode-background`、`--test-merchant-lifecycle` 通过；LogicTests 全绿。
+完整 RuntimeTests 目前停在 `FoolWaifuIdentityTests`（龙娘 11:51 正在改的 Fool_Waifu 兼容，未提交），失败点与本次改动无关；等他这轮收尾后我再复跑。
+### 补充：魅魔战士这类「DLL 自己画选人叠加层」的包在恐惧/极速模式下的背景（2026-11-19 第二轮）
+
+**根因（反编译确认）**：`succubusIroncladHpWear` 的 `BattleWear.SuccubusCharacterSelect` 是 `[HarmonyPatch(typeof(NCharacterSelectScreen), "SelectCharacter")]`，Postfix 里取 `_bgContainer` 的 `<角色>_bg` 子节点，再 `CallDeferred(Attach(background))` 挂自己的 Spine 叠加层。恐惧/极速是 `NDreadScreen`/`NBlitzScreen`，**从不调用** `NCharacterSelectScreen.SelectCharacter`，所以叠加层根本不会挂；而这类包又没有规范背景场景，上一轮的 `ReapplySelectedBackground` 按设计跳过——两层原因叠在一起就是「背景仍是原版」。
+
+**改动**：
+- `Ui/ProviderModeSelectOverlayBridge.cs`（新增）：只在模式界面（非 `NCharacterSelectScreen`）上，取当前选中提供者（`SkinService.GetSelectedCreatureRuntimeProvider`）的**程序集**（`ManagedSkinModLoader.IsProviderAssemblyFor`），反射调用其 `Attach(Control background)`（包自己的、与屏幕类型无关的叠加层入口），把模式界面的 `<角色>_bg` 传进去。包内部 `SkinSelectionGate.MenuAllowed()` 与「已有 catcher 就不重复挂」的判断保留，所以未选中不会挂、重复调用可重入。
+- `Ui/ContextualSkinControls.cs`：`ShowCharacter` 末尾对非标准界面补一次（覆盖没有 `SetSelectedCharacterVisuals` 的 `NBlitzScreen`）。
+- `Ui/CharacterSelectModeBackgroundPatch.cs`：Dread 的 `SetSelectedCharacterVisuals` 之后也补一次（连胜动画会清空背景容器，需要重新挂）。
+- 日志：成功会打 `[选角背景] 已为 <provider> 在模式界面重放提供者的选人叠加层（类型.Attach）`。
+
+**验证**：beta 与官方 v0.111.1 引用均 0 错误 0 警告；`--test-mode-background`、`--test-merchant-lifecycle` 通过；**完整无参数 RuntimeTests 绿色**（末行 `Workshop policy tests passed.`）；LogicTests 全绿。
+**未覆盖**：贞德战士 `JoanOfArcIroncladHpwear` 若没有同形的 `Attach(Control)` 方法，这条桥不会生效；实测时请一并看一眼，日志里没有那行就是没挂上。

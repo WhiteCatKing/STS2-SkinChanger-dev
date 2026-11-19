@@ -278,6 +278,12 @@ internal static partial class ContextualSkinControls
         // 皮肤包自己的代码没在执行时（两个包同名程序集只能活一个），由本 Mod 按它自己的
         // s1/s2/s3 资源接上“点角色切战损”。
         CharSelectStageCycle.Attach(screen, character);
+        // Blitz has no separate SetSelectedCharacterVisuals helper: its background is written
+        // inside SelectCharacter, so the overlay can only be attached from here.
+        if (screen.GetType() != typeof(MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen))
+        {
+            ProviderModeSelectOverlayBridge.Attach(screen, character);
+        }
     }
 
     private static bool IsMultiplayerCharacterSelect(Control screen)
@@ -2022,6 +2028,7 @@ internal static partial class ContextualSkinControls
             if (!CharacterModelPreviewControls.BindNow(screen, character))
                 throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
             CharSelectStageCycle.Attach(screen, character);
+            ProviderModeSelectOverlayBridge.SyncModeBackgroundClickPassthrough(screen, character);
             return;
         }
 
@@ -2063,6 +2070,7 @@ internal static partial class ContextualSkinControls
                 if (!CharacterModelPreviewControls.BindNow(screen, character))
                     throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
                 CharSelectStageCycle.Attach(screen, character);
+                ProviderModeSelectOverlayBridge.SyncModeBackgroundClickPassthrough(screen, character);
                 return;
             }
             catch (AppearanceResourceUnavailableException exception)
@@ -2119,6 +2127,7 @@ internal static partial class ContextualSkinControls
         if (!CharacterModelPreviewControls.BindNow(screen, character))
             throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
         CharSelectStageCycle.Attach(screen, character);
+        ProviderModeSelectOverlayBridge.SyncModeBackgroundClickPassthrough(screen, character);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
         DescribeCharacterSelectBackground(screen, groupId, character);
         CharSelectPackRebindCompat.AfterRebuild(screen, groupId, SkinService.GetSelectedRuntimeProvider(groupId));
@@ -2239,6 +2248,40 @@ internal static partial class ContextualSkinControls
     /// <c>DefectAnimatedBg</c>）如果被我们的重建整段换掉，这里会看不到它；如果还在但不可见，
     /// 就会显示 <c>可见=False</c>。只有这两种情况之一，才会出现「背景退回原版」。
     /// </summary>
+    /// <summary>
+    /// Re-applies only the selected skin's character-select background. Used by the Blitz/Dread
+    /// screens after the game rewrites their background container outside SelectCharacter (the
+    /// Dread win-streak animation calls its own SetSelectedCharacterVisuals directly).
+    /// </summary>
+    internal static void ReapplySelectedBackground(Control screen, CharacterModel character)
+    {
+        var group = FindGroup(character.Id.Entry);
+        if (group == null || !GodotObject.IsInstanceValid(screen))
+        {
+            return;
+        }
+
+        var characterId = character.Id.Entry.ToLowerInvariant();
+        var scenePath = CanonicalScenePath("screens/char_select/char_select_bg_" + characterId);
+        SkinService.WithRuntimeResources(
+            group.Id,
+            [scenePath],
+            resources =>
+            {
+                var scene = resources[scenePath] as PackedScene;
+                if (scene == null)
+                {
+                    // The package has no canonical background scene of its own (it draws its own
+                    // layer instead); replacing nothing keeps that provider picture intact.
+                    return false;
+                }
+
+                TakeOverCharacterSelectSceneCache(scenePath, scene);
+                ReplaceCharacterBackground(screen, character, scene, resources);
+                return true;
+            });
+    }
+
     private static void DescribeCharacterSelectBackground(
         Control screen,
         string groupId,
@@ -2273,6 +2316,7 @@ internal static partial class ContextualSkinControls
                 }
             }
 
+            ModLog.Info($"[选角背景] {groupId}/{character.Id.Entry}：{string.Join("；", parts)}");
         }
         catch (Exception)
         {
@@ -2650,6 +2694,8 @@ internal static partial class ContextualSkinControls
         if (background.IsInsideTree())
         {
             RefreshCharacterBackgroundLayout(container, background);
+            // A provider can have attached to the old background before this refresh replaced it.
+            ProviderModeSelectOverlayBridge.AttachRebuiltBackground(screen, character, background);
         }
 
         // NCharacterSelectScreenBg only subscribes to SizeChanged in _Ready; it does not run
