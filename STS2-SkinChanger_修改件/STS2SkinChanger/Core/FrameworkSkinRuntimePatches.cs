@@ -191,51 +191,60 @@ internal static class FrameworkCombatVisualPatch
     [HarmonyPriority(Priority.First)]
     private static bool Prefix(CharacterModel __instance, ref NCreatureVisuals __result)
     {
-        var canonicalPath =
-            $"res://scenes/creature_visuals/{__instance.Id.Entry.ToLowerInvariant()}.tscn";
-        // A provider may resolve its own selectable sub-variant through this getter. Build the
-        // selected variant before any canonical replacement.
-        var variantPath = ContextualSkinControls.ResolveVariantCombatPath(__instance);
-        if (variantPath != null)
+        if (CombatAppearanceBoundary.SkipAppearance) return true;
+        try
         {
-            var packed = GD.Load<PackedScene>(variantPath);
-            if (packed != null)
+            var canonicalPath =
+                $"res://scenes/creature_visuals/{__instance.Id.Entry.ToLowerInvariant()}.tscn";
+            // A provider may resolve its own selectable sub-variant through this getter. Build the
+            // selected variant before any canonical replacement.
+            var variantPath = ContextualSkinControls.ResolveVariantCombatPath(__instance);
+            if (variantPath != null)
             {
-                __result = packed.Instantiate<NCreatureVisuals>();
+                var packed = GD.Load<PackedScene>(variantPath);
+                if (packed != null)
+                {
+                    __result = packed.Instantiate<NCreatureVisuals>();
+                    return false;
+                }
+            }
+
+            // A RitsuLib-based provider may resolve its own selectable variant through this getter
+            // (Crusader's Aggressor/Banneret/Templar/Infernal). Let the original CreateVisuals build
+            // that variant instead of replacing it with SkinChanger's canonical scene.
+            if (ContextualSkinControls.HasCustomVisualsPath(__instance, canonicalPath))
+            {
+                return true;
+            }
+
+            if (FrameworkSkinRuntime.TryGetCharacterContract(
+                    __instance,
+                    out var groupId,
+                    out var contract) &&
+                contract.CharacterResources.ContainsKey("CombatVisual"))
+            {
+                __result = MarkManagedCombatScene(
+                    SkinService.InstantiateManagedCharacterCreatureVisuals(groupId, canonicalPath),
+                    groupId);
                 return false;
             }
-        }
 
-        // A RitsuLib-based provider may resolve its own selectable variant through this getter
-        // (Crusader's Aggressor/Banneret/Templar/Infernal). Let the original CreateVisuals build
-        // that variant instead of replacing it with SkinChanger's canonical scene.
-        if (ContextualSkinControls.HasCustomVisualsPath(__instance, canonicalPath))
-        {
-            return true;
-        }
+            var group = ContextualSkinControls.FindGroup(__instance.Id.Entry, __instance.GetType().Name);
+            if (group == null || !SkinService.SelectionServesCombatScene(group.Id, canonicalPath))
+            {
+                return true;
+            }
 
-        if (FrameworkSkinRuntime.TryGetCharacterContract(
-                __instance,
-                out var groupId,
-                out var contract) &&
-            contract.CharacterResources.ContainsKey("CombatVisual"))
-        {
             __result = MarkManagedCombatScene(
-                SkinService.InstantiateManagedCharacterCreatureVisuals(groupId, canonicalPath),
-                groupId);
+                SkinService.InstantiateManagedCharacterCreatureVisuals(group.Id, canonicalPath),
+                group.Id);
             return false;
         }
-
-        var group = ContextualSkinControls.FindGroup(__instance.Id.Entry, __instance.GetType().Name);
-        if (group == null || !SkinService.SelectionServesCombatScene(group.Id, canonicalPath))
+        catch (Exception error)
         {
+            CombatAppearanceBoundary.SkipAfterFailure(error);
             return true;
         }
-
-        __result = MarkManagedCombatScene(
-            SkinService.InstantiateManagedCharacterCreatureVisuals(group.Id, canonicalPath),
-            group.Id);
-        return false;
     }
 
     /// <summary>

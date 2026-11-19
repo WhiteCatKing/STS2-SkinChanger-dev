@@ -94,6 +94,12 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyList<CardSkinGroup> _configuredCardGroups;
     private readonly IReadOnlyList<CardSkinOption> _pckCardOptions;
     private readonly List<CardSkinGroup> _cardGroups;
+    private HashSet<string>? _knownCardGroups;
+    private HashSet<string>? _knownCardPoolGroups;
+    internal IReadOnlySet<string>? KnownCardGroups => _knownCardGroups;
+    internal IReadOnlySet<string>? KnownCardPoolGroups => _knownCardPoolGroups;
+    private static readonly ConditionalWeakTable<IReadOnlyList<CardCatalogEntry>, CardStemResolutionContext>
+        CardStemResolutionCache = new();
     // Card-art packs are discovered after the models exist, so their options arrive later than
     // the PCK-derived ones and are merged into the same final group list.
     private readonly Dictionary<string, CardSkinGroup> _artPackCardGroups =
@@ -4624,12 +4630,12 @@ internal sealed partial class SkinCatalog : IDisposable
             return null;
         }
 
+        var context = GetCardStemResolutionContext(cards);
         CardCatalogEntry? match = null;
-        foreach (var card in cards)
+        foreach (var entry in context.Entries)
         {
-            var portrait = TryGetCardArtIdentity(card.PortraitPath);
-            var matches = portrait != null && CardStemsMatch(token, portrait.Stem) ||
-                          CardStemsMatch(token, NormalizeCardToken(card.TypeName));
+            var matches = (entry.PortraitStem != null && CardStemsMatch(token, entry.PortraitStem)) ||
+                          CardStemsMatch(token, entry.TypeStem);
             if (!matches)
             {
                 continue;
@@ -4641,14 +4647,49 @@ internal sealed partial class SkinCatalog : IDisposable
                 return null;
             }
 
-            match = card;
+            match = entry.Card;
         }
 
         return match;
     }
 
+    private static CardStemResolutionContext GetCardStemResolutionContext(
+        IReadOnlyList<CardCatalogEntry> cards)
+    {
+        if (CardStemResolutionCache.TryGetValue(cards, out var cached) &&
+            cached.Count == cards.Count)
+        {
+            return cached;
+        }
+
+        var knownPoolGroups = cards
+            .Select(card => card.PoolGroupId)
+            .Where(group => !string.IsNullOrWhiteSpace(group))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var entries = new PreparedStemCard[cards.Count];
+        for (var i = 0; i < cards.Count; i++)
+        {
+            var card = cards[i];
+            var identity = TryCreateCardMatchIdentity(
+                card.TypeName,
+                card.PortraitPath,
+                card.PoolGroupId,
+                knownCardGroups: null,
+                knownPoolGroups);
+            entries[i] = new PreparedStemCard(
+                card,
+                identity?.TypeStem ?? NormalizeCardToken(card.TypeName),
+                identity is { HasForeignPortrait: false } resolved ? resolved.Portrait.Stem : null);
+        }
+
+        var built = new CardStemResolutionContext(cards.Count, entries);
+        CardStemResolutionCache.AddOrUpdate(cards, built);
+        return built;
+    }
+
     public void FinalizeCardGroups(IEnumerable<CardCatalogEntry> cards)
-    {        var cardEntries = cards
+    {
+        var cardEntries = cards
             .Where(card => !string.IsNullOrWhiteSpace(card.PortraitPath) &&
                            !string.IsNullOrWhiteSpace(card.CatalogGroupId) &&
                            !string.IsNullOrWhiteSpace(card.FilterGroupId))
@@ -4659,6 +4700,10 @@ internal sealed partial class SkinCatalog : IDisposable
                 entries => entries.Key,
                 entries => entries.First(),
                 StringComparer.OrdinalIgnoreCase);
+        var knownPoolGroups = cardEntries
+            .Select(card => card.PoolGroupId)
+            .Where(group => !string.IsNullOrWhiteSpace(group))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var knownCardGroups = cardEntries
             .SelectMany(card => new[]
             {
@@ -4670,7 +4715,30 @@ internal sealed partial class SkinCatalog : IDisposable
             .Where(group => !string.IsNullOrWhiteSpace(group))
             .Cast<string>()
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var uniqueCardTypesByStem = BuildUniqueCardTypesByStem(cardEntries, knownCardGroups);
+        _knownCardPoolGroups = knownPoolGroups;
+        _knownCardGroups = knownCardGroups;
+        var preparedCards = cardEntries
+            .Select(card => new PreparedCard(
+                card,
+                TryCreateCardMatchIdentity(
+                    card.TypeName,
+                    card.PortraitPath,
+                    card.PoolGroupId,
+                    knownCardGroups,
+                    knownPoolGroups)))
+            .ToArray();
+        var assetIdentityCache = new Dictionary<string, CardArtIdentity?>(StringComparer.OrdinalIgnoreCase);
+        CardArtIdentity? ResolveAssetIdentity(string path)
+        {
+            if (!assetIdentityCache.TryGetValue(path, out var identity))
+            {
+                identity = TryGetCardArtIdentity(path, knownCardGroups, knownPoolGroups);
+                assetIdentityCache[path] = identity;
+            }
+
+            return identity;
+        }
+        var uniqueCardTypesByStem = BuildUniqueCardTypesByStem(preparedCards);
         var groups = new Dictionary<string, CardSkinGroup>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var configuredGroup in _configuredCardGroups)
@@ -4722,6 +4790,9 @@ internal sealed partial class SkinCatalog : IDisposable
 
         foreach (var option in _pckCardOptions)
         {
+            var preparedAssets = option.Assets
+                .Select(pair => new PreparedCardAsset(pair.Key, pair.Value, ResolveAssetIdentity(pair.Key)))
+                .ToArray();
             var assetsByGroup = new Dictionary<string, Dictionary<string, ResourceAsset>>(
                 StringComparer.OrdinalIgnoreCase);
             var normalByGroup = new Dictionary<string, Dictionary<string, string>>(
@@ -4731,11 +4802,16 @@ internal sealed partial class SkinCatalog : IDisposable
             var presentationsByGroup =
                 new Dictionary<string, Dictionary<string, CardPresentationDefinition>>(
                     StringComparer.OrdinalIgnoreCase);
-            foreach (var card in cardEntries)
+            foreach (var preparedCard in preparedCards)
             {
-                var assets = option.Assets
-                    .Where(pair => CardArtMatches(pair.Key, card, knownCardGroups))
-                    .ToArray();
+                var card = preparedCard.Entry;
+                var assets = preparedCard.Identity is { } cardIdentity
+                    ? preparedAssets
+                        .Where(asset => asset.Identity is { } assetIdentity &&
+                                        CardArtMatches(assetIdentity, cardIdentity))
+                        .Select(asset => new KeyValuePair<string, ResourceAsset>(asset.Path, asset.Asset))
+                        .ToArray()
+                    : [];
                 var hasPresentation = option.CardPresentations.TryGetValue(
                     card.TypeName,
                     out var presentation);
@@ -4756,10 +4832,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 if (assets.Length == 0 &&
                     !hasNormalPortrait &&
                     !hasAncientPortrait &&
+                    preparedCard.Identity is { } sharedCardIdentity &&
                     TryGetUniqueSharedPoolPortrait(
-                        option.Assets.Keys,
+                        preparedAssets,
                         card,
-                        knownCardGroups,
+                        sharedCardIdentity,
                         uniqueCardTypesByStem,
                         out var sharedPoolPortrait))
                 {
@@ -4851,9 +4928,10 @@ internal sealed partial class SkinCatalog : IDisposable
         // A character's Ancient cards appear in both library filters. Mirror only each
         // matching card's complete provider definition, not the whole Ancient pack. The
         // canonical Ancient group remains intact for existing presets and resource paths.
-        foreach (var card in cardEntries.Where(card => card.IsCharacterPool &&
-                     card.FilterGroupId.Equals("ancients", StringComparison.OrdinalIgnoreCase)))
+        foreach (var preparedCard in preparedCards.Where(prepared => prepared.Entry.IsCharacterPool &&
+                     prepared.Entry.FilterGroupId.Equals("ancients", StringComparison.OrdinalIgnoreCase)))
         {
+            var card = preparedCard.Entry;
             var options = groups.Values.Where(group =>
                     group.Id.Equals(card.PoolGroupId, StringComparison.OrdinalIgnoreCase) ||
                     group.Id.Equals("ancients", StringComparison.OrdinalIgnoreCase))
@@ -4872,8 +4950,12 @@ internal sealed partial class SkinCatalog : IDisposable
                 var presentations = option.CardPresentations.Where(pair => pair.Key.Equals(card.TypeName,
                     StringComparison.OrdinalIgnoreCase)).ToDictionary(pair => pair.Key, pair => pair.Value,
                     StringComparer.OrdinalIgnoreCase);
-                var assets = option.Assets.Where(pair => CardArtMatches(pair.Key, card, knownCardGroups))
-                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                var assets = preparedCard.Identity is { } cardIdentity
+                    ? option.Assets
+                        .Where(pair => ResolveAssetIdentity(pair.Key) is { } assetIdentity &&
+                                       CardArtMatches(assetIdentity, cardIdentity))
+                        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
                 if (normal.Count + ancient.Count + presentations.Count + assets.Count == 0) continue;
                 var scoped = option with
                 {
@@ -4958,17 +5040,21 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     private static IReadOnlyDictionary<string, string> BuildUniqueCardTypesByStem(
-        IReadOnlyList<CardCatalogEntry> cards,
-        IReadOnlySet<string> knownCardGroups)
+        IReadOnlyList<PreparedCard> cards)
     {
         var owners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var card in cards)
+        foreach (var prepared in cards)
         {
+            var card = prepared.Entry;
+            var typeStem = prepared.Identity?.TypeStem ?? NormalizeCardToken(card.TypeName);
+            var portraitStem = prepared.Identity is { HasForeignPortrait: false } identity
+                ? identity.Portrait.Stem
+                : null;
             var stems = new[]
                 {
-                    NormalizeCardToken(card.TypeName),
-                    TryGetCardArtIdentity(card.PortraitPath, knownCardGroups)?.Stem
+                    typeStem,
+                    portraitStem
                 }
                 .Where(stem => !string.IsNullOrWhiteSpace(stem))
                 .Cast<string>()
@@ -4996,9 +5082,9 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     private static bool TryGetUniqueSharedPoolPortrait(
-        IEnumerable<string> assetPaths,
+        IReadOnlyList<PreparedCardAsset> preparedAssets,
         CardCatalogEntry card,
-        IReadOnlySet<string> knownCardGroups,
+        CardMatchIdentity cardIdentity,
         IReadOnlyDictionary<string, string> uniqueCardTypesByStem,
         out string portraitPath)
     {
@@ -5008,31 +5094,23 @@ internal sealed partial class SkinCatalog : IDisposable
             return false;
         }
 
-        var portrait = TryGetCardArtIdentity(card.PortraitPath, knownCardGroups);
-        var typeStem = NormalizeCardToken(card.TypeName);
-        if (portrait == null)
-        {
-            return false;
-        }
-
-        var candidates = assetPaths
-            .Select(path => (Path: path, Identity: TryGetCardArtIdentity(path, knownCardGroups)))
-            .Where(candidate => candidate.Identity != null &&
-                                !string.IsNullOrWhiteSpace(candidate.Identity.Category) &&
-                                !candidate.Identity.Category.Equals(
+        var candidates = preparedAssets
+            .Where(candidate => candidate.Identity is { } assetIdentity &&
+                                !string.IsNullOrWhiteSpace(assetIdentity.Category) &&
+                                !assetIdentity.Category.Equals(
                                     card.PoolGroupId,
                                     StringComparison.OrdinalIgnoreCase) &&
-                                !candidate.Identity.Category.Equals(
-                                    portrait.Category,
+                                !assetIdentity.Category.Equals(
+                                    cardIdentity.Portrait.Category,
                                     StringComparison.OrdinalIgnoreCase) &&
-                                (candidate.Identity.Stem.Equals(
-                                     typeStem,
+                                (assetIdentity.Stem.Equals(
+                                     cardIdentity.TypeStem,
                                      StringComparison.OrdinalIgnoreCase) ||
-                                 candidate.Identity.Stem.Equals(
-                                     portrait.Stem,
-                                     StringComparison.OrdinalIgnoreCase)) &&
+                                 (!cardIdentity.HasForeignPortrait && assetIdentity.Stem.Equals(
+                                     cardIdentity.Portrait.Stem,
+                                     StringComparison.OrdinalIgnoreCase))) &&
                                 uniqueCardTypesByStem.TryGetValue(
-                                    candidate.Identity.Stem,
+                                    assetIdentity.Stem,
                                     out var owner) &&
                                 owner.Equals(card.TypeName, StringComparison.OrdinalIgnoreCase))
             .Select(candidate => candidate.Path)
@@ -7435,7 +7513,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var knownCardStems = index.Assets.Keys
             .Select(path => TryGetCardArtIdentity(path))
             .Where(identity => identity != null)
-            .Select(identity => identity!.Stem)
+            .Select(identity => identity!.Value.Stem)
             .Concat(declaredCardTypes ?? [])
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -7965,40 +8043,107 @@ internal sealed partial class SkinCatalog : IDisposable
         return IsProviderNamespacePath(path, NormalizeResourceToken(providerId));
     }
 
-    private static bool CardArtMatches(
-        string assetPath,
-        CardCatalogEntry card,
-        IReadOnlySet<string> knownCardGroups)
+    private static readonly HashSet<string> BuiltInCardPoolCategories = new(StringComparer.OrdinalIgnoreCase)
     {
-        var asset = TryGetCardArtIdentity(assetPath, knownCardGroups);
-        var portrait = TryGetCardArtIdentity(card.PortraitPath, knownCardGroups);
-        if (asset == null || portrait == null)
+        "ironclad", "silent", "defect", "necrobinder", "regent",
+        "colorless", "curse", "event", "quest", "status", "token", "deprived", "deprecated"
+    };
+
+    /// <summary>
+    /// True when a card's reported baseline portrait path sits under a different card pool's
+    /// folder (e.g. a Mod character card whose PortraitPath borrows Ironclad's strike/defend
+    /// placeholder while drawing its own art from DLL resources). Such a borrowed path is a
+    /// placeholder, not the card's own pool or stem identity.
+    /// </summary>
+    internal static bool IsForeignCardPoolPortrait(
+        string? portraitCategory,
+        string? cardPoolGroupId,
+        IReadOnlySet<string>? knownPoolGroups = null)
+    {
+        if (string.IsNullOrWhiteSpace(portraitCategory) ||
+            string.IsNullOrWhiteSpace(cardPoolGroupId) ||
+            portraitCategory.Equals(cardPoolGroupId, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        if (!string.IsNullOrEmpty(asset.Category) &&
-            !asset.Category.Equals(card.PoolGroupId, StringComparison.OrdinalIgnoreCase) &&
-            !asset.Category.Equals(portrait.Category, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var typeStem = NormalizeCardToken(card.TypeName);
-        return CardStemsMatch(asset.Stem, portrait.Stem) ||
-               CardStemsMatch(asset.Stem, typeStem);
+        return BuiltInCardPoolCategories.Contains(portraitCategory) ||
+               (knownPoolGroups != null && knownPoolGroups.Contains(portraitCategory));
     }
 
-    private static CardArtIdentity? TryGetCardArtIdentity(
+    internal CardArtIdentity? TryGetCardArtIdentity(string? path) =>
+        TryGetCardArtIdentity(path, _knownCardGroups, _knownCardPoolGroups);
+
+    internal CardMatchIdentity? TryCreateCardMatchIdentity(
+        string cardTypeName,
+        string? portraitPath,
+        string poolGroupId) =>
+        TryCreateCardMatchIdentity(
+            cardTypeName,
+            portraitPath,
+            poolGroupId,
+            _knownCardGroups,
+            _knownCardPoolGroups);
+
+    internal static CardMatchIdentity? TryCreateCardMatchIdentity(
+        string cardTypeName,
+        string? portraitPath,
+        string poolGroupId,
+        IReadOnlySet<string>? knownCardGroups,
+        IReadOnlySet<string>? knownPoolGroups)
+    {
+        if (TryGetCardArtIdentity(portraitPath, knownCardGroups, knownPoolGroups) is not { } portrait)
+        {
+            return null;
+        }
+
+        var foreignPortrait = IsForeignCardPoolPortrait(portrait.Category, poolGroupId, knownPoolGroups);
+        return new CardMatchIdentity(
+            poolGroupId,
+            NormalizeCardToken(cardTypeName),
+            portrait,
+            foreignPortrait);
+    }
+
+    internal bool CardArtMatches(string assetPath, CardMatchIdentity card) =>
+        TryGetCardArtIdentity(assetPath, _knownCardGroups, _knownCardPoolGroups) is { } asset &&
+        CardArtMatches(asset, card);
+
+    internal bool CardArtMatches(
+        string assetPath,
+        string cardTypeName,
+        string? portraitPath,
+        string poolGroupId) =>
+        TryCreateCardMatchIdentity(cardTypeName, portraitPath, poolGroupId) is { } card &&
+        CardArtMatches(assetPath, card);
+
+    internal static bool CardArtMatches(
+        CardArtIdentity asset,
+        CardMatchIdentity card)
+    {
+        if (!string.IsNullOrEmpty(asset.Category) &&
+            !asset.Category.Equals(card.PoolGroupId, StringComparison.OrdinalIgnoreCase) &&
+            (card.HasForeignPortrait ||
+             !asset.Category.Equals(card.Portrait.Category, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return (!card.HasForeignPortrait && CardStemsMatch(asset.Stem, card.Portrait.Stem)) ||
+               CardStemsMatch(asset.Stem, card.TypeStem);
+    }
+
+    internal static CardArtIdentity? TryGetCardArtIdentity(
         string? path,
-        IReadOnlySet<string>? knownCardGroups = null)
+        IReadOnlySet<string>? knownCardGroups = null,
+        IReadOnlySet<string>? knownPoolGroups = null)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
             return null;
         }
 
-        var category = TryGetCardArtPathLayout(path, knownCardGroups)?.Category ?? string.Empty;
+        var category = TryGetCardArtPathLayout(path, knownCardGroups, knownPoolGroups)?.Category ?? string.Empty;
         var fileName = path[(path.LastIndexOf('/') + 1)..];
         var extensionIndex = fileName.LastIndexOf('.');
         var rawStem = extensionIndex >= 0 ? fileName[..extensionIndex] : fileName;
@@ -8026,7 +8171,8 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static CardArtPathLayout? TryGetCardArtPathLayout(
         string path,
-        IReadOnlySet<string>? knownCardGroups)
+        IReadOnlySet<string>? knownCardGroups,
+        IReadOnlySet<string>? knownPoolGroups = null)
     {
         var root = CardArtPathRegex().Match(path);
         var fileSeparator = path.LastIndexOf('/');
@@ -8042,9 +8188,15 @@ internal sealed partial class SkinCatalog : IDisposable
             return null;
         }
 
-        var groupIndex = knownCardGroups == null || knownCardGroups.Count == 0
-            ? 0
-            : Array.FindIndex(directories, knownCardGroups.Contains);
+        // Prioritize an actual card pool segment (built-in or known pool) over incidental
+        // wrapper folders like "default" or "variant", then fall back to knownCardGroups.
+        var groupIndex = Array.FindIndex(directories, directory =>
+            BuiltInCardPoolCategories.Contains(directory) ||
+            (knownPoolGroups != null && knownPoolGroups.Contains(directory)));
+        if (groupIndex < 0 && knownCardGroups is { Count: > 0 })
+        {
+            groupIndex = Array.FindIndex(directories, knownCardGroups.Contains);
+        }
         if (groupIndex < 0)
         {
             groupIndex = 0;
@@ -8067,6 +8219,8 @@ internal sealed partial class SkinCatalog : IDisposable
         candidate.StartsWith(expected, StringComparison.OrdinalIgnoreCase) &&
         candidate.Length > expected.Length &&
         candidate[expected.Length..].All(char.IsDigit);
+
+    internal static string NormalizeCardStemToken(string value) => NormalizeCardToken(value);
 
     private static string NormalizeCardToken(string value) =>
         new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
@@ -9809,7 +9963,16 @@ internal sealed partial class SkinCatalog : IDisposable
     private sealed record GroupIdentity(string Id, string DisplayName);
     private sealed record RuntimeProviderAsset(GroupIdentity Identity, string CanonicalPath);
     private sealed record CardArtPathLayout(string Category, string Variant);
-    private sealed record CardArtIdentity(string Category, string Stem);
+    internal readonly record struct CardArtIdentity(string Category, string Stem);
+    internal readonly record struct CardMatchIdentity(
+        string PoolGroupId,
+        string TypeStem,
+        CardArtIdentity Portrait,
+        bool HasForeignPortrait);
+    private readonly record struct PreparedCard(CardCatalogEntry Entry, CardMatchIdentity? Identity);
+    private readonly record struct PreparedCardAsset(string Path, ResourceAsset Asset, CardArtIdentity? Identity);
+    private readonly record struct PreparedStemCard(CardCatalogEntry Card, string TypeStem, string? PortraitStem);
+    private sealed record CardStemResolutionContext(int Count, PreparedStemCard[] Entries);
     private sealed record CardArtVariant(string Key, ResourceAsset[] Assets, HashSet<string> Stems);
     private sealed record RuntimeResource(
         string SourcePath,

@@ -1,4 +1,5 @@
 using Godot;
+using STS2SkinChanger.Ui;
 using System.Runtime.CompilerServices;
 
 namespace STS2SkinChanger.Core;
@@ -11,6 +12,26 @@ internal static partial class SkinService
     private sealed record SourceAlias(string Path);
     private static readonly ConditionalWeakTable<Resource, SourceAlias> RuntimeSourceAliases = new();
     private static long _retainedRuntimePathGeneration;
+    private static bool _runtimePressureCleanupPending;
+
+    private static void RequestRuntimePressureCleanup() =>
+        Volatile.Write(ref _runtimePressureCleanupPending, true);
+
+    internal static void TryRunDeferredRuntimePressureCleanup()
+    {
+        if (!Volatile.Read(ref _runtimePressureCleanupPending)) return;
+        lock (Sync)
+        {
+            if (!_runtimePressureCleanupPending ||
+                CharacterAppearanceRuntime.IsCombatRuntimeScopeActive) return;
+
+            _runtimePressureCleanupPending = false;
+            // Release optional cache ownership only. Active scenes retain their own resources.
+            RuntimeResourceBundles.Clear();
+            RuntimeResourceCache.Clear();
+            GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
+        }
+    }
 
     internal static void PrefetchCharacterChoices(string currentGroup)
     {

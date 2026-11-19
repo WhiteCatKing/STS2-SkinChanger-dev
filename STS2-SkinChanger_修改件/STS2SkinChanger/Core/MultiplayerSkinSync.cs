@@ -1031,6 +1031,7 @@ internal static class MultiplayerSkinSync
 
     internal static void Tick(double delta)
     {
+        SkinService.TryRunDeferredRuntimePressureCleanup();
         // A skin pack's own variant hotkey changes the pack's setting directly, so the dropdown has
         // to be told. This runs in single-player too, hence before the multiplayer participation
         // check.
@@ -2662,8 +2663,8 @@ internal static class MultiplayerSkinSync
             }
 
             _disposed = true;
-            resourceScope.Dispose();
-            selectionScope.Dispose();
+            try { resourceScope.Dispose(); }
+            finally { selectionScope.Dispose(); }
         }
     }
 }
@@ -2828,32 +2829,41 @@ internal static class SkinChangerHostConnectionResetPatch
 internal static class MultiplayerCreatureVisualScopePatch
 {
     [HarmonyPriority(Priority.First)]
-    private static void Prefix(Creature __instance, out IDisposable? __state) =>
-        // Keep both the per-player selection and its canonical scene/skeleton overlay active
-        // for the complete CreateVisuals call. Selection-only scoping still resolved the local
-        // player's globally mounted resources, especially when the remote player used base.
-        __state = MultiplayerSkinSync.BeginCreatureRuntimeScope(__instance);
+    private static void Prefix(Creature __instance, out CombatAppearanceBoundary __state) =>
+        __state = CombatAppearanceBoundary.Begin(() => MultiplayerSkinSync.BeginCreatureRuntimeScope(__instance));
 
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(
         Creature __instance,
         ref NCreatureVisuals? __result,
-        IDisposable? __state)
+        CombatAppearanceBoundary? __state)
     {
-        if (__state != null)
+        if (__result == null) return;
+        var original = __result;
+        NCreatureVisuals? replacement = original;
+        if (!CombatAppearanceBoundary.SkipAppearance)
         {
-            // CharacterModel is shared by every player using that character.  Make the final
-            // result owner-aware only after all CharacterModel postfixes have run, otherwise a
-            // later global provider can overwrite this player's isolated selection.
-            ContextualSkinControls.ReplaceCreatedCreatureVisuals(__instance, ref __result);
+            try
+            {
+                if (__state?.HasResourceScope == true)
+                {
+                    ContextualSkinControls.ReplaceCreatedCreatureVisuals(__instance, ref replacement, original);
+                }
+                if (!CombatAppearanceBoundary.SkipAppearance)
+                {
+                    ContextualSkinControls.ApplySelectedCreatureVisualPostfix(__instance, ref replacement);
+                }
+            }
+            catch (Exception error)
+            {
+                CombatAppearanceBoundary.SkipAfterFailure(error);
+            }
         }
 
-        // Also run for local creations: model-level finishing cannot substitute for a
-        // Creature postfix that inspects Player/PetOwner or removes native child effects.
-        ContextualSkinControls.ApplySelectedCreatureVisualPostfix(__instance, ref __result);
+        __result = CombatAppearanceBoundary.FinishVisual(original, replacement);
     }
 
-    private static Exception? Finalizer(Exception? __exception, IDisposable? __state)
+    private static Exception? Finalizer(Exception? __exception, CombatAppearanceBoundary? __state)
     {
         __state?.Dispose();
         return __exception;
@@ -2869,24 +2879,29 @@ internal static class MultiplayerCreatureVisualScopePatch
 internal static class MultiplayerCreatureReadyScopePatch
 {
     [HarmonyPriority(Priority.First)]
-    private static void Prefix(NCreature __instance, out IDisposable? __state) =>
-        __state = __instance.Entity == null
-            ? null
-            : MultiplayerSkinSync.BeginCreatureRuntimeScope(__instance.Entity);
+    private static void Prefix(NCreature __instance, out CombatAppearanceBoundary __state) =>
+        __state = CombatAppearanceBoundary.Begin(
+            () => __instance.Entity == null ? null : MultiplayerSkinSync.BeginCreatureRuntimeScope(__instance.Entity),
+            skip: CombatAppearanceBoundary.IsFallback(__instance.Visuals));
 
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NCreature __instance)
     {
-        if (__instance.Entity != null)
+        if (CombatAppearanceBoundary.SkipAppearance) return;
+        try
         {
-            // Provider _Ready presentation callbacks are isolated from their global Harmony
-            // owner and replayed here while this creature's multiplayer selection scope is still
-            // active. This prevents one player's late-attached actor from covering another's.
-            CharacterAppearanceRuntime.ReplaySelectedCreatureNodeReady(__instance);
+            if (__instance.Entity != null)
+            {
+                CharacterAppearanceRuntime.ReplaySelectedCreatureNodeReady(__instance);
+            }
+        }
+        catch (Exception error)
+        {
+            CombatAppearanceBoundary.SkipAfterFailure(error);
         }
     }
 
-    private static Exception? Finalizer(Exception? __exception, IDisposable? __state)
+    private static Exception? Finalizer(Exception? __exception, CombatAppearanceBoundary? __state)
     {
         __state?.Dispose();
         return __exception;

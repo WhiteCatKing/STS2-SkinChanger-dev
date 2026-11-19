@@ -3021,21 +3021,15 @@ internal static partial class ContextualSkinControls
 
     internal static void ReplaceCreatedVisuals(
         string modelId,
-        string visualsPath,
-        ref NCreatureVisuals result) =>
-        ReplaceCreatedVisuals(modelId, null, visualsPath, ref result);
-
-    internal static void ReplaceCreatedVisuals(
-        string modelId,
         string? modelTypeName,
         string visualsPath,
-        ref NCreatureVisuals result)
+        ref NCreatureVisuals result, NCreatureVisuals? retainedVisuals)
     {
         // Creation for this node was already owned by the combat scene entry point, which
         // converted the served scene through the scene factory before the game could cast it.
         // Instantiating the same scene again here would fail for a framework scene (plain Node2D)
         // and only duplicate work for a native one.
-        if (result != null && result.HasMeta(ManagedCombatSceneMeta))
+        if (CombatAppearanceBoundary.SkipAppearance || result.HasMeta(ManagedCombatSceneMeta))
         {
             return;
         }
@@ -3070,6 +3064,7 @@ internal static partial class ContextualSkinControls
             return;
         }
 
+        NCreatureVisuals? replacement = null;
         try
         {
             // Instantiate while the selected player's temporary overlay is mounted. Binary
@@ -3080,7 +3075,7 @@ internal static partial class ContextualSkinControls
             // owns the path so the overlay contains it, while runtime-provider gating stays on
             // the canonical family group.
             var sceneGroupId = SkinService.Catalog?.FindGroupIdForResourcePath(visualsPath) ?? group.Id;
-            var replacement = SkinService.InstantiateRuntimeScene<NCreatureVisuals>(
+            replacement = SkinService.InstantiateRuntimeScene<NCreatureVisuals>(
                 sceneGroupId,
                 visualsPath,
                 () => RuntimeMonsterVisualModeBridge.ApplySelected(group.Id));
@@ -3098,12 +3093,13 @@ internal static partial class ContextualSkinControls
                     $"新场景={replacement.Name} 原场景={(result != null ? result.Name.ToString() : "<null>")}");
             }
 
-            result?.QueueFree();
+            if (!ReferenceEquals(result, retainedVisuals)) CombatAppearanceBoundary.ReleaseNode(result);
             result = replacement;
         }
         catch (Exception exception)
         {
-            ModLog.Error($"最终应用 {modelId} 的场景皮肤失败：{exception}");
+            CombatAppearanceBoundary.ReleaseNode(replacement);
+            CombatAppearanceBoundary.SkipAfterFailure(exception);
         }
     }
 
@@ -3114,7 +3110,7 @@ internal static partial class ContextualSkinControls
     /// </summary>
     internal static void ReplaceCreatedCreatureVisuals(
         Creature creature,
-        ref NCreatureVisuals? result)
+        ref NCreatureVisuals? result, NCreatureVisuals retainedVisuals)
     {
         if (result == null || MultiplayerSkinSync.GetScopedSelections() == null)
         {
@@ -3122,37 +3118,40 @@ internal static partial class ContextualSkinControls
         }
 
         var visuals = result;
-        if (creature.Player != null)
+        try
         {
-            var character = creature.Player.Character;
-            ReplaceCreatedVisuals(
-                character.Id.Entry,
-                character.GetType().Name,
-                CanonicalScenePath("creature_visuals/" + character.Id.Entry.ToLowerInvariant()),
-                ref visuals);
-            ApplySelectedProviderVisualPostfix(
-                character.Id.Entry,
-                character.GetType().Name,
-                character,
-                ref visuals);
+            if (creature.Player != null)
+            {
+                var character = creature.Player.Character;
+                ReplaceCreatedVisuals(
+                    character.Id.Entry,
+                    character.GetType().Name,
+                    CanonicalScenePath("creature_visuals/" + character.Id.Entry.ToLowerInvariant()),
+                    ref visuals, retainedVisuals);
+                ApplySelectedProviderVisualPostfix(
+                    character.Id.Entry,
+                    character.GetType().Name,
+                    character,
+                    ref visuals, retainedVisuals);
+            }
+            else if (creature.Monster != null)
+            {
+                var monster = creature.Monster;
+                ReplaceCreatedVisuals(
+                    monster.Id.Entry,
+                    monster.GetType().Name,
+                    GetMonsterVisualsPath(monster),
+                    ref visuals, retainedVisuals);
+                ApplySelectedProviderVisualPostfix(
+                    monster.Id.Entry,
+                    monster.GetType().Name,
+                    monster,
+                    ref visuals, retainedVisuals);
+                if (!CombatAppearanceBoundary.SkipAppearance)
+                    MarkAndApplyMonsterScale(monster.Id.Entry, monster.GetType().Name, visuals);
+            }
         }
-        else if (creature.Monster != null)
-        {
-            var monster = creature.Monster;
-            ReplaceCreatedVisuals(
-                monster.Id.Entry,
-                monster.GetType().Name,
-                GetMonsterVisualsPath(monster),
-                ref visuals);
-            ApplySelectedProviderVisualPostfix(
-                monster.Id.Entry,
-                monster.GetType().Name,
-                monster,
-                ref visuals);
-            MarkAndApplyMonsterScale(monster.Id.Entry, monster.GetType().Name, visuals);
-        }
-
-        result = visuals;
+        finally { result = visuals; }
     }
 
     internal static void ApplySelectedCreatureVisualPostfix(
@@ -3173,8 +3172,10 @@ internal static partial class ContextualSkinControls
         string modelId,
         string? modelTypeName,
         object model,
-        ref NCreatureVisuals visuals)
+        ref NCreatureVisuals visuals,
+        NCreatureVisuals? retainedVisuals = null)
     {
+        if (CombatAppearanceBoundary.SkipAppearance) return;
         var group = FindGroup(modelId, modelTypeName);
         if (group != null)
         {
@@ -3200,7 +3201,8 @@ internal static partial class ContextualSkinControls
                 }
                 catch (Exception exception)
                 {
-                    ModLog.Warn($"为联机玩家挂载 {group.Id} 的视觉后处理资源失败：{exception.Message}");
+                    CombatAppearanceBoundary.SkipAfterFailure(exception);
+                    return;
                 }
             }
 
@@ -3225,7 +3227,8 @@ internal static partial class ContextualSkinControls
                         group.Id,
                         modelTypeName ?? character.GetType().Name,
                         variantPath,
-                        ref visuals);
+                        ref visuals,
+                        retainedVisuals);
                     ModLog.Info($"[十字军变体] 已把场景写回变体：{variantPath}（分组={group.Id}）。");
                 }
             }
@@ -3379,22 +3382,21 @@ internal static partial class ContextualSkinControls
 
     internal static void ReplaceCachedTexture(string resourcePath, ref Texture2D result)
     {
-        var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
-        if (groupId == null || ShouldSkipExternalRuntimeRedirect(groupId))
-        {
-            return;
-        }
-
+        if (CombatAppearanceBoundary.SkipAppearance) return;
         try
         {
-            result = SkinService.GetOrLoadRuntimeResource(groupId, resourcePath) as Texture2D ??
-                     throw new InvalidOperationException($"独立皮肤资源不是贴图：{resourcePath}");
+            var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
+            if (groupId == null || ShouldSkipExternalRuntimeRedirect(groupId)) return;
+
+            var replacement = SkinService.GetOrLoadRuntimeResource(groupId, resourcePath) as Texture2D ??
+                              throw new InvalidOperationException($"独立皮肤资源不是贴图：{resourcePath}");
             if (EventSkinPolicy.IsEventGroup(groupId))
-                result.SetMeta(EventSkinRuntime.TextureSourceMeta, resourcePath);
+                replacement.SetMeta(EventSkinRuntime.TextureSourceMeta, resourcePath);
+            result = replacement;
         }
         catch (Exception exception)
         {
-            ModLog.Error($"最终接管贴图 {resourcePath} 失败：{exception}");
+            CombatAppearanceBoundary.Warn("贴图", exception);
         }
     }
 
@@ -3442,34 +3444,34 @@ internal static partial class ContextualSkinControls
 
     internal static void ReplaceCharacterIcon(CharacterModel character, ref Control result)
     {
-        var group = FindGroup(character.Id.Entry);
-        if (group == null)
-        {
-            return;
-        }
-
-        // The in-run top-left avatar is this Control, and it is handed back to us as the *existing*
-        // instance whenever the HUD refreshes it. Repainting that instance is what makes a variant
-        // change visible without rebuilding the whole top bar.
-        var variantAvatar = VariantPortraits.Resolve(group.Id, "run", 1);
-        if (variantAvatar != null && result != null && GodotObject.IsInstanceValid(result))
-        {
-            ApplyVariantTexture(result, variantAvatar);
-        }
-
-        var characterId = character.Id.Entry.ToLowerInvariant();
-        var resourcePath = CanonicalScenePath("ui/character_icons/" + characterId + "_icon");
-        if (!SkinService.SelectedSkinProvidesResource(group.Id, resourcePath) ||
-            SkinService.ShouldDeferCharacterIconResourceToExternalRuntime(
-                group.Id,
-                resourcePath))
-        {
-            return;
-        }
-
+        if (CombatAppearanceBoundary.SkipAppearance) return;
+        Control? replacement = null;
         try
         {
-            var replacement = SkinService.WithCharacterIconResource(
+            var group = FindGroup(character.Id.Entry);
+            if (group == null)
+            {
+                return;
+            }
+
+            // The in-run top-left avatar is this Control, and it is handed back to us as the *existing*
+            // instance whenever the HUD refreshes it. Repainting that instance is what makes a variant
+            // change visible without rebuilding the whole top bar.
+            var variantAvatar = VariantPortraits.Resolve(group.Id, "run", 1);
+
+            var characterId = character.Id.Entry.ToLowerInvariant();
+            var resourcePath = CanonicalScenePath("ui/character_icons/" + characterId + "_icon");
+            if (!SkinService.SelectedSkinProvidesResource(group.Id, resourcePath) ||
+                SkinService.ShouldDeferCharacterIconResourceToExternalRuntime(
+                    group.Id,
+                    resourcePath))
+            {
+                if (variantAvatar != null && result != null && GodotObject.IsInstanceValid(result))
+                    ApplyVariantTexture(result, variantAvatar);
+                return;
+            }
+
+            replacement = SkinService.WithCharacterIconResource(
                 group.Id,
                 resourcePath,
                 resource => (resource as PackedScene ??
@@ -3478,22 +3480,23 @@ internal static partial class ContextualSkinControls
                     .Instantiate<Control>(PackedScene.GenEditState.Disabled),
                 includeProviderDependencies: true);
             ManagedSceneCompatibility.CopyMissingUniqueNodes(result, replacement);
-            if (group != null && VariantPortraits.Resolve(group.Id, "run", 1) is { } variantIcon)
+            if (variantAvatar != null)
             {
                 // The avatar scene carries its own TextureRect; swap in the variant portrait so the
                 // top-left run avatar follows the appearance change like the pack's own code did.
                 foreach (var rect in EnumerateTextureRects(replacement))
                 {
-                    rect.Texture = variantIcon;
+                    rect.Texture = variantAvatar;
                 }
             }
 
-            result?.QueueFree();
+            CombatAppearanceBoundary.ReleaseNode(result);
             result = replacement;
         }
         catch (Exception exception)
         {
-            ModLog.Error($"最终接管角色小头像 {resourcePath} 失败：{exception}");
+            CombatAppearanceBoundary.ReleaseNode(replacement);
+            CombatAppearanceBoundary.Warn("头像", exception);
         }
     }
 
@@ -3502,39 +3505,40 @@ internal static partial class ContextualSkinControls
         string resourcePath,
         ref Texture2D result)
     {
-        var group = FindGroup(character.Id.Entry);
-
-        // A settings-driven variant ships its own per-variant portrait; the pack's own code would have
-        // swapped it, and that code does not run for a package that lost the assembly identity.
-        if (group != null && !resourcePath.Contains("map_marker", StringComparison.OrdinalIgnoreCase))
-        {
-            var kind = resourcePath.Contains("outline", StringComparison.OrdinalIgnoreCase)
-                ? "run_outline"
-                : "run";
-            if (VariantPortraits.Resolve(group.Id, kind, 1) is { } variantPortrait)
-            {
-                result = variantPortrait;
-                return;
-            }
-        }
-
-        if (group == null ||
-            !SkinService.SelectedSkinProvidesResource(group.Id, resourcePath) ||
-            SkinService.ShouldDeferCharacterIconResourceToExternalRuntime(
-                group.Id,
-                resourcePath))
-        {
-            return;
-        }
-
+        if (CombatAppearanceBoundary.SkipAppearance) return;
         try
         {
+            var group = FindGroup(character.Id.Entry);
+
+            // A settings-driven variant ships its own per-variant portrait; the pack's own code would have
+            // swapped it, and that code does not run for a package that lost the assembly identity.
+            if (group != null && !resourcePath.Contains("map_marker", StringComparison.OrdinalIgnoreCase))
+            {
+                var kind = resourcePath.Contains("outline", StringComparison.OrdinalIgnoreCase)
+                    ? "run_outline"
+                    : "run";
+                if (VariantPortraits.Resolve(group.Id, kind, 1) is { } variantPortrait)
+                {
+                    result = variantPortrait;
+                    return;
+                }
+            }
+
+            if (group == null ||
+                !SkinService.SelectedSkinProvidesResource(group.Id, resourcePath) ||
+                SkinService.ShouldDeferCharacterIconResourceToExternalRuntime(
+                    group.Id,
+                    resourcePath))
+            {
+                return;
+            }
+
             result = SkinService.GetOrLoadCharacterIconResource(group.Id, resourcePath) as Texture2D ??
                      throw new InvalidOperationException($"角色头像资源不是贴图：{resourcePath}");
         }
         catch (Exception exception)
         {
-            ModLog.Error($"最终接管角色界面贴图 {resourcePath} 失败：{exception}");
+            CombatAppearanceBoundary.Warn("头像", exception);
         }
     }
 
@@ -4028,49 +4032,65 @@ internal static class CharacterVisualResultPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref NCreatureVisuals __result)
     {
-        var group = ContextualSkinControls.FindGroup(
-            __instance.Id.Entry,
-            __instance.GetType().Name);
-        if (group != null && MultiplayerSkinSync.GetScopedSelection(group.Id) != null)
+        if (__result == null || CombatAppearanceBoundary.SkipAppearance) return;
+        using var boundary = CombatAppearanceBoundary.BeginIfNeeded();
+        var original = __result;
+        var candidate = original;
+        try
         {
-            // The owner-aware Creature.CreateVisuals postfix is the sole final writer for a
-            // remote player.  Applying here would reduce the selection back to one value shared
-            // by every instance of this CharacterModel.
-            return;
-        }
-
-        var variantPath = ContextualSkinControls.ResolveVariantCombatPath(__instance);
-        if (variantPath != null)
-        {
-            var packed = GD.Load<PackedScene>(variantPath);
-            if (packed != null)
+            var group = ContextualSkinControls.FindGroup(
+                __instance.Id.Entry,
+                __instance.GetType().Name);
+            if (group != null && MultiplayerSkinSync.GetScopedSelection(group.Id) != null)
             {
-                __result = packed.Instantiate<NCreatureVisuals>();
-                ModLog.Info($"已应用十字军变体场景：{variantPath}");
+                // The owner-aware Creature.CreateVisuals postfix is the sole final writer for a
+                // remote player.  Applying here would reduce the selection back to one value shared
+                // by every instance of this CharacterModel.
                 return;
             }
-        }
 
-        var canonicalPath = ContextualSkinControls.CanonicalScenePath(
-            "creature_visuals/" + __instance.Id.Entry.ToLowerInvariant());
-        // A provider can resolve its own sub-variant by patching CharacterModel.VisualsPath.
-        // The original CreateVisuals has already built that variant; replacing it here would
-        // force the provider's default scene. Keep a non-canonical provider path; SkinChanger's
-        // explicit synthetic option still wins through ResolveVariantCombatPath above.
-        if (ContextualSkinControls.HasCustomVisualsPath(__instance, canonicalPath))
+            var variantPath = ContextualSkinControls.ResolveVariantCombatPath(__instance);
+            if (variantPath != null)
+            {
+                var packed = GD.Load<PackedScene>(variantPath);
+                if (packed != null)
+                {
+                    candidate = packed.Instantiate<NCreatureVisuals>();
+                    ModLog.Info($"已应用十字军变体场景：{variantPath}");
+                    return;
+                }
+            }
+
+            var canonicalPath = ContextualSkinControls.CanonicalScenePath(
+                "creature_visuals/" + __instance.Id.Entry.ToLowerInvariant());
+            // A provider can resolve its own sub-variant by patching CharacterModel.VisualsPath.
+            // The original CreateVisuals has already built that variant; replacing it here would
+            // force the provider's default scene. Keep a non-canonical provider path; SkinChanger's
+            // explicit synthetic option still wins through ResolveVariantCombatPath above.
+            if (ContextualSkinControls.HasCustomVisualsPath(__instance, canonicalPath))
+            {
+                return;
+            }
+
+            ContextualSkinControls.ReplaceCreatedVisuals(
+                __instance.Id.Entry,
+                null,
+                canonicalPath,
+                ref candidate, original);
+            ContextualSkinControls.ApplySelectedProviderVisualPostfix(
+                __instance.Id.Entry,
+                __instance.GetType().Name,
+                __instance,
+                ref candidate, original);
+        }
+        catch (Exception error)
         {
-            return;
+            CombatAppearanceBoundary.SkipAfterFailure(error);
         }
-
-        ContextualSkinControls.ReplaceCreatedVisuals(
-            __instance.Id.Entry,
-            canonicalPath,
-            ref __result);
-        ContextualSkinControls.ApplySelectedProviderVisualPostfix(
-            __instance.Id.Entry,
-            __instance.GetType().Name,
-            __instance,
-            ref __result);
+        finally
+        {
+            __result = CombatAppearanceBoundary.FinishVisual(original, candidate);
+        }
     }
 }
 
@@ -4080,42 +4100,66 @@ internal static class MonsterVisualResultPatch
     [HarmonyPriority(Priority.First)]
     private static void Prefix(MonsterModel __instance)
     {
-        var group = ContextualSkinControls.FindGroup(
-            __instance.Id.Entry,
-            __instance.GetType().Name);
-        if (group != null)
+        if (CombatAppearanceBoundary.SkipAppearance) return;
+        try
         {
-            CharacterAppearanceRuntime.AddVisibleCombatRuntimeGroup(group.Id);
+            var group = ContextualSkinControls.FindGroup(
+                __instance.Id.Entry,
+                __instance.GetType().Name);
+            if (group != null)
+            {
+                CharacterAppearanceRuntime.AddVisibleCombatRuntimeGroup(group.Id);
+            }
+        }
+        catch (Exception error)
+        {
+            CombatAppearanceBoundary.SkipAfterFailure(error);
         }
     }
 
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(MonsterModel __instance, ref NCreatureVisuals __result)
     {
-        var group = ContextualSkinControls.FindGroup(
-            __instance.Id.Entry,
-            __instance.GetType().Name);
-        if (group != null && MultiplayerSkinSync.GetScopedSelection(group.Id) != null)
+        if (__result == null || CombatAppearanceBoundary.SkipAppearance) return;
+        using var boundary = CombatAppearanceBoundary.BeginIfNeeded();
+        var original = __result;
+        var candidate = original;
+        try
         {
-            // Pets can also be owned by a remote player.  Their companion group is resolved from
-            // the owning player's complete selection transaction by the Creature-level patch.
-            return;
-        }
+            var group = ContextualSkinControls.FindGroup(
+                __instance.Id.Entry,
+                __instance.GetType().Name);
+            if (group != null && MultiplayerSkinSync.GetScopedSelection(group.Id) != null)
+            {
+                // Pets can also be owned by a remote player.  Their companion group is resolved from
+                // the owning player's complete selection transaction by the Creature-level patch.
+                return;
+            }
 
-        ContextualSkinControls.ReplaceCreatedVisuals(
-            __instance.Id.Entry,
-            __instance.GetType().Name,
-            ContextualSkinControls.GetMonsterVisualsPath(__instance),
-            ref __result);
-        ContextualSkinControls.ApplySelectedProviderVisualPostfix(
-            __instance.Id.Entry,
-            __instance.GetType().Name,
-            __instance,
-            ref __result);
-        ContextualSkinControls.MarkAndApplyMonsterScale(
-            __instance.Id.Entry,
-            __instance.GetType().Name,
-            __result);
+            ContextualSkinControls.ReplaceCreatedVisuals(
+                __instance.Id.Entry,
+                __instance.GetType().Name,
+                ContextualSkinControls.GetMonsterVisualsPath(__instance),
+                ref candidate, original);
+            ContextualSkinControls.ApplySelectedProviderVisualPostfix(
+                __instance.Id.Entry,
+                __instance.GetType().Name,
+                __instance,
+                ref candidate, original);
+            if (!CombatAppearanceBoundary.SkipAppearance)
+                ContextualSkinControls.MarkAndApplyMonsterScale(
+                    __instance.Id.Entry,
+                    __instance.GetType().Name,
+                    candidate);
+        }
+        catch (Exception error)
+        {
+            CombatAppearanceBoundary.SkipAfterFailure(error);
+        }
+        finally
+        {
+            __result = CombatAppearanceBoundary.FinishVisual(original, candidate);
+        }
     }
 }
 

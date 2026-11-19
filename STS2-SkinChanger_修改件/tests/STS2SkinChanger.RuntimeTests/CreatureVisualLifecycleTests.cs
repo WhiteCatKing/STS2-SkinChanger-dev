@@ -1,10 +1,12 @@
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using STS2SkinChanger;
+using STS2SkinChanger.Core;
 
 internal static class CreatureVisualLifecycleTests
 {
@@ -24,7 +26,174 @@ internal static class CreatureVisualLifecycleTests
         CheckNativeReadyParent();
         CheckLocalCreatureFinishing();
         CheckCompanionRevealEligibility();
-        Console.WriteLine("Creature visual lifecycle passed: selected Creature postfixes and native Ready parent.");
+        CheckLowMemoryFallback();
+        CheckCombatCleanupDeferred();
+        Console.WriteLine("Creature visual lifecycle passed: provider finishing, native Ready parent, low-memory fallback and deferred cleanup.");
+    }
+
+    private static Creature _pressureCreature = null!;
+    private static NCreature _nativeReadyFinished = null!;
+    private static NCreatureVisuals _nativeVisual = null!;
+    private static Exception? _nativeError;
+    private static bool _failFinishing;
+    private static int _readyReplays;
+    private static int _pressureAttempts;
+
+    private static void CheckLowMemoryFallback()
+    {
+        var create = AccessTools.Method(typeof(Creature), nameof(Creature.CreateVisuals));
+        var ready = AccessTools.Method(typeof(NCreature), nameof(NCreature._Ready));
+        var harmony = new Harmony("Gurio.SkinChanger.Tests.CombatAppearanceFallback");
+        var log = AuditLogSilencer.Install();
+        try
+        {
+            harmony.Patch(create, transpiler: TestPatch(nameof(UseNativeCreateFixture)));
+            harmony.Patch(ready, transpiler: TestPatch(nameof(UseNativeReadyFixture)));
+            harmony.CreateClassProcessor(typeof(MultiplayerCreatureVisualScopePatch)).Patch();
+            harmony.CreateClassProcessor(typeof(MultiplayerCreatureReadyScopePatch)).Patch();
+            harmony.Patch(AccessTools.Method(typeof(MultiplayerSkinSync), "BeginCreatureRuntimeScope"),
+                prefix: TestPatch(nameof(OpenOptionalScope)));
+            var controls = typeof(Entry).Assembly.GetType("STS2SkinChanger.Ui.ContextualSkinControls", true)!;
+            harmony.Patch(AccessTools.Method(controls, "ApplySelectedCreatureVisualPostfix"),
+                prefix: TestPatch(nameof(SimulateOptionalFinishing)));
+
+            harmony.Patch(AccessTools.Method(typeof(STS2SkinChanger.Ui.CharacterAppearanceRuntime),
+                    "ReplaySelectedCreatureNodeReady", [typeof(NCreature)]),
+                prefix: TestPatch(nameof(SimulateReadyReplay)));
+
+            _pressureCreature = (Creature)RuntimeHelpers.GetUninitializedObject(typeof(Creature));
+            var nextCreature = (Creature)RuntimeHelpers.GetUninitializedObject(typeof(Creature));
+            _pressureAttempts = _readyReplays = 0;
+            _nativeVisual = CreateTestVisual();
+            var visual = (NCreatureVisuals)create.Invoke(_pressureCreature, null)!;
+            Require(ReferenceEquals(visual, _nativeVisual) && CombatAppearanceBoundary.IsFallback(visual),
+                "创建资源范围被内存守卫拒绝时，CreateVisuals 必须返回游戏创建的模型。");
+
+            var node = CreateTestCreatureNode(_pressureCreature, visual);
+            ready.Invoke(node, null);
+            Require(ReferenceEquals(_nativeReadyFinished, node) && _pressureAttempts == 1,
+                "已经降级的模型必须继续完成原生 Ready，且不能再次申请被拒绝的范围。");
+
+            node = CreateTestCreatureNode(_pressureCreature, CreateTestVisual());
+            ready.Invoke(node, null);
+            Require(ReferenceEquals(_nativeReadyFinished, node) && _pressureAttempts == 2,
+                "首次在 Ready 申请范围被内存守卫拒绝，也必须继续完成原生 Ready。");
+
+            _failFinishing = true;
+            _nativeVisual = CreateTestVisual();
+            visual = (NCreatureVisuals)create.Invoke(nextCreature, null)!;
+            Require(ReferenceEquals(visual, _nativeVisual) && CombatAppearanceBoundary.IsFallback(visual),
+                "生物级换肤后置失败时，必须保留游戏已有的模型。");
+
+            _failFinishing = false;
+            _nativeVisual = CreateTestVisual();
+            visual = (NCreatureVisuals)create.Invoke(nextCreature, null)!;
+            Require(ReferenceEquals(visual, _nativeVisual) && !CombatAppearanceBoundary.IsFallback(visual),
+                "下一个单位必须独立创建模型，不能继承前一个单位的降级状态。");
+
+            Require(_readyReplays == 0, "降级后必须跳过给模型重放的外观回调。");
+            var healthyNode = CreateTestCreatureNode(nextCreature, visual);
+            ready.Invoke(healthyNode, null);
+            Require(ReferenceEquals(_nativeReadyFinished, healthyNode) && _readyReplays == 1,
+                "自身的 Ready 回调失败时，原生 Ready 已完成，回调失败可独立降级。");
+
+            _nativeError = new InvalidOperationException("native setup failed");
+            CheckNativeError(create, _pressureCreature);
+            CheckNativeError(ready, node);
+            Require(!CombatAppearanceBoundary.SkipAppearance, "原版失败后也必须退出当前外观范围。");
+        }
+        finally
+        {
+            _nativeError = null;
+            _failFinishing = false;
+            harmony.UnpatchAll(harmony.Id);
+            log.UnpatchAll(log.Id);
+        }
+    }
+
+    private static void CheckNativeError(MethodInfo method, object owner)
+    {
+        try
+        {
+            method.Invoke(owner, null);
+            throw new InvalidOperationException("游戏原生异常被换肤补丁吞掉。");
+        }
+        catch (TargetInvocationException error) when (ReferenceEquals(error.InnerException, _nativeError)) { }
+    }
+
+    private static NCreatureVisuals CreateTestVisual()
+    {
+        var visual = (NCreatureVisuals)RuntimeHelpers.GetUninitializedObject(typeof(NCreatureVisuals));
+        GC.SuppressFinalize(visual);
+        return visual;
+    }
+
+    private static NCreature CreateTestCreatureNode(Creature entity, NCreatureVisuals visual)
+    {
+        var node = (NCreature)RuntimeHelpers.GetUninitializedObject(typeof(NCreature));
+        GC.SuppressFinalize(node);
+        _visualsField.SetValue(node, visual);
+        AccessTools.Field(typeof(NCreature), "<Entity>k__BackingField").SetValue(node, entity);
+        return node;
+    }
+
+    private static HarmonyMethod TestPatch(string method) => new(typeof(CreatureVisualLifecycleTests), method);
+
+    private static IEnumerable<CodeInstruction> UseNativeCreateFixture(IEnumerable<CodeInstruction> instructions) =>
+        [new(OpCodes.Call, AccessTools.Method(typeof(CreatureVisualLifecycleTests), nameof(NativeCreate))), new(OpCodes.Ret)];
+
+    private static IEnumerable<CodeInstruction> UseNativeReadyFixture(IEnumerable<CodeInstruction> instructions) =>
+        [new(OpCodes.Ldarg_0),
+            new(OpCodes.Call, AccessTools.Method(typeof(CreatureVisualLifecycleTests), nameof(NativeReady))),
+            new(OpCodes.Ret)];
+
+    private static NCreatureVisuals NativeCreate() => _nativeError == null ? _nativeVisual : throw _nativeError;
+
+    private static void NativeReady(NCreature owner)
+    {
+        if (_nativeError != null) throw _nativeError;
+        _nativeReadyFinished = owner;
+    }
+
+    private static bool OpenOptionalScope(Creature creature, ref IDisposable? __result)
+    {
+        if (ReferenceEquals(creature, _pressureCreature))
+        {
+            _pressureAttempts++;
+            throw new AppearanceResourceUnavailableException("test: low appearance memory");
+        }
+        __result = null;
+        return false;
+    }
+
+    private static bool SimulateOptionalFinishing() =>
+        _failFinishing ? throw new AppearanceResourceUnavailableException("test: low memory in finishing") : false;
+
+    private static bool SimulateReadyReplay()
+    {
+        _readyReplays++;
+        throw new AppearanceResourceUnavailableException("test: low memory in Ready replay");
+    }
+
+    private static void CheckCombatCleanupDeferred()
+    {
+        var combat = AccessTools.Field(typeof(STS2SkinChanger.Ui.CharacterAppearanceRuntime), "_combatRuntimeScopeActive");
+        var pending = AccessTools.Field(typeof(SkinService), "_runtimePressureCleanupPending");
+        var previousCombat = combat.GetValue(null);
+        var previousPending = pending.GetValue(null);
+        try
+        {
+            combat.SetValue(null, true);
+            pending.SetValue(null, false);
+            AccessTools.Method(typeof(SkinService), "RequestRuntimePressureCleanup").Invoke(null, null);
+            SkinService.TryRunDeferredRuntimePressureCleanup();
+            Require((bool)pending.GetValue(null)!, "战斗中的资源压力只应登记清理请求，不能清空缓存。");
+        }
+        finally
+        {
+            combat.SetValue(null, previousCombat);
+            pending.SetValue(null, previousPending);
+        }
     }
 
     private static void CheckCompanionRevealEligibility()

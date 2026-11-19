@@ -8,31 +8,44 @@ namespace STS2SkinChanger.Core;
 internal sealed class CardPortraitSessionCache
 {
     private const int MaxPaths = 1024;
-    private readonly Dictionary<string, Entry?> _entries = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<ulong> _backingTextures = [];
+    private readonly Dictionary<string, Entry> _entries = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<string> _lruOrder = new();
+    private readonly HashSet<string> _failedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<ulong, int> _backingTextureRefCounts = [];
     private long _estimatedBytes;
+
+    internal long EstimatedBytes => _estimatedBytes;
+    internal int Count => _entries.Count;
 
     internal bool TryGet(string path, bool wrapAtlas, out Texture2D? texture)
     {
         texture = null;
+        if (_failedPaths.Contains(path)) return true;
         if (!_entries.TryGetValue(path, out var entry)) return false;
-        if (entry != null && GodotObject.IsInstanceValid(entry.Source))
+        if (GodotObject.IsInstanceValid(entry.Source))
+        {
+            Touch(entry);
             texture = entry.Resolve(wrapAtlas);
-        return true;
+            return true;
+        }
+
+        RemoveEntry(path, entry);
+        return false;
     }
 
     internal Texture2D? GetOrLoad(string path, bool wrapAtlas, Func<Texture2D?> load)
     {
         if (TryGet(path, wrapAtlas, out var cached)) return cached;
-        if (_entries.Count >= MaxPaths || _estimatedBytes >= RuntimeLoadSafety.ResidentCacheBudget)
-            return null;
 
         RuntimeLoadSafety.RequireHeadroom(0);
-        // Keep failed paths for this session as well, including refusals after decoding.
-        // A second request key for the same alias must not try allocating the texture again.
-        _entries.Add(path, null);
         var source = load();
-        if (source == null) return null;
+        if (source == null)
+        {
+            RememberFailedPath(path);
+            return null;
+        }
+
+        var stored = false;
         try
         {
             var backing = source;
@@ -45,20 +58,63 @@ internal sealed class CardPortraitSessionCache
             var textureId = backing.GetInstanceId();
             // Ignore can share an external atlas. Charge it once and use the full atlas size,
             // since a small portrait region can keep a much larger texture alive.
-            var bytes = _backingTextures.Contains(textureId) ? 0L :
-                checked((long)backing.GetWidth() * backing.GetHeight() * 8);
-            if (bytes > RuntimeLoadSafety.ResidentCacheBudget - _estimatedBytes)
-                return null;
+            var backingBytes = checked((long)backing.GetWidth() * backing.GetHeight() * 8);
+            var alreadyTracked = _backingTextureRefCounts.ContainsKey(textureId);
+            var incrementalBytes = alreadyTracked ? 0L : backingBytes;
 
-            var entry = new Entry(source);
+            // A single card texture that meets or exceeds the entire resident budget cannot fit
+            // even in an empty cache: reject, dispose on the game thread, and do not decode again.
+            if (incrementalBytes >= RuntimeLoadSafety.ResidentCacheBudget)
+            {
+                RememberFailedPath(path);
+                return null;
+            }
+
+            // Evict least-recently-used entries when browsing many card tabs (e.g. Card Library)
+            // so the resident estimate stays within budget without permanently breaking later tabs.
+            // Evicted entries drop cache ownership without force-disposing active native textures.
+            while (_lruOrder.First is { } oldestNode &&
+                   (_entries.Count >= MaxPaths ||
+                    incrementalBytes > RuntimeLoadSafety.ResidentCacheBudget - _estimatedBytes))
+            {
+                var oldestPath = oldestNode.Value;
+                if (_entries.TryGetValue(oldestPath, out var oldestEntry))
+                {
+                    RemoveEntry(oldestPath, oldestEntry);
+                    // Recompute in case evicting the last sibling released the same backing texture.
+                    alreadyTracked = _backingTextureRefCounts.ContainsKey(textureId);
+                    incrementalBytes = alreadyTracked ? 0L : backingBytes;
+                }
+                else
+                {
+                    _lruOrder.RemoveFirst();
+                }
+            }
+
+            if (incrementalBytes > RuntimeLoadSafety.ResidentCacheBudget - _estimatedBytes)
+            {
+                RememberFailedPath(path);
+                return null;
+            }
+
+            var lruNode = _lruOrder.AddLast(path);
+            var entry = new Entry(source, textureId, backingBytes, lruNode);
             _entries[path] = entry;
-            _backingTextures.Add(textureId);
-            _estimatedBytes += bytes;
+            if (_backingTextureRefCounts.TryGetValue(textureId, out var count))
+            {
+                _backingTextureRefCounts[textureId] = count + 1;
+            }
+            else
+            {
+                _backingTextureRefCounts[textureId] = 1;
+                _estimatedBytes += backingBytes;
+            }
+            stored = true;
             return entry.Resolve(wrapAtlas);
         }
         finally
         {
-            if (_entries[path] == null) DisposeTexture(source);
+            if (!stored) DisposeTexture(source);
         }
     }
 
@@ -66,13 +122,47 @@ internal sealed class CardPortraitSessionCache
     {
         foreach (var entry in _entries.Values)
         {
-            if (entry == null) continue;
             DisposeTexture(entry.View);
             DisposeTexture(entry.Source);
         }
         _entries.Clear();
-        _backingTextures.Clear();
+        _lruOrder.Clear();
+        _failedPaths.Clear();
+        _backingTextureRefCounts.Clear();
         _estimatedBytes = 0;
+    }
+
+    private void Touch(Entry entry)
+    {
+        if (entry.LruNode.List != _lruOrder || ReferenceEquals(entry.LruNode, _lruOrder.Last))
+            return;
+        _lruOrder.Remove(entry.LruNode);
+        _lruOrder.AddLast(entry.LruNode);
+    }
+
+    private void RemoveEntry(string path, Entry entry)
+    {
+        _entries.Remove(path);
+        if (entry.LruNode.List == _lruOrder)
+            _lruOrder.Remove(entry.LruNode);
+        if (_backingTextureRefCounts.TryGetValue(entry.BackingTextureId, out var count))
+        {
+            if (count <= 1)
+            {
+                _backingTextureRefCounts.Remove(entry.BackingTextureId);
+                _estimatedBytes = Math.Max(0L, _estimatedBytes - entry.BackingBytes);
+            }
+            else
+            {
+                _backingTextureRefCounts[entry.BackingTextureId] = count - 1;
+            }
+        }
+    }
+
+    private void RememberFailedPath(string path)
+    {
+        if (_failedPaths.Count < MaxPaths)
+            _failedPaths.Add(path);
     }
 
     private static void DisposeTexture(Texture2D? texture)
@@ -84,9 +174,12 @@ internal sealed class CardPortraitSessionCache
         }
     }
 
-    private sealed class Entry(Texture2D source)
+    private sealed class Entry(Texture2D source, ulong backingTextureId, long backingBytes, LinkedListNode<string> lruNode)
     {
         internal Texture2D Source { get; } = source;
+        internal ulong BackingTextureId { get; } = backingTextureId;
+        internal long BackingBytes { get; } = backingBytes;
+        internal LinkedListNode<string> LruNode { get; } = lruNode;
         internal AtlasTexture? View { get; private set; }
 
         internal Texture2D? Resolve(bool wrapAtlas)

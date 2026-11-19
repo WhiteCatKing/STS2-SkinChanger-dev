@@ -3744,44 +3744,65 @@ internal static partial class SkinService
 
     private static int CardArtSelectionScore(
         string assetPath,
-        CardModel card,
-        string originalPath)
+        string originalExtension,
+        bool originalUsesBeta,
+        string expectedStem,
+        string typeStem,
+        bool hasDistinctTypeStem,
+        int level)
     {
-        var score = HasSameResourceExtension(assetPath, originalPath) ? 20 : 0;
+        var score = System.IO.Path.GetExtension(assetPath)
+            .Equals(originalExtension, StringComparison.OrdinalIgnoreCase)
+            ? 20
+            : 0;
         var assetUsesBeta = assetPath.Contains("/beta/", StringComparison.OrdinalIgnoreCase);
-        var originalUsesBeta = originalPath.Contains("/beta/", StringComparison.OrdinalIgnoreCase);
         if (assetUsesBeta == originalUsesBeta)
         {
             score += 100;
         }
 
-        var asset = CardPortraitIdentity(assetPath);
-        var original = CardPortraitIdentity(originalPath);
-        var typeStem = NormalizeCardToken(card.GetType().Name);
-        var expectedStem = original?.Stem ?? typeStem;
-        if (asset?.Stem.Equals(expectedStem, StringComparison.OrdinalIgnoreCase) == true ||
-            asset?.Stem.Equals(typeStem, StringComparison.OrdinalIgnoreCase) == true)
+        var asset = Catalog != null
+            ? Catalog.TryGetCardArtIdentity(assetPath)
+            : SkinCatalog.TryGetCardArtIdentity(assetPath);
+        if (asset is not { } assetIdentity)
+        {
+            return score;
+        }
+
+        if (assetIdentity.Stem.Equals(expectedStem, StringComparison.OrdinalIgnoreCase) ||
+            (hasDistinctTypeStem &&
+             assetIdentity.Stem.Equals(typeStem, StringComparison.OrdinalIgnoreCase)))
         {
             score += 30;
         }
 
-        var level = GetCardPresentationLevel(card);
-        foreach (var expected in new[] { expectedStem, typeStem }.Distinct(StringComparer.OrdinalIgnoreCase))
+        if (TryScoreNumberedCardVariant(assetIdentity.Stem, expectedStem, level, out var variantScore) ||
+            (hasDistinctTypeStem &&
+             TryScoreNumberedCardVariant(assetIdentity.Stem, typeStem, level, out variantScore)))
         {
-            if (asset == null ||
-                !asset.Value.Stem.StartsWith(expected, StringComparison.OrdinalIgnoreCase) ||
-                !int.TryParse(asset.Value.Stem[expected.Length..], out var variantNumber))
-            {
-                continue;
-            }
-
-            score += variantNumber == level + 1
-                ? 40
-                : Math.Max(0, 10 - Math.Abs(variantNumber - level - 1));
-            break;
+            score += variantScore;
         }
 
         return score;
+    }
+
+    private static bool TryScoreNumberedCardVariant(
+        string assetStem,
+        string expectedStem,
+        int level,
+        out int variantScore)
+    {
+        variantScore = 0;
+        if (!assetStem.StartsWith(expectedStem, StringComparison.OrdinalIgnoreCase) ||
+            !int.TryParse(assetStem[expectedStem.Length..], out var variantNumber))
+        {
+            return false;
+        }
+
+        variantScore = variantNumber == level + 1
+            ? 40
+            : Math.Max(0, 10 - Math.Abs(variantNumber - level - 1));
+        return true;
     }
 
     private static int GetCardPresentationLevel(CardModel card)
@@ -3824,24 +3845,25 @@ internal static partial class SkinService
     private static CardLookup ResolveCardLookup(CardModel card)
     {
         var poolGroupId = GetCardPoolGroupId(card);
+        var cardType = card.GetType().Name;
         // Failure to read an intrinsic Mod-card profile is not evidence of skin ownership.
         // In particular, do not fall back to a vanilla path or suppress the framework for it.
-        if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out _))
-            return new CardLookup(poolGroupId, card.GetType().Name, null, [],
+        if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var baselinePath))
+            return new CardLookup(poolGroupId, cardType, null, [],
                 new Dictionary<string, CardOptionLookup>(StringComparer.OrdinalIgnoreCase), [])
             { BaselineUnavailable = true };
+        var cardIdentity = ResolveCardMatchIdentity(cardType, baselinePath, poolGroupId);
         var filterGroupId = GetCardFilterGroupId(card);
         string groupId;
         if (!filterGroupId.Equals(poolGroupId, StringComparison.OrdinalIgnoreCase) &&
             ((filterGroupId.Equals("ancients", StringComparison.OrdinalIgnoreCase) &&
               Catalog?.CardGroups.Any(group => group.Id.Equals("ancients", StringComparison.OrdinalIgnoreCase)) == true) ||
-             CardGroupAffectsCardUncached(filterGroupId, card)))
+             CardGroupAffectsCardUncached(filterGroupId, cardType, cardIdentity)))
         {
             groupId = filterGroupId;
         }
         else
         {
-            var cardType = card.GetType().Name;
             var configuredGroup = Catalog?.CardGroups.FirstOrDefault(group =>
                 group.Options.Any(option =>
                     option.NormalPortraits.ContainsKey(cardType) ||
@@ -3850,14 +3872,14 @@ internal static partial class SkinService
             {
                 groupId = configuredGroup.Id;
             }
-            else if (CardGroupAffectsCardUncached(poolGroupId, card))
+            else if (CardGroupAffectsCardUncached(poolGroupId, cardType, cardIdentity))
             {
                 groupId = poolGroupId;
             }
             else
             {
                 var catalogGroupId = GetCardCatalogGroupId(card);
-                groupId = CardGroupAffectsCardUncached(catalogGroupId, card)
+                groupId = CardGroupAffectsCardUncached(catalogGroupId, cardType, cardIdentity)
                     ? catalogGroupId
                     : poolGroupId;
             }
@@ -3866,7 +3888,7 @@ internal static partial class SkinService
         var group = Catalog?.CardGroups.FirstOrDefault(candidate =>
             candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
         var options = group?.Options
-            .Select(option => BuildCardOptionLookup(option, card))
+            .Select(option => BuildCardOptionLookup(option, cardType, cardIdentity))
             .Where(option => option != null)
             .Cast<CardOptionLookup>()
             .ToArray() ?? [];
@@ -3880,7 +3902,7 @@ internal static partial class SkinService
         if (group != null && !priorityGroups.Contains(group)) priorityGroups.Add(group);
         return new CardLookup(
             groupId,
-            card.GetType().Name,
+            cardType,
             group,
             options.Select(option => option.Option).ToArray(),
             options.ToDictionary(
@@ -3889,7 +3911,10 @@ internal static partial class SkinService
             priorityGroups);
     }
 
-    private static bool CardGroupAffectsCardUncached(string groupId, CardModel card)
+    private static bool CardGroupAffectsCardUncached(
+        string groupId,
+        string cardType,
+        SkinCatalog.CardMatchIdentity? cardIdentity)
     {
         var group = Catalog?.CardGroups.FirstOrDefault(group =>
             group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
@@ -3898,7 +3923,7 @@ internal static partial class SkinService
             return false;
         }
 
-        return group.Options.Any(option => CardOptionAffectsCardUncached(option, card));
+        return group.Options.Any(option => CardOptionAffectsCardUncached(option, cardType, cardIdentity));
     }
 
     private static CardSkinGroup? GetCardGroup(CardModel card)
@@ -3906,9 +3931,9 @@ internal static partial class SkinService
 
     private static CardOptionLookup? BuildCardOptionLookup(
         CardSkinOption option,
-        CardModel card)
+        string cardType,
+        SkinCatalog.CardMatchIdentity? cardIdentity)
     {
-        var cardType = card.GetType().Name;
         var name = option.GetNameForCard(cardType);
         if (!name.Equals(option.Name, StringComparison.Ordinal))
         {
@@ -3920,16 +3945,25 @@ internal static partial class SkinService
             return new CardOptionLookup(option, []);
         }
 
-        var matchedAssetPaths = option.Assets.Keys
-            .Where(assetPath => CardArtMatches(assetPath, card))
-            .ToArray();
+        var matchedAssetPaths = cardIdentity is { } identity
+            ? option.Assets.Keys
+                .Where(assetPath => CardArtMatches(assetPath, identity))
+                .ToArray()
+            : [];
         return option.CardPresentations.ContainsKey(cardType) || matchedAssetPaths.Length > 0
             ? new CardOptionLookup(option, matchedAssetPaths)
             : null;
     }
 
-    private static bool CardOptionAffectsCardUncached(CardSkinOption option, CardModel card) =>
-        BuildCardOptionLookup(option, card) != null;
+    private static bool CardOptionAffectsCardUncached(
+        CardSkinOption option,
+        string cardType,
+        SkinCatalog.CardMatchIdentity? cardIdentity) =>
+        option.NormalPortraits.ContainsKey(cardType) ||
+        option.AncientPortraits.ContainsKey(cardType) ||
+        option.CardPresentations.ContainsKey(cardType) ||
+        (cardIdentity is { } identity &&
+         option.Assets.Keys.Any(assetPath => CardArtMatches(assetPath, identity)));
 
     private static CardCoverageState GetCardCoverage(CardSkinGroup group)
     {
@@ -4204,16 +4238,43 @@ internal static partial class SkinService
             state.CanonicalRedirectPaths);
     }
 
-    private static string? SelectProviderCardPath(
+    internal static string? SelectProviderCardPath(
         IReadOnlyList<string> paths,
         CardModel card,
         string originalPath)
     {
+        if (paths.Count == 0)
+        {
+            return null;
+        }
+
+        if (paths.Count == 1)
+        {
+            return paths[0];
+        }
+
+        var originalExtension = System.IO.Path.GetExtension(originalPath);
+        var originalUsesBeta = originalPath.Contains("/beta/", StringComparison.OrdinalIgnoreCase);
+        var originalIdentity = Catalog != null
+            ? Catalog.TryGetCardArtIdentity(originalPath)
+            : SkinCatalog.TryGetCardArtIdentity(originalPath);
+        var typeStem = SkinCatalog.NormalizeCardStemToken(card.GetType().Name);
+        var expectedStem = originalIdentity?.Stem ?? typeStem;
+        var hasDistinctTypeStem = !expectedStem.Equals(typeStem, StringComparison.OrdinalIgnoreCase);
+        var level = GetCardPresentationLevel(card);
+
         string? selected = null;
         var selectedScore = int.MinValue;
         foreach (var path in paths)
         {
-            var score = CardArtSelectionScore(path, card, originalPath);
+            var score = CardArtSelectionScore(
+                path,
+                originalExtension,
+                originalUsesBeta,
+                expectedStem,
+                typeStem,
+                hasDistinctTypeStem,
+                level);
             if (score > selectedScore ||
                 (score == selectedScore &&
                  string.Compare(path, selected, StringComparison.OrdinalIgnoreCase) < 0))
@@ -4226,137 +4287,25 @@ internal static partial class SkinService
         return selected;
     }
 
-    private static bool CardArtMatches(string assetPath, CardModel card)
+    private static SkinCatalog.CardMatchIdentity? ResolveCardMatchIdentity(
+        string cardType,
+        string baselinePath,
+        string poolGroupId) =>
+        Catalog != null
+            ? Catalog.TryCreateCardMatchIdentity(cardType, baselinePath, poolGroupId)
+            : SkinCatalog.TryCreateCardMatchIdentity(cardType, baselinePath, poolGroupId, null, null);
+
+    private static bool CardArtMatches(string assetPath, SkinCatalog.CardMatchIdentity cardIdentity) =>
+        Catalog != null
+            ? Catalog.CardArtMatches(assetPath, cardIdentity)
+            : SkinCatalog.TryGetCardArtIdentity(assetPath) is { } asset &&
+              SkinCatalog.CardArtMatches(asset, cardIdentity);
+
+    internal static bool CardArtMatches(string assetPath, CardModel card)
     {
         if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var path)) return false;
-        var portraitIdentity = CardPortraitIdentity(path);
-        var poolGroupId = GetCardPoolGroupId(card);
-        var assetIdentity = CardPortraitIdentity(
-            assetPath,
-            poolGroupId,
-            portraitIdentity?.Category);
-        if (assetIdentity == null || portraitIdentity == null)
-        {
-            return false;
-        }
-
-        if (!string.IsNullOrEmpty(assetIdentity.Value.Category) &&
-            !assetIdentity.Value.Category.Equals(
-                poolGroupId, StringComparison.OrdinalIgnoreCase) &&
-            !assetIdentity.Value.Category.Equals(
-                portraitIdentity.Value.Category, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var typeStem = NormalizeCardToken(card.GetType().Name);
-        return CardStemsMatch(assetIdentity.Value.Stem, portraitIdentity.Value.Stem) ||
-               CardStemsMatch(assetIdentity.Value.Stem, typeStem);
-    }
-
-    private static (string Category, string Stem)? CardPortraitIdentity(
-        string? path,
-        string? expectedCategory = null,
-        string? alternateCategory = null)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return null;
-        }
-
-        var lowerPath = path.ToLowerInvariant();
-        var markerIndex = -1;
-        var markerLength = 0;
-        foreach (var marker in new[]
-                 {
-                     "/card_portraits/",
-                     "/card_atlas.sprites/",
-                     "/cards/",
-                     "/card/",
-                     "/card_art/",
-                     "/cardart/"
-                 })
-        {
-            markerIndex = lowerPath.IndexOf(marker, StringComparison.Ordinal);
-            if (markerIndex >= 0)
-            {
-                markerLength = marker.Length;
-                break;
-            }
-        }
-
-        var category = string.Empty;
-        if (markerIndex >= 0)
-        {
-            var directoryStart = markerIndex + markerLength;
-            var fileSeparator = lowerPath.LastIndexOf('/');
-            if (fileSeparator >= directoryStart)
-            {
-                var directories = lowerPath[directoryStart..fileSeparator]
-                    .Split('/', StringSplitOptions.RemoveEmptyEntries);
-                var categoryIndex = Array.FindIndex(directories, candidate =>
-                    (!string.IsNullOrWhiteSpace(expectedCategory) &&
-                     candidate.Equals(expectedCategory, StringComparison.OrdinalIgnoreCase)) ||
-                    (!string.IsNullOrWhiteSpace(alternateCategory) &&
-                     candidate.Equals(alternateCategory, StringComparison.OrdinalIgnoreCase)));
-                if (categoryIndex < 0 && directories.Length > 0)
-                {
-                    categoryIndex = 0;
-                }
-
-                if (categoryIndex >= 0)
-                {
-                    category = directories[categoryIndex];
-                }
-            }
-        }
-
-        var fileName = lowerPath[(lowerPath.LastIndexOf('/') + 1)..];
-        var extensionIndex = fileName.LastIndexOf('.');
-        var rawStem = extensionIndex >= 0 ? fileName[..extensionIndex] : fileName;
-        var typeSeparator = rawStem.LastIndexOf('.');
-        if (typeSeparator >= 0)
-        {
-            rawStem = rawStem[(typeSeparator + 1)..];
-        }
-
-        foreach (var suffix in new[]
-                 {
-                     "_card_art", "-card-art", " card art", "card_art", "cardart"
-                 })
-        {
-            if (rawStem.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-            {
-                rawStem = rawStem[..^suffix.Length];
-                break;
-            }
-        }
-
-        var stem = NormalizeCardToken(rawStem);
-        return (category, stem);
-    }
-
-    private static bool CardStemsMatch(string candidate, string expected) =>
-        candidate.Equals(expected, StringComparison.OrdinalIgnoreCase) ||
-        candidate.Equals(expected + "ancient", StringComparison.OrdinalIgnoreCase) ||
-        candidate.Equals(expected + "normal", StringComparison.OrdinalIgnoreCase) ||
-        candidate.Equals(expected + "portrait", StringComparison.OrdinalIgnoreCase) ||
-        candidate.Equals(expected + "art", StringComparison.OrdinalIgnoreCase) ||
-        IsNumberedCardVariant(candidate, expected);
-
-    private static bool IsNumberedCardVariant(string candidate, string expected) =>
-        candidate.StartsWith(expected, StringComparison.OrdinalIgnoreCase) &&
-        candidate.Length > expected.Length &&
-        candidate[expected.Length..].All(char.IsDigit);
-
-    private static string NormalizeCardToken(string value) =>
-        new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
-
-    private static bool HasSameResourceExtension(string left, string right)
-    {
-        var leftExtension = System.IO.Path.GetExtension(left);
-        var rightExtension = System.IO.Path.GetExtension(right);
-        return leftExtension.Equals(rightExtension, StringComparison.OrdinalIgnoreCase);
+        return ResolveCardMatchIdentity(card.GetType().Name, path, GetCardPoolGroupId(card)) is { } cardIdentity &&
+               CardArtMatches(assetPath, cardIdentity);
     }
 
     private static bool IsAncientStyleEnabled(
@@ -4603,44 +4552,52 @@ internal static partial class SkinService
                     selection,
                     resourcePaths,
                     includeProviderDependencies: true);
-                // The local selection was already mounted with its correction overlay. Only
-                // a different remote selection needs a temporary full-pack promotion here.
-                if (CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
-                        selection, Config.GetSelection(groupId)))
-                    MountContextualFullRuntimeProviderPacks(catalog, selection);
-                if (prepared.OverlayPath != null &&
-                    !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
-                {
-                    throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
-                }
-
-                _ = LoadSpinePages(prepared);
-
-                if (prepared.CanonicalDependencyPaths.Count > 0)
-                {
-                    if (!RuntimeCanonicalDependencyPaths.TryGetValue(groupId, out var trackedPaths))
-                    {
-                        trackedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        RuntimeCanonicalDependencyPaths[groupId] = trackedPaths;
-                    }
-
-                    trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
-                }
-
-                // A remote provider is not necessarily selected in the local config, so its Godot
-                // scripts may not have been registered by the normal global mount yet.  Register
-                // them after the private files are visible, before any _Ready callback can resolve
-                // script-backed nodes.
-                if (catalog.IsRuntimeProviderOption(groupId, selection) &&
-                    catalog.ProviderUsesManagedGodotScripts(selection))
-                {
-                    ManagedSkinModLoader.EnsureProviderGodotScripts(
-                        catalog.ResolveVisualProviderId(selection));
-                }
-
                 var restoreGroups = RuntimeResourceRestorePolicy.GetGroups(groupId, prepared.RestoreGroups,
                     selection, Config.GetSelection(groupId));
-                return new MountedRuntimeResourceScope(restoreGroups, ManualCharacterVariantBridge.BeginScope(groupId));
+                try
+                {
+                    // The local selection was already mounted with its correction overlay. Only
+                    // a different remote selection needs a temporary full-pack promotion here.
+                    if (CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
+                            selection, Config.GetSelection(groupId)))
+                        MountContextualFullRuntimeProviderPacks(catalog, selection);
+                    if (prepared.OverlayPath != null &&
+                        !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+                    {
+                        throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
+                    }
+
+                    _ = LoadSpinePages(prepared);
+
+                    if (prepared.CanonicalDependencyPaths.Count > 0)
+                    {
+                        if (!RuntimeCanonicalDependencyPaths.TryGetValue(groupId, out var trackedPaths))
+                        {
+                            trackedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            RuntimeCanonicalDependencyPaths[groupId] = trackedPaths;
+                        }
+
+                        trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
+                    }
+
+                    // A remote provider is not necessarily selected in the local config, so its Godot
+                    // scripts may not have been registered by the normal global mount yet.  Register
+                    // them after the private files are visible, before any _Ready callback can resolve
+                    // script-backed nodes.
+                    if (catalog.IsRuntimeProviderOption(groupId, selection) &&
+                        catalog.ProviderUsesManagedGodotScripts(selection))
+                    {
+                        ManagedSkinModLoader.EnsureProviderGodotScripts(
+                            catalog.ResolveVisualProviderId(selection));
+                    }
+
+                    return new MountedRuntimeResourceScope(restoreGroups, ManualCharacterVariantBridge.BeginScope(groupId));
+                }
+                catch
+                {
+                    RestoreRuntimeResourceScopeOverlay(restoreGroups);
+                    throw;
+                }
             });
         }
     }
@@ -6152,6 +6109,8 @@ internal static partial class SkinService
             selection,
             resourcePaths,
             includeProviderDependencies);
+        if (RuntimeFailures.IsBlocked(prepared.Key, DateTime.UtcNow))
+            throw new AppearanceResourceUnavailableException("该外观资源刚加载失败，30 秒内停止重复解码。");
         if (prepared.OverlayPath != null &&
             !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
         {
@@ -6169,8 +6128,6 @@ internal static partial class SkinService
             trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
         }
 
-        if (RuntimeFailures.IsBlocked(prepared.Key, DateTime.UtcNow))
-            throw new AppearanceResourceUnavailableException("该外观资源刚加载失败，30 秒内停止重复解码。");
         var loadBindings = new List<CanonicalRuntimeResourceOwnershipEntry>();
         using var loadOwnership = new CanonicalRuntimeResourceOwnershipScope(loadBindings);
         var reused = TryGetRuntimeResourceBundle(prepared.Key, out var resources);
@@ -6209,15 +6166,10 @@ internal static partial class SkinService
             catch (Exception error)
             {
                 RuntimeFailures.Fail(prepared.Key, DateTime.UtcNow);
+                RuntimeResourceBundles.Remove(prepared.Key);
                 foreach (var pair in prepared.ResourcePaths)
                     RuntimeResourceCache.Remove(RuntimeResourceKey(groupId, selection, pair.Key));
-                if (error is AppearanceResourceUnavailableException)
-                {
-                    // Drop only optional ownership; active scenes keep their own references.
-                    RuntimeResourceBundles.Clear();
-                    RuntimeResourceCache.Clear();
-                    GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
-                }
+                if (error is AppearanceResourceUnavailableException) RequestRuntimePressureCleanup();
                 // Loading failed before the callback's finally existed; still restore any
                 // foreign canonical groups temporarily bridged by this immutable pack.
                 try
@@ -7029,6 +6981,18 @@ internal static partial class SkinService
         ScopedMonsterSelections.Replace(selectedMonsterIdsByProvider);
     }
 
+    private static void RestoreRuntimeResourceScopeOverlay(IReadOnlySet<string> restoreGroups)
+    {
+        try
+        {
+            if (restoreGroups.Count > 0) MountOverlay(restoreGroups);
+        }
+        catch (Exception error)
+        {
+            CombatAppearanceBoundary.Warn("外观范围清理", error);
+        }
+    }
+
     private sealed class MountedRuntimeResourceScope(IReadOnlySet<string> restoreGroups, IDisposable? manualModeScope) : IDisposable
     {
         private bool _disposed;
@@ -7043,15 +7007,8 @@ internal static partial class SkinService
                 }
 
                 _disposed = true;
-                manualModeScope?.Dispose();
-                try
-                {
-                    if (restoreGroups.Count > 0) MountOverlay(restoreGroups);
-                }
-                catch (Exception exception)
-                {
-                    ModLog.Error($"恢复临时运行资源覆盖失败：{exception}");
-                }
+                try { manualModeScope?.Dispose(); }
+                finally { RestoreRuntimeResourceScopeOverlay(restoreGroups); }
             }
         }
     }
