@@ -40,11 +40,27 @@ internal static class CharSelectPackRebindCompat
 
         // This provider's SelectCharacter postfix expects the removed characterModel argument.
         // Its parameterless reattach method is a no-op; reuse its actual Attach entry instead.
-        if (groupId == "silent" && ManagedSkinModLoader.GetActiveProviderAssembly(providerId) is { } active &&
+        // Blitz/Dread mode screens coalesce their background attach in ProviderModeSelectOverlayBridge.
+        if (string.Equals(groupId, "silent", StringComparison.OrdinalIgnoreCase) &&
+            !STS2SkinChanger.Ui.ProviderModeSelectOverlayBridge.IsModeScreenTypeName(screen.GetType().FullName) &&
+            ManagedSkinModLoader.GetActiveProviderAssembly(providerId) is { } active &&
             active.GetName().Name == "silentKaguyaHpWear" &&
-            STS2SkinChanger.Ui.CharacterSelectScreenAccess.Background(screen)?.GetNodeOrNull<Control>("silent_bg") is { } background)
+            FindCharacterBackground(screen, groupId) is { } background)
         {
-            try { ReattachFoxBackground(active, background); }
+            STS2SkinChanger.Ui.ProviderModeSelectOverlayBridge.RegisterScreenLifecycle(screen);
+            STS2SkinChanger.Ui.ProviderModeSelectOverlayBridge.SyncExclusiveScreenPollers(screen);
+            if (background.GetNodeOrNull("DBWCharSelectClickCatcher") != null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (ReattachFoxBackground(active, background))
+                {
+                    ModLog.Info($"[选角重挂] 已为狐猎（{groupId}）重挂选人背景交互（背景={background.Name}）。");
+                }
+            }
             catch (Exception exception)
             {
                 ModLog.Warn("[选角重挂] 狐猎背景重挂失败：" + exception.GetBaseException().Message);
@@ -114,6 +130,47 @@ internal static class CharSelectPackRebindCompat
         }
     }
 
+    internal static bool IsCharacterBackgroundNodeName(string? nodeName, string? groupId) =>
+        !string.IsNullOrWhiteSpace(nodeName) &&
+        !string.IsNullOrWhiteSpace(groupId) &&
+        nodeName.Equals(groupId + "_bg", StringComparison.OrdinalIgnoreCase);
+
+    private static Control? FindCharacterBackground(Control screen, string? groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return null;
+        }
+
+        var container = STS2SkinChanger.Ui.CharacterSelectScreenAccess.Background(screen);
+        if (container == null || !GodotObject.IsInstanceValid(container))
+        {
+            return null;
+        }
+
+        // Godot node paths are case-sensitive; character background nodes are named with
+        // character.Id.Entry + "_bg" (e.g. "SILENT_bg"), so look up uppercase first and fall back
+        // to case-insensitive child matching.
+        var direct = container.GetNodeOrNull<Control>(groupId.ToUpperInvariant() + "_bg") ??
+                     container.GetNodeOrNull<Control>(groupId + "_bg");
+        if (direct != null)
+        {
+            return direct;
+        }
+
+        foreach (var child in container.GetChildren())
+        {
+            if (child is Control control &&
+                GodotObject.IsInstanceValid(control) &&
+                IsCharacterBackgroundNodeName(control.Name.ToString(), groupId))
+            {
+                return control;
+            }
+        }
+
+        return null;
+    }
+
     internal static (MethodInfo Attach, FieldInfo Profile)? FoxAttachContract(Assembly assembly)
     {
         if (assembly.GetName().Name != "silentKaguyaHpWear") return null;
@@ -128,7 +185,9 @@ internal static class CharSelectPackRebindCompat
     {
         if (FoxAttachContract(assembly) is not { } contract) return false;
         // The author retains menu ownership checks, click handling, seven-stage state and head interaction.
-        contract.Attach.Invoke(null, [background, contract.Profile.GetValue(null)]);
+        var profile = contract.Profile.GetValue(null);
+        STS2SkinChanger.Ui.ProviderModeSelectOverlayBridge.ResetProfileInputState(profile);
+        contract.Attach.Invoke(null, [background, profile]);
         return true;
     }
 

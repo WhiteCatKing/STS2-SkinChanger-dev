@@ -216,3 +216,222 @@
 2. **欧罗巴斯 / 特兹卡塔拉触摸动画与拖拽（先古图鉴预览 + 局内先古事件）**：
    - 在「其它图鉴」预览或局内遭遇欧罗巴斯 / 特兹卡塔拉，确认 `godot.log` 出现 `已为 orobas 挂载 3 个先古交互触摸区域。` / `已为 tezcatara 挂载 3 个先古交互触摸区域。`。
    - 等待约 2 秒入场动画结束后，左键点击/按住拖拽头部、嘴部/法杖、视线区域，确认触发对应触摸动作与骨骼跟随，松手平滑回弹；离开场景或切回原版后无报错、无残留。
+
+
+---
+
+## 任务记录（#205）：恐惧 / 极速模式选人背景战损点击切换通用桥接（骨妹 / 战士 / 储君及同框架皮肤）
+
+### 1. 静态反编译定位（只读 PE/IL 分析，未加载第三方 DLL）
+
+对维护者对照库 `mods/_maintainer_set` 下三个目标包及同生态战损包做静态 IL 分析，确认它们在标准选人界面（`NCharacterSelectScreen`）的挂接与点击切档机制如下：
+
+1. **三包共用框架（`necrobinderHpWear.dll`、`ironcladHpWear.dll`、`regentHpWear.dll`；同框架亦见 `silentKaguyaHpWear.dll`、`defectHpWear.dll`）**：
+   - **标准界面入口**：均通过 `HarmonyPatch(typeof(NCharacterSelectScreen), "SelectCharacter")`（`NecrobinderCharSelectToggle` / `IroncladCharSelectToggle` / `RegentCharSelectToggle`；`regentHpWear` 另补丁 `NRegentCharacterSelectBg._Ready`）调用 **`BattleWear.CharSelectCore.Attach(Control bg, CsProfile p)`**（**双参数**，而非单参数 `Attach(Control)`）。
+   - **角色 Profile 存放形态**：
+     - `necrobinderHpWear`：静态字段 `CharSelectCore.Necrobinder`（`CsProfile.Name == "necrobinder"`），带 `CharSelectCore.NotifySelectedCharacter(string)`；
+     - `ironcladHpWear`：静态字段 `CharSelectCore.Ironclad`（同类型同时存在 `Regent` / `Defect` / `Ironclad` 三个字段，必须按当前角色精确匹配）；
+     - `regentHpWear`：静态方法 `CharSelectCore.ProfileFor(string)` + 静态字段 `CharSelectCore.Regent`（亦含 `Defect` / `Ironclad`），带 `CharSelectCore.NotifySelectedCharacter(string)`。
+   - **点击热区与轮询门槛**：
+     - `InstallClickCatcher` 在 `<character>_bg` 下创建全屏 `Control` 节点 **`DBWCharSelectClickCatcher`**（连接 `GuiInput` 并 `MoveChild` 到最顶层），同时挂载 `Timer` 节点 `DBWInputPoller` 通过 `bg.GetViewport().GuiGetHoveredControl()` 与 `DBWCharSelectClickCatcher` 比对触发 `HandleClick` / `HandleWearClick`；
+     - `necrobinderHpWear` 与 `regentHpWear` 的 `IsOwnedProfileActive(p)` 会校验静态字段 `_selectedCharacterId` 是否等于当前角色名；若在恐惧/极速界面从未调用 `NotifySelectedCharacter(groupId)`，切过角色后点击会被静默丢弃；
+     - 若此前在骨架尚未替换时误触发过 `Attach` 导致 `CsProfile.Dead = true`，后续 `Attach` 会直接 `return`，需按包内 `TryAttachProfile` 相同约定在重挂前复位 `Dead = false`。
+   - **其他战损形态对照**：
+     - 魅魔 `succubusIroncladHpWear`：`BattleWear.SuccubusCharacterSelect.Attach(Control)` + 热区 `SuccubusSkinPreviewClick`；
+     - 贞德 `JoanofArcIroncladHpwear`：`JoanofArcIroncladHpwear.CharSelectCycle.Attach(Control)` + 热区 `JoanofArcIroncladHpwearClickCatcher`；
+     - 观者 `WatcherHpWear`：`WatcherHpWear.SelectionCycle.AttachBackground(Control)` + 热区 `WatcherHpWearClick`；
+     - 弩手 `CrossbowFool`：由 `CrossbowFoolSelectCompat` 挂载热区 `CrossbowFoolClick`。
+
+2. **原实现在恐惧 / 极速模式失效的四处断口**：
+   - `ProviderModeSelectOverlayBridge.AttachRebuiltBackground` 写死了 `ironclad` + `succubusIroncladHpWear`，重建背景（`ReplaceCharacterBackground`）后其他所有角色/提供者均未重挂；
+   - `ProviderModeSelectOverlayBridge.Attach` 只查找单参数 `Attach(Control)`，完全漏掉了双参数 `BattleWear.CharSelectCore.Attach(Control, CsProfile)` 与 `AttachBackground(Control)`，且仅查询 `GetSelectedCreatureRuntimeProvider`（未回退 `GetSelectedRuntimeProvider`）；
+   - `CharSelectPackRebindCompat.AfterRebuild` 仅匹配参数为 `NCharacterSelectScreen` 的 `TryReattachFromScreen`，恐惧（`NDreadScreen`）/ 极速（`NBlitzScreen`）直接跳过；
+   - `ContextualSkinControls.RebuildCharacterDisplay` 在模式界面热切皮肤后只调用了 `SyncModeBackgroundClickPassthrough`，对未重建场景的纯叠加层提供者未补调 `ProviderModeSelectOverlayBridge.Attach`。
+
+### 2. 代码改动
+
+- **`STS2SkinChanger/Ui/ProviderModeSelectOverlayBridge.cs`**：
+  - 移除 `AttachRebuiltBackground` 对 `ironclad` 与魅魔的硬编码；将 `AttachRebuiltBackground` 与 `Attach` 统一走通用挂接内核 `AttachCore`，并均在入口强校验 `IsModeScreenTypeName(screen.GetType().FullName)`（严格限定 `NBlitzScreen` / `NDreadScreen`，**标准模式 `NCharacterSelectScreen` 与未选中任何运行时皮肤时完全不干预**）。
+  - 提供者解析统一为 `SkinService.GetSelectedCreatureRuntimeProvider(groupId) ?? SkinService.GetSelectedRuntimeProvider(groupId)`，并合并 `ManagedSkinModLoader.GetActiveProviderAssembly(providerId)` 与 `AppDomain` 匹配程序集。
+  - 新增通用反射发现与调用机制 `DiscoverBackgroundAttachBindings` / `TryResolveProfile` / `ResetProfileDeadFlag` / `InvokeBinding`（零硬编码包名与角色名）：
+    - 自动识别单参数 `Attach(Control)` / `AttachBackground(Control)`（覆盖魅魔、贞德、观者等）；
+    - 自动识别双参数 `Attach(Control, TProfile)`（覆盖骨妹/战士/储君/狐猎/鸡煲等 `BattleWear.CharSelectCore` 全族）：优先调用同类型 `ProfileFor(string)`，否则按当前 `characterId` 精确匹配静态字段名或实例 `Name` 字段/属性，绝不跨角色串挂；调用前自动同步同类型 `NotifySelectedCharacter(string)` 并复位 `profile.Dead = false`。
+  - 在已挂接的新背景节点上写入 `sc_mode_bg_attached_provider` 元数据，同一背景实例且热区存活时避免 `AttachRebuiltBackground` + `Attach` 连续重复重挂（同时仍同步 `NotifySelectedCharacter` 与点击放通）。
+  - 扩展 `IsBackgroundClickCatcherName` 识别 `DBWCharSelectClickCatcher`（已由 `ClickCatcher` 命中）、`WearClick`（如 `WatcherHpWearClick`）与 `CrossbowFoolClick`，在恐惧模式 `SubViewport` 下统一放通 `GrayScaler` / `BigRotatingContainer` 视觉遮罩，切走或切回原版时自动恢复原 `MouseFilter`。
+- **`STS2SkinChanger/Ui/ContextualSkinControls.cs`**：
+  - 在 `RebuildCharacterDisplay` 三条返回路径的 `SyncModeBackgroundClickPassthrough` 前补调 `ProviderModeSelectOverlayBridge.Attach(screen, character)`（对标准模式零操作，确保模式界面内热切皮肤后背景交互立即可用）。
+- **`tests/STS2SkinChanger.RuntimeTests/CharacterSelectModeBackgroundTests.cs`**：
+  - 新增 `VerifyGenericProviderAttachDiscovery`：覆盖双参数 `Attach(Control, Profile)`（单字段 + `NotifySelectedCharacter`、多角色字段精确匹配、`ProfileFor(string)` + `Dead` 复位、无关角色阴性对照）、单参数 `Attach(Control)` / `AttachBackground(Control)`、热区名（含 `DBWCharSelectClickCatcher` / `WatcherHpWearClick` / `CrossbowFoolClick`）以及 `Attach`/`AttachRebuiltBackground` 对 `IsModeScreenTypeName` 的标准模式保护。
+
+### 3. 编译与自动化验证结果（双分支全绿）
+
+- Release 编译（Beta `data_sts2_windows_x86_64`，`-o %TEMP%\gemini-build-beta`）：**0 错误，0 警告**。
+- Release 编译（正式版 `正式版_v0.111.1_20261117_2249_build26655341`，`-o %TEMP%\gemini-build-stable`）：**0 错误，0 警告**。
+- `STS2SkinChanger.LogicTests`（Beta + 正式版，开启 Win32 `SetErrorMode(3)`）：均通过（`Skin Changer logic policy tests passed.`）。
+- `STS2SkinChanger.RuntimeTests`（无参全量，Beta + 正式版，开启 Win32 `SetErrorMode(3)`）：均通过，含 `Character select mode background patch passed.`（Beta）、`AncientWaifus support policy tests passed.` 与 `Workshop policy tests passed.`。
+
+### 4. 实机验证步骤（三个角色各测恐惧、极速，含对照项）
+
+1. **准备工作**：保持测试包已启用（`necrobinderHpWear`、`ironcladHpWear`、`regentHpWear`，可同时保留魅魔/贞德对照）；分别给三个角色选上对应战损皮：
+   - 骨妹（Necrobinder）→ `necrobinderHpWear`（a大骨妹可战损版）
+   - 战士（Ironclad）→ `ironcladHpWear`（a大驼鹿战士可战损版）
+   - 储君（Regent）→ `regentHpWear`（韩国大额头储君可战损版）
+2. **极速模式（Blitz）逐角色实测**：
+   - 进入「极速模式」选人界面，依次点选 **骨妹 → 战士 → 储君**，并在每个角色界面**左键连续点击人物背景空白处**：
+     - 确认日志出现 `[选角背景] 已为 <providerId> 在模式界面挂接选人背景交互（CharSelectCore.Attach，背景=<角色>_bg，...）`；
+     - 确认三个角色每次点击背景都能按档位循环切换战损立绘（与标准模式一致），点击按钮/信息面板区域不误触。
+   - 在极速界面内将战士热切为 **魅魔** / **贞德**，再切回 **a大驼鹿战士可战损版**，确认每次热切后点背景都能立即切换；切回 **原版** 后点背景无反应且无报错。
+3. **恐惧模式（Dread）逐角色实测**：
+   - 进入「恐惧模式」选人界面，依次点选 **骨妹 → 战士 → 储君**，并在每个角色界面**左键连续点击人物背景**：
+     - 确认日志同时出现挂接日志与 `[选角背景] 已在模式界面放通 <角色> 背景点击（穿透 GrayScaler、BigRotatingContainer...）`；
+     - 确认三个角色在恐惧模式（含 `SubViewport` 灰阶/旋转视觉层下）点击背景均能正常切战损档位；
+     - 在恐惧界面内将任意角色切回 **原版**（或不带点选热区的普通皮肤），确认日志出现 `已在模式界面恢复 <角色> 遮罩点击拦截`，且不残留其他角色的点击响应。
+4. **标准模式回归**：
+   - 返回「标准模式」选人界面，依次确认骨妹 / 战士 / 储君 / 魅魔 / 贞德点背景切战损与原先完全一致、无重复挂接日志或异常。
+
+
+---
+
+## 任务记录（#207）：猎宝「狐猎Kaguya血量换装」（`silentKaguyaHpWear`）点击切战损排查与修复
+
+### 1. 三项待查问题结论（均以日志、`skin_changer.json` 与静态 PE/IL 实证确认）
+
+1. **① `silentKaguyaHpWear` 与 `KaguyaSilentMSGKSkin` 的关系**：
+   - 两者是**完全独立的两个 Mod**（独立 manifest、独立 DLL、独立 PCK、命名空间分别为 `BattleWear.*` 与 `SilentSkinMod.*`，无任何互相依赖或跨包调用）。
+   - `KaguyaSilentMSGKSkin`（森森自用魔改）不含任何 Harmony 补丁，也不含战损切换，仅包含头部点击脚本 `KaguyaSilentHeadPressInteractor`。
+   - `silentKaguyaHpWear`（狐猎Kaguya血量换装，68 MiB 完整独立 PCK）基于前者美术场景制作了 7 档血量换装，并在 `BattleWear.CharSelectCore` + `CharSelectHeadInteract` 里自己接管换装与眨眼/骷髅头切换；其 `.scn` 残留了 `KaguyaSilentHeadPressInteractor.cs` 引用，因此日志会出现良性的 `Cannot instantiate C# script`，不影响自身逻辑。
+   - **并非皮肤合并/组合**：`skin_changer.json` 中 `"CharacterSkinCompositions": []`、`"silent": "silentKaguyaHpWear"`；截图里第二个下拉框显示 `KaguyaSilentMSG…` 仅是旁边未启用的「皮肤合并」（`STS2CharacterSkinMergeControl`）默认展示的候选列表首项。
+
+2. **② 为何 22:09 `godot.log` L2503 出现 `已停用未选中皮肤提供者 silentKaguyaHpWear 的 29 个行为补丁`**：
+   - 该行发生在选人界面初始聚焦于 **`FOOL`（`CrossbowFool`）** 期间：切换器正常的选角预览收窄（`已按选角预览将皮肤代码行为收窄到 1 个可见外观组`）会暂时停用所有非当前预览角色（`defectHpWear`、`necrobinderHpWear`、`silentKaguyaHpWear`、`ironcladHpWear`、`regentHpWear`、`WatcherHpWear`）的行为补丁。
+   - 切到猎宝 `SILENT` 时（实证见 `godot2026-11-19T22.07.10.log` L2555–2560、L3194–3197、L3368–3371），`silentKaguyaHpWear` 均被正确识别并重新激活（`已按当前选择启用 狐猎Kaguya血量换装 的完整视觉会话 ... 保留 29 个原作者动画/场景行为补丁`），**并未被误判为未选中**。
+
+3. **③ 真正的根因（标准模式原本就坏；极速/恐惧已由 `#206` 挂上，但需注意该包窄热区设计）**：
+   - **确定的 Bug（标准模式 `NCharacterSelectScreen` 完全无法挂接）**：
+     - 在 Beta v0.113.x 上，`silentKaguyaHpWear` 自身的 `SilentCharSelectToggle` 因期望已删除的 `CharacterModel` 参数而**安装失败**（`[ERROR] [silentKaguyaHpWear] patch failed for SilentCharSelectToggle: Patching exception in method NCharacterSelectScreen::SelectCharacter(NCharacterSelectButton charSelectButton)`）。
+     - 切换器在 `STS2SkinChanger/ProtectedCharacters/CharSelectPackRebindCompat.cs` 第 45 行原本有专门针对狐猎的重挂兜底，但写成了**小写 `GetNodeOrNull<Control>("silent_bg")`**；而游戏与 `ContextualSkinControls.ReplaceCharacterBackground` 创建的节点名是**大写 `"SILENT_bg"`**（`character.Id.Entry + "_bg"`，日志 `22.07.10.log` L2623 / L2731 实证为 `SILENT_bg[Control] 可见=True 在树可见=True 子=6`，L2738 实证为 `hover=SILENT_bg`）。Godot 的 `GetNodeOrNull` 区分大小写，导致该兜底永远返回 `null`，标准模式从未挂上 `DBWCharSelectClickCatcher` 与 `DBWInputPoller`。
+   - **极速（Blitz）/ 恐惧（Dread）模式实证与热区说明**：
+     - `22.07.10.log` 实证 `#206` 的通用桥接在极速（L3198–3238）与恐惧（L3357–3405）中**均已成功挂接** `silentKaguyaHpWear`（`[silentKaguyaHpWear] char-select toggle attached (silent, stage 1/7)`，`SILENT_bg` 子节点由 6 增至 10，恐惧模式遮罩亦已放通）。
+     - **但静态 IL 显示该包自身的换装点击热区非常窄**：与 `ironcladHpWear`（全屏）、`necrobinderHpWear`（`0.22–0.78 × 0.05–0.68`）、`regentHpWear`（`0.42–0.88 × 0.30–0.80`）不同，`silentKaguyaHpWear.CharSelectCore.InstallClickCatcher` 把 `DBWCharSelectClickCatcher` 锚定在 **`x: 38%–62%, y: 12%–52%`**（仅中央偏上躯干区域），且 `Press_Head`（点/长按眨眼闭眼，L3699 有命中日志 `char-select head: click blink.`）与 `DBWSkullHit`（点面具切骷髅）盖在头部上方。点人物两侧背景或下半身不会命中 `DBWCharSelectClickCatcher`，点头部只触发眨眼/骷髅，**只有点人物胸口/躯干中部（头部下方、`x: 38%–62%, y: 12%–52%` 内）才会切战损档位（`1/7 → 7/7`）**。
+
+### 2. 代码改动（未触碰 `Core/Features/Merchant/*`）
+
+- **`STS2SkinChanger/ProtectedCharacters/CharSelectPackRebindCompat.cs`**：
+  - 新增大小写无关背景查找 `FindCharacterBackground(Control screen, string? groupId)` 与 `IsCharacterBackgroundNodeName`（先查大写 `SILENT_bg`、再查小写 `silent_bg`、最后大小写无关遍历子节点），修复标准模式下 `GetNodeOrNull("silent_bg")` 恒返 `null` 导致狐猎无法重挂的缺陷。
+  - 若当前背景已挂有 `DBWCharSelectClickCatcher`（例如极速/恐惧已由 `ProviderModeSelectOverlayBridge` 挂接）则直接跳过，避免重复挂载；并在 `ReattachFoxBackground` 调用前通过 `ProviderModeSelectOverlayBridge.ResetProfileDeadFlag` 复位 `Silent.Dead`、重挂成功时输出单行诊断日志 `[选角重挂] 已为狐猎（silent）重挂选人背景交互（背景=SILENT_bg）。`。
+- **`STS2SkinChanger/Ui/ProviderModeSelectOverlayBridge.cs`**：
+  - `Attach` 与 `HasActiveBackgroundClickCatcher` 同步改用大小写无关的 `FindCharacterBackground` 兜底，避免任何混合大小写 `<character>_bg` 节点漏匹配。
+- **`tests/STS2SkinChanger.RuntimeTests/CharacterSelectModeBackgroundTests.cs`**：
+  - 新增 `#207` 回归断言：验证 `CharSelectPackRebindCompat.IsCharacterBackgroundNodeName` 同时匹配 `SILENT_bg` / `silent_bg` 且排除无关节点，并验证 `AfterRebuild` 调用 `FindCharacterBackground`。
+
+### 3. 编译与自动化验证结果
+
+- Release 编译（Beta `data_sts2_windows_x86_64`，`-o %TEMP%\gemini-build-beta`）：**0 错误，0 警告**。
+- Release 编译（正式版 `正式版_v0.111.1_20261117_2249_build26655341`，`-o %TEMP%\gemini-build-stable`）：**0 错误，0 警告**。
+- `STS2SkinChanger.LogicTests`（Beta + 正式版，开启 `SetErrorMode(3)`）：均通过（`Skin Changer logic policy tests passed.`）。
+- `STS2SkinChanger.RuntimeTests`（无参全量，Beta + 正式版，开启 `SetErrorMode(3)`）：均通过（含 `Character select mode background patch passed.`、`AncientWaifus support policy tests passed.`、`Workshop policy tests passed.`）。
+- 保护区离线回归（Beta，未加载任何第三方 DLL）：`--test-protected-boundaries`、`--test-runtime-safety`、`--test-preview-binding` 全部通过（注：含实包 `Assembly.LoadFrom` 的 `--test-crusader-hooks` / `--test-protected-characters` 按安全红线留交 Claude 侧执行）。
+
+### 4. 实机验证步骤
+
+1. **标准模式（`NCharacterSelectScreen`）**：
+   - 给猎宝选中「狐猎Kaguya血量换装」（`silentKaguyaHpWear`），确认 `godot.log` 出现 `[选角重挂] 已为狐猎（silent）重挂选人背景交互（背景=SILENT_bg）。` 与 `[silentKaguyaHpWear] char-select toggle attached (silent, stage 1/7, ...)`，且 `SILENT_bg` 子节点为 10。
+   - **左键点击人物中央偏上躯干区域（头部下方，`x: 38%–62%, y: 12%–52%` 内）**，确认日志输出 `char-select (silent): stage → ... (Kaguya path).` 且战损档位 1/7→7/7 正常循环；点头部确认仍能眨眼/长按闭眼/切骷髅。
+2. **极速模式（Blitz）与恐惧模式（Dread）**：
+   - 分别进入极速、恐惧并选猎宝（`silentKaguyaHpWear`），确认日志出现挂接日志（无重复双挂），点击人物胸口/躯干区域确认 7 档战损正常切换；在恐惧模式下切回原版猎宝确认恢复遮罩拦截且无残留。
+
+
+---
+
+## 任务记录（#211）：极速 / 恐惧选人背景双挂与跨界面 `DBWInputPoller` 竞态修复
+
+### 1. 根因实证（22:31 `godot.log` + `silentKaguyaHpWear.dll` 静态 IL）
+
+1. **为什么会出现「要点好几下才切，有时卡住点不了」（核心根因：跨界面残留 `DBWInputPoller` 抢占静态单例 `CsProfile.WasPressed`）**：
+   - 游戏 `NSubmenuStack` 退出选人界面（标准 `NCharacterSelectScreen` / 极速 `NBlitzScreen` / 恐惧 `NDreadScreen`）时**不会释放界面节点**，仅将其 `Visible = false` 留在 `SceneTree` 中。
+   - 静态 IL 确认 `silentKaguyaHpWear`（及同框架 `ironcladHpWear`、`defectHpWear`）的 `CharSelectCore.<InstallClickPoller>b__1` **未检查 `bg.IsVisibleInTree()`**，直接读取全局 `Input.IsMouseButtonPressed(Left)` 并改写**静态单例字段 `CsProfile.Silent.WasPressed`**（`justPressed = pressed && !p.WasPressed; p.WasPressed = pressed;`）。
+   - 当玩家依次访问标准 → 极速 → 恐惧后，最多有 **3 个 `SILENT_bg` 下的 `DBWInputPoller` 同时在树中 60Hz 轮询**。先触发的隐藏界面轮询器抢先把 `CsProfile.Silent.WasPressed` 置为 `true`（随后因自身 `DBWCharSelectClickCatcher` 不可见而丢弃点击），紧接着当前可见界面的轮询器读到 `WasPressed == true` 判定非上升沿、把真实点击静默吞掉；只有在鼠标按下恰好落在两个定时器间隙时才偶发切档。
+2. **为什么模式界面每次选人都挂两次（L3452→3482、L4030→4032、L4077→4115、L4188→4218）**：
+   - `ContextualSkinControls.ShowCharacter` 在 `ScheduleCharacterRefresh`（推迟到帧末 `RebuildCharacterDisplay` 重建新 `<character>_bg`）之后，同帧立刻同步调用了 `ProviderModeSelectOverlayBridge.Attach(screen, character)`，先挂在了即将被销毁的初始背景实例上；
+   - 紧接着 `RebuildCharacterDisplay` → `ReplaceCharacterBackground` 销毁旧背景、创建最终 `<character>_bg`，再次触发 `AttachRebuiltBackground` 挂第二次；骨妹 / 战士 / 储君 / 鸡煲 / 观者 / 狐猎在极速与恐惧里都存在这一同帧双挂现象，且旧背景在 `QueueFree` 生效前其 `DBWInputPoller` 未被同步停止。
+
+### 2. 代码改动
+
+- **`STS2SkinChanger/Ui/ProviderModeSelectOverlayBridge.cs`**：
+  - **模式界面单次合并挂接（覆盖骨妹 / 战士 / 储君 / 狐猎 / 鸡煲 / 魅魔 / 贞德 / 观者）**：`Attach` 与 `AttachRebuiltBackground` 改为基于每界面代次计数器（`PendingAttachGenerationMeta`）的 `ScheduleDeferredAttach`（`CallDeferred` 合并），仅当 `ShouldRunDeferredAttach(scheduledGen, currentGen, screenValid, screenVisible)` 为真时在**最终存活的 `<character>_bg` 上执行一次 `AttachCore`**；已挂接且热区存活时跳过重复挂接，标准模式（`!IsModeScreenTypeName`）完全不干预。
+  - **跨界面输入轮询器互斥暂停/恢复**：新增 `RegisterScreenLifecycle(Control screen)` 与 `SyncExclusiveScreenPollers(Control activeScreen)`，监听标准/极速/恐惧三个选人界面的 `VisibilityChanged`：任一界面隐藏时立即 `Stop()` 其 `AnimatedBg` 下所有提供者点击轮询器（`IsProviderInputPollerName`，匹配 `DBWInputPoller` / `*InputPoller*` / `*ClickPoller*` / `*HpwearPoller*`，排除 `*Safety*`），返回可见界面时再恢复；任意界面激活时同时确保其余已追踪隐藏界面的轮询器处于停止态。
+  - **旧背景同步清理与单例输入状态复位**：新增 `StopBackgroundPollers(Node root, bool queueFree)` 在旧背景被替换前同步 `Stop()` + `QueueFree()` 轮询器；新增 `ResetProfileInputState(profile)` 在调用双参数 `Attach` 前同步复位 `Dead`、`WasPressed`、`IgnoreClickUntilRelease`，彻底消除卡死残留。
+- **`STS2SkinChanger/Ui/ContextualSkinControls.cs`**：
+  - `ShowCharacter` 入口调用 `ProviderModeSelectOverlayBridge.RegisterScreenLifecycle(screen)` 与 `SyncExclusiveScreenPollers(screen)`（统一纳管标准、极速、恐惧三套界面）。
+  - `ReplaceCharacterBackground` 移除旧背景子节点前先同步调用 `ProviderModeSelectOverlayBridge.StopBackgroundPollers(child, queueFree: true)`。
+- **`STS2SkinChanger/ProtectedCharacters/CharSelectPackRebindCompat.cs`**：
+  - 狐猎标准模式兜底跳过模式界面（交由 `ProviderModeSelectOverlayBridge` 独占合并挂接，杜绝双挂），并在标准模式重挂前调用 `RegisterScreenLifecycle`、`SyncExclusiveScreenPollers` 与 `ResetProfileInputState`。
+- **`tests/STS2SkinChanger.RuntimeTests/CharacterSelectModeBackgroundTests.cs`**：
+  - 新增 `#211` 回归断言：`ShouldRunDeferredAttach` 代次合并与可见性门控、`IsProviderInputPollerName` 精准匹配与防误伤、`ResetProfileInputState` 同步复位 `Dead`/`WasPressed`/`IgnoreClickUntilRelease`，以及 IL 校验 `ReplaceCharacterBackground` 在 `RemoveChildSafely` 之前先调用 `StopBackgroundPollers`。
+
+### 3. 编译与自动化验证结果（双分支全绿）
+
+- Release 编译（Beta `data_sts2_windows_x86_64`，`-o %TEMP%\gemini-build-beta`）：**0 错误，0 警告**。
+- Release 编译（正式版 `正式版_v0.111.1_20261117_2249_build26655341`，`-o %TEMP%\gemini-build-stable`）：**0 错误，0 警告**。
+- `STS2SkinChanger.LogicTests`（Beta + 正式版，开启 `SetErrorMode(3)`）：均通过（`Skin Changer logic policy tests passed.`）。
+- `STS2SkinChanger.RuntimeTests`（无参全量，Beta + 正式版，开启 `SetErrorMode(3)`）：均通过（含 `Character select mode background patch passed.`、`AncientWaifus support policy tests passed.`、`Workshop policy tests passed.`）。
+- 保护区离线回归（Beta）：`--test-protected-boundaries`、`--test-runtime-safety`、`--test-preview-binding` 全部通过。
+
+### 4. 实机验证步骤
+
+1. **三模式连续切换防竞态实测（狐猎重点 + 骨妹 / 战士 / 储君 / 魅魔 / 贞德对照）**：
+   - 依次进入 **标准模式 → 返回 → 极速模式 → 返回 → 恐惧模式 → 返回 → 极速/标准模式**，在每个模式下选中狐猎（`silentKaguyaHpWear`）并连续左键点击**胸口/躯干中部**：
+     - 确认极速、恐惧每次选人日志中**只出现 1 次** `char-select toggle attached` 与 1 次 `[选角背景] 已为 silentKaguyaHpWear 在模式界面挂接选人背景交互`（不再出现两次不同实例号）；
+     - 确认每次点击都稳定单次切换 1 档战损（`1→2→3/5→...`），不再需要连点多下或卡死，且切换到其他角色（如愚者）后不再触发狐猎隐藏界面的 `char-select head: click blink.`。
+2. **其他战损皮肤单挂确认**：
+   - 在极速与恐惧中依次点选骨妹（`necrobinderHpWear`）、战士（`ironcladHpWear`）、储君（`regentHpWear`）、魅魔、贞德，确认日志每次选人仅挂接 1 次、点击切档顺畅，标准模式行为不受影响。
+
+
+---
+
+## #213：奥契丝文本替换按骨妹当前皮肤门控（不越权覆盖其他皮肤）
+
+### 1. 静态 IL 根因定位
+
+对游戏目录下只读分析 `mods\_test_orchis_本体\OrchisNecrobinderSkinMod.dll` 与 `mods\_test_orchis_修复包\STS2-OrchisNecrobinderSkinFix.dll`（静态 `PEReader` 扫描，未加载第三方 DLL）：
+
+1. **文本覆盖的实际来源（`OrchisNecrobinderSkinMod.dll`）**：
+   - `OrchisNecrobinderSkinMod.Scripts.LocStringGetRawTextPatch`（`[HarmonyPatch(typeof(LocString), "GetRawText")]`）：
+     - `Prefix` 调用 `TextReplacePatch.TryGetCharacterText(LocString, out string)`，直接覆写 `NECROBINDER.title`（`奥契丝`）、`NECROBINDER.description`（`因为有心，所以悲伤……`）等角色词条；
+     - `Postfix` 调用 `TextReplacePatch.ShouldReplace(LocString)`，为真时执行 `ReplaceNames`（`亡灵契约师→奥契丝`、`奥斯提→洛伊德`、`缚魂命匣→破旧玩偶`、`无界命匣→精致玩偶`）。
+   - `OrchisNecrobinderSkinMod.Scripts.LocStringGetFormattedTextPatch`（`[HarmonyPatch(typeof(LocString), "GetFormattedText")]`）：
+     - `Postfix` 同样调用 `TextReplacePatch.ShouldReplace(LocString)` 并执行 `ReplaceNames`。
+2. **修复包（`STS2-OrchisNecrobinderSkinFix.dll`）与现有兼容层缺口**：
+   - 修复包本身不注入文本，其 `STS2OrchisNecrobinderSkinFix.Patches.OrchisFeatureGatePatch` 动态补丁上述同一对方法（`ShouldReplace` 挂 Postfix `TextShouldReplacePostfix`，`TryGetCharacterText` 挂 Prefix `CharacterTextPrefix`），仅按其 RitsuLib 开关（默认全开）放行。
+   - SkinChanger 的 `OrchisSkinFixCompat` 原先仅门控了视觉/房间补丁（`InstallFixCallbacks`、`InstallProviderCallbacks`），漏掉了 `OrchisNecrobinderSkinMod.Scripts.TextReplacePatch`；且原 `InstallLoaded()` 在未安装修复包时会提前返回。结果只要 `OrchisNecrobinderSkinMod.dll` 原生加载，即使骨妹当前选的是 `necrobinderSkin_NSFW.Ver.2.0` 或原版，选人界面（以及 `ContextualSkinControls.RestoreCharacterInfoText` 实时刷新时调用的 `LocString.GetFormattedText()`）仍被强制替换成奥契丝名称、简介与初始遗物名。
+
+### 2. 代码改动
+
+- **`STS2SkinChanger/Core/OrchisSkinFixCompat.cs`**：
+  - 新增 `InstallProviderTextCallbacks(Assembly)`（L85–91），使用 `Priority.First` Prefix 门控：
+    - `OrchisNecrobinderSkinMod.Scripts.TextReplacePatch.ShouldReplace(LocString)` → `AllowTextReplace(ref bool __result)`（L133–138）
+    - `OrchisNecrobinderSkinMod.Scripts.TextReplacePatch.TryGetCharacterText(LocString, out string)` → `AllowCharacterTextReplace(ref string __1, ref bool __result)`（L140–146）
+  - 统一经 `AllowsText() => Allows(Body)`（L148）判定：仅当骨妹（`necrobinder`）当前实际选中 `OrchisNecrobinderSkinMod` 时放行（此时继续透传给 `STS2-OrchisNecrobinderSkinFix` 的 RitsuLib 开关和原方法）；骨妹选择原版、其他皮肤或仅奥斯提选奥契丝时直接返回 `false`（且将 `out text` 置为 `string.Empty`）。
+  - 调整 `InstallLoaded()`（L55–68）：只要 `OrchisNecrobinderSkinMod` 程序集已加载即安装文本门控，无论 `STS2-OrchisNecrobinderSkinFix` 是否同时存在；原有 `InstallFixCallbacks` / `InstallProviderCallbacks` 条件保持不变。
+  - 核对实时热切链路：`ContextualSkinControls.RestoreCharacterInfoText`（L2331–2375）在每次换肤重建选人显示时已重新求值 `CharacterSelectTitle`、`CharacterSelectDesc` 以及初始遗物的 `Title` / `Description`，因此门控生效后选人界面切换皮肤即可实时恢复或切换文本，无需额外侵入 UI 层。
+- **`tests/STS2SkinChanger.RuntimeTests/OrchisRoomCallbackTests.cs`**：
+  - 新增合成 `OrchisNecrobinderSkinMod.Scripts.TextReplacePatch` 与模拟修复包开关（`SimulateFixTextShouldReplacePostfix` / `SimulateFixCharacterTextPrefix`），通过真实 Harmony detour 验证：原版拦截、其他皮肤（`necrobinderSkin_NSFW.Ver.2.0`）拦截、仅奥斯提选奥契丝拦截、骨妹选奥契丝放行、奥契丝选中下仍尊重修复包自身开关关闭、以及热切回其他皮肤后立即恢复拦截。
+
+### 3. 编译与自动化验证结果（双分支全绿）
+
+- Release 编译（Beta `data_sts2_windows_x86_64`，`-o %TEMP%\gemini-build-beta`）：**0 错误，0 警告**。
+- Release 编译（正式版 `正式版_v0.111.1_20261117_2249_build26655341`，`-o %TEMP%\gemini-build-stable`）：**0 错误，0 警告**。
+- `STS2SkinChanger.LogicTests`（Beta + 正式版，开启 `SetErrorMode(3)`）：均通过（`Skin Changer logic policy tests passed.`）。
+- `STS2SkinChanger.RuntimeTests`（无参全量，Beta + 正式版，开启 `SetErrorMode(3)`）：均通过（含 `Orchis room & text callbacks passed: real detours on synthetic merchant, rest-site, and text-replace methods.` 与 `Workshop policy tests passed.`）。
+- 保护区离线回归（Beta）：`--test-protected-boundaries`、`--test-runtime-safety`、`--test-preview-binding` 全部通过（涉及加载第三方 DLL 的工坊专项留交 Claude 端执行）。
+
+### 4. 实机验证步骤
+
+1. 保持骨妹选中 `necrobinderSkin_NSFW.Ver.2.0`（或原版 `__base__`），进入选人界面点选骨妹：
+   - 确认左上角色名与简介显示为原版（或所选皮肤自身文本，如「亡灵契约师」与原版简介，初始遗物为「缚魂命匣」），不再显示「奥契丝 / 因为有心，所以悲伤……」。
+2. 在选人界面通过换肤器把骨妹切到 `OrchisNecrobinderSkinMod`：
+   - 确认实时热切为「奥契丝」与奥契丝简介（「因为有心，所以悲伤……」），无需重启或退回主菜单。
+3. 在同一界面把骨妹切回 `necrobinderSkin_NSFW.Ver.2.0` 或原版（也可额外测试「骨妹选其他皮肤 + 奥斯提选奥契丝」）：
+   - 确认角色名、简介与初始遗物文本立即恢复为非奥契丝文本。
+
+> 可选观察项（未在本次改动物料范围内）：静态扫描显示 `OrchisNecrobinderSkinMod.dll` 还包含 `RelicIconPatch.TryGetReplacementIcon` 与 `CharacterSelectIconPathPatch` / `CharacterSelectLockedIconPathPatch`；如后续实机发现非奥契丝皮肤下初始遗物图标或选人头像按钮也发生串联，可沿同一 `OrchisSkinFixCompat` 机制补挂门控。

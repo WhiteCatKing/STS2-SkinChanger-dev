@@ -19,6 +19,7 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Monsters;
 using MegaCrit.sts2.Core.Nodes.TopBar;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
@@ -92,6 +93,11 @@ internal static class CharacterAppearanceRuntime
         AccessTools.Field(typeof(NCreature), "_stateDisplay");
     private static readonly FieldInfo? TempScaleField =
         AccessTools.Field(typeof(NCreature), "_tempScale");
+    private static readonly FieldInfo? CreatureScaleTweenField =
+        AccessTools.Field(typeof(NCreature), "_scaleTween");
+    private static readonly MethodInfo? OstyScaleAndPositionMethod =
+        AccessTools.DeclaredMethod(typeof(NCreature), "ScaleAndPositionOsty", [typeof(float), typeof(double)]) ??
+        AccessTools.DeclaredMethod(typeof(NCreature), "OstyScaleToSize", [typeof(float), typeof(double)]);
     private static readonly FieldInfo? RunStateField =
         AccessTools.Field(typeof(NRun), "_state");
     private static readonly FieldInfo? RunRoomContainerField =
@@ -1571,9 +1577,13 @@ internal static class CharacterAppearanceRuntime
                 return;
             }
 
-            // Re-run the game's canonical layout first. This removes position offsets left by the
-            // previously selected provider; Harmony then naturally runs only the newly selected
-            // provider's current positioning postfixes (and keeps player/pet offsets coherent).
+            var localOsty = playersAndPets.Find(UsesLocalOstyPlacement);
+            // The room's initial layout assumes local Osty has not been summoned. Passing the
+            // live node into it uses the generic pet slot, which can overlap its owner.
+            if (localOsty != null)
+            {
+                playersAndPets.Remove(localOsty);
+            }
             NCombatRoom.PositionPlayersAndPets(
                 playersAndPets,
                 _playerLayoutScaling,
@@ -1582,10 +1592,46 @@ internal static class CharacterAppearanceRuntime
             {
                 RefreshCreatureAnchors(creature);
             }
+
+            if (localOsty != null)
+            {
+                RestoreLocalOstyPlacement(room, localOsty);
+                RefreshCreatureAnchors(localOsty);
+            }
         }
         catch (Exception exception)
         {
             ModLog.Warn("刷新实战玩家与宠物位置失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static bool UsesLocalOstyPlacement(NCreature creature) =>
+        creature.Entity.Monster is Osty && creature.Entity.PetOwner is { } owner && LocalContext.IsMe(owner);
+
+    private static void RestoreLocalOstyPlacement(NCombatRoom room, NCreature osty)
+    {
+        var owner = room.GetCreatureNode(osty.Entity.PetOwner?.Creature);
+        var parent = osty.GetParent();
+        if (owner == null || parent == null || !ReferenceEquals(parent, owner.GetParent()))
+        {
+            return;
+        }
+
+        // Use the same anchoring as the game's summon/health changes. This also works for an
+        // independent body mod whose skeleton must be left in place during the owner hot swap.
+        osty.Position = owner.Position + NCreature.GetOstyOffsetFromPlayer(osty.Entity);
+        if (OstyScaleAndPositionMethod != null && CreatureScaleTweenField?.GetValue(osty) is Tween tween &&
+            GodotObject.IsInstanceValid(tween) && tween.IsRunning())
+        {
+            // An in-flight health tween still targets the owner's old location. Complete the
+            // native scaling at the new location without waiting for another health change.
+            tween.Kill();
+            OstyScaleAndPositionMethod.Invoke(osty, [(float)osty.Entity.MaxHp, 0d]);
+        }
+
+        if (osty.GetIndex() > owner.GetIndex())
+        {
+            parent.MoveChildSafely(osty, owner.GetIndex());
         }
     }
 

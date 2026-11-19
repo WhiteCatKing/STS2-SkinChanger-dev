@@ -1883,7 +1883,7 @@ internal static class ManagedSkinModLoader
         // only correct while the provider owns the pet, otherwise it fights Skin Changer's body and
         // the summoned creature visibly slides around on every attack.
         if (typeof(NCreature).IsAssignableFrom(declaringType) &&
-            target.Name.Equals("OstyScaleToSize", StringComparison.Ordinal))
+            target.Name is "OstyScaleToSize" or "ScaleAndPositionOsty")
         {
             return MonsterVisualCallback.OstyPositioning;
         }
