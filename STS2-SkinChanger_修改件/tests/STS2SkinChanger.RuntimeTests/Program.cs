@@ -859,6 +859,7 @@ BundleContentModeTests.Run();
 CardPresetMigrationTests.Run();
 CardOptionOrderTests.Run();
 AncientCardPriorityTests.Run();
+CardPoolOwnershipTests.Run();
 CharacterSkinBundleContractTests.Run();
 CharacterSkinBundleSourceTests.Run();
 CharacterSkinBundleRunTests.Run();
@@ -975,7 +976,8 @@ var replaceCreatedVisuals = AccessTools.Method(
                                     typeof(string),
                                     typeof(string),
                                     typeof(string),
-                                    typeof(NCreatureVisuals).MakeByRefType()
+                                    typeof(NCreatureVisuals).MakeByRefType(),
+                                    typeof(NCreatureVisuals)
                                 ]) ??
                             throw new InvalidOperationException("找不到最终结果替换入口。");
 var replaceCreatedInstructions = PatchProcessor.GetOriginalInstructions(replaceCreatedVisuals).ToArray();

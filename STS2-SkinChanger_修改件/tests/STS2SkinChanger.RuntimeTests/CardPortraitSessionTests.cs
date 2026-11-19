@@ -81,6 +81,29 @@ internal static class CardPortraitSessionTests
                     Loads["res://isolated/card-0.tres"] == 2, "A new session must reload the alias.");
             SkinService.ResetCardPortraitSession();
             Require(Released.Count == 68, "Explicit reset did not release the new session's texture.");
+
+            // #229：连续浏览多个卡牌总览页签超过 512 MiB 常驻预算时，必须按 LRU 淘汰旧项并继续加载新卡图，
+            // 不能卡死返回 null 导致后续猎宝/愚者等卡面全部回退原版。
+            var releasedBeforeSweep = Released.Count;
+            var session = (CardPortraitSessionCache)AccessTools.Field(service, "SessionCardPortraits").GetValue(null)!;
+            for (var index = 1000; index < 1020; index++)
+            {
+                // 2048x2048x8 = 32 MiB，20 张合计 640 MiB > 512 MiB 预算。
+                Require(Request(index) != null,
+                    $"第 {index - 999} 张正常高清卡图不应因累计缓存满 512 MiB 而被永久拒绝。");
+                Require(session.EstimatedBytes <= RuntimeLoadSafety.ResidentCacheBudget,
+                    "LRU 淘汰后常驻估算字节不得超过 512 MiB 上限。");
+            }
+            Require(Released.Count == releasedBeforeSweep,
+                "会话内 LRU 淘汰不能强行 Dispose 可能仍在屏幕上显示的纹理。");
+            // 已被淘汰的早期卡图不得被永久负缓存，切回时可正常重新加载。
+            Require(Request(1000, "regent\nrevisit-1000") != null &&
+                    Loads["res://isolated/card-1000.tres"] == 2,
+                "因预算被 LRU 淘汰的早期卡图再次访问时必须能正常重新加载。");
+            SkinService.ResetCardPortraitSession();
+            Require(session.Count == 0 && session.EstimatedBytes == 0 &&
+                    Released.Count == releasedBeforeSweep + 16,
+                "会话结束清理必须释放当前仍驻留的全部 16 张高清纹理。");
         }
         finally
         {
@@ -106,7 +129,11 @@ internal static class CardPortraitSessionTests
         Modes.Add(cacheMode);
         __result = (Texture2D)RuntimeHelpers.GetUninitializedObject(typeof(CompressedTexture2D));
         GC.SuppressFinalize(__result);
-        Sizes.Add(__result, path.EndsWith("999.tres", StringComparison.Ordinal) ? 8192 : 32);
+        Sizes.Add(__result, path.EndsWith("999.tres", StringComparison.Ordinal)
+            ? 8192
+            : path.Contains("card-10", StringComparison.Ordinal)
+                ? 2048
+                : 32);
         return false;
     }
     private static bool Size(Texture2D __instance, ref int __result) { __result = Sizes[__instance]; return false; }

@@ -435,3 +435,163 @@
    - 确认角色名、简介与初始遗物文本立即恢复为非奥契丝文本。
 
 > 可选观察项（未在本次改动物料范围内）：静态扫描显示 `OrchisNecrobinderSkinMod.dll` 还包含 `RelicIconPatch.TryGetReplacementIcon` 与 `CharacterSelectIconPathPatch` / `CharacterSelectLockedIconPathPatch`；如后续实机发现非奥契丝皮肤下初始遗物图标或选人头像按钮也发生串联，可沿同一 `OrchisSkinFixCompat` 机制补挂门控。
+
+
+---
+
+## #217：久留美等借用跨卡池占位路径的 Mod 牌被铁甲卡图包覆盖
+
+### 1. 静态实证与三问定位
+
+只读静态分析 `3832078155\Kurumi.dll`、`Kurumi.pck`、`mods\_maintainer_set\本地_CNR整合战士卡图nsfw5.29\CNRIroncladCards.pck`、`skin_changer.json` 与 `godot.log`（23:30 局）：
+
+1. **① 白发少女卡图的真实来源（非久留美占位图）**：
+   - `Kurumi.dll` 内置了 120+ 张独立的 `.NET ManifestResources` 专属卡面（如 `Kurumi.art.cards.FirstCandle.webp`、`TryMachine.webp`、`PatientSmile.webp`、`Strike.webp`、`Defend.webp` 等），运行时经 `[HarmonyPatch(typeof(CardModel), "get_Portrait")]` 的 `KurumiMod.KurumiCardArtwork.Prefix` 加载；`Kurumi.pck` 内不含卡图。
+   - 但 `KurumiMod.KurumiCard.get_PortraitPath` 为满足原版 `CardModel.PortraitPath` 约束，直接借用了**铁甲战士初始牌组**的路径：`ModelDb.Character<Ironclad>().StartingDeck.FirstOrDefault(c => c.Type == this.Type) ?? First()`。由于铁甲初始牌组只有打击（Attack）和防御（Skill），因此：
+     - 久留美所有**攻击牌和能力牌**的 `PortraitPath` 都返回 `res://images/atlases/card_atlas.sprites/ironclad/strike_ironclad.tres`；
+     - 久留美所有**技能牌**（包括「命运试机」「微笑到结算」）的 `PortraitPath` 都返回 `res://images/atlases/card_atlas.sprites/ironclad/defend_ironclad.tres`。
+   - `godot.log` 第 9106–9217 行证实：SkinChanger 把久留美卡牌路由到了 `kurumi/CNRIroncladCards`（以及先古牌路由到 `ancients/CNRIroncladCards`），请求的唯二资源正是 `CNRIroncladCards` 的 `ironclad/strike_ironclad.tres`（指向 `StrikeIronclad.png`）与 `ironclad/defend_ironclad.tres`（指向 `DefendIronclad.png`）；其中 `StrikeIronclad.png` 加载成功并由 SkinChanger 的 `CardModel.get_Portrait` Postfix（`SkinService.ReplaceCardPortrait`）**覆盖了 `KurumiCardArtwork.Prefix` 返回的久留美原图**，而 `defend_ironclad.tres` 在 `ancients/CNRIroncladCards` 处因贴图加载失败回退（第 9217 行），导致对应技能牌保留原图。
+2. **② 铁甲卡包为何进入 `kurumi` 选项，以及 `#11` 保护为何未拦截**：
+   - **归属漏洞**：`SkinCatalog.CardArtMatches`（`SkinCatalog.cs:7980-7985`）与 `SkinService.CardArtMatches`（`SkinService.cs:4243-4250`）原先使用条件 `!asset.Category.Equals(card.PoolGroupId) && !asset.Category.Equals(portrait.Category)`，随后再按 `portrait.Stem` 匹配。
+     - 当久留美卡（`PoolGroupId = "kurumi"`）上报了借用的 `PortraitPath`（`portrait.Category = "ironclad"`、`portrait.Stem = "strikeironclad"`）时，所有铁甲卡包（`CNRIroncladCards`、`CuteIronclad-Cards`、`ATA_IronClad`——`skin_changer.json` 第 726–739 行这三项全在 `"kurumi"` 下）都因 `asset.Category == portrait.Category == "ironclad"` 绕过了卡池检查！
+     - 结果 `FinalizeCardGroups` 错误生成了 `kurumi` 卡牌分组（把三个铁甲卡包放进去并被 `SanitizeCardSelections` 默认启用写入 `"cards:kurumi": "CNRIroncladCards"`），同时也把 `strike_ironclad.tres`/`defend_ironclad.tres` 污染进了 `ancients/CNRIroncladCards`（久留美先古牌触发）。
+   - **为何 `#11` 未拦截**：
+     1. `#11` 的 `FrameworkCardVisualGuard` 仅拦截 RitsuLib 的 `ModCharacterOwnedVisualOverrideHelper.TryGetOwningCharacterOverrides`，而久留美走的是自有 Harmony `CardModel.get_Portrait` Prefix，不走 RitsuLib 卡面覆盖；
+     2. 且由于上述归属漏洞伪造出了 `Catalog.CardGroups["kurumi"]`，`SkinService.HasKnownCardPool(card)`（判定 `GetCardLookup(card).Group != null`）也返回了 `true`，连 RitsuLib 侧的 `KeepsIntrinsicModCardArt` 判定都会被一并击穿。
+   - 顺带发现的关联污染：`SkinCatalog.ResolveCardForPortraitStem` 与 `BuildUniqueCardTypesByStem` 原先也会采用借用的 `portrait.Stem`，导致 `strike_ironclad`/`defend_ironclad` 在纯素材卡图包扫描时被久留美牌污染成歧义词干。
+
+### 2. 代码改动
+
+- **`STS2SkinChanger/Catalog/SkinCatalog.cs`**：
+  - 新增 `BuiltInCardPoolCategories` 与 `internal static bool IsForeignCardPoolPortrait(string? portraitCategory, string? cardPoolGroupId, IReadOnlySet<string>? knownPoolGroups = null)`：当一张卡上报的 `PortraitPath` 分类目录与该卡真实 `PoolGroupId` 不同、且该目录属于内建卡池（`ironclad`/`silent`/`defect`/`necrobinder`/`regent`/`colorless`/`curse`/`event`/`quest`/`status`/`token`/`deprived`/`deprecated`）或目录内其他已知 `PoolGroupId` 时，判定为「跨卡池借用占位路径」（不影响同卡池路径、无分类目录路径或 Mod 自有私有子目录）。
+  - 在 `FinalizeCardGroups` 记录 `_knownCardPoolGroups`（经 `KnownCardPoolGroups` 暴露给 `SkinService`）。
+  - 在 `CardArtMatches` 中：若 `foreignPortrait == true`，禁止通过 `asset.Category == portrait.Category` 绕过卡池归属，也禁止用借用的 `portrait.Stem` 匹配（仅允许真正属于 `card.PoolGroupId` 或无歧义匹配 `card.TypeName` 的本卡池资源）；同时在 `FinalizeCardGroups` 的 `_pckCardOptions` 与角色先古牌镜像两处传入 `knownPoolGroups`。
+  - 在 `ResolveCardForPortraitStem`、`BuildUniqueCardTypesByStem` 与 `TryGetUniqueSharedPoolPortrait` 中对 `foreignPortrait == true` 的卡牌忽略借用 `portrait.Stem`，避免污染铁甲卡在纯素材卡图包/共享池中的唯一匹配。
+- **`STS2SkinChanger/Core/SkinService.cs`**：
+  - 同步更新 `CardArtMatches(string assetPath, CardModel card)`：调用 `SkinCatalog.IsForeignCardPoolPortrait(..., Catalog?.KnownCardPoolGroups)`，阻止借用占位路径按 `portrait.Category` 或 `portrait.Stem` 匹配其他角色卡包（同时避免 `CardPortraitIdentity` 偏向借用分类）。
+  - 效果：未安装真正久留美卡包时，`Catalog.CardGroups` 不再生成被铁甲包污染的 `kurumi` 分组，`ancients/CNRIroncladCards` 也不再携带久留美先古牌的 `strike_ironclad`/`defend_ironclad`；即使旧 `skin_changer.json` 仍残留 `"cards:kurumi": "CNRIroncladCards"` 或 `"cards:ancients": "CNRIroncladCards"`，`GetCardLookup` / `ResolveCardPortraitRequest` 也会直接返回空，完整保留久留美自带原图并让 `#11` 的 `HasKnownCardPool` 恢复正确判定。
+- **`tests/STS2SkinChanger.RuntimeTests/CardPoolOwnershipTests.cs` & `Program.cs`**：
+  - 扩充回归用例：校验 `IsForeignCardPoolPortrait` 规则、`ResolveCardForPortraitStem("strike_ironclad", ...)` 不被久留美污染、`CNRIroncladCards` 与平铺目录 `strike_ironclad.png` 均不会生成 `kurumi` 分组或污染 `ancients/CNRIroncladCards`、在旧 `skin_changer.json` 残留 `"cards:kurumi"/"cards:ancients": "CNRIroncladCards"` 时 `ResolveCardPortraitRequest` 对久留美普通卡/先古卡返回 `null` 而铁甲自身仍命中、以及真正属于 `kurumi` 卡池的卡包仍能正常匹配。
+  - 将 `CardPoolOwnershipTests.Run()` 接入 `Program.cs` 默认无参 `RuntimeTests` 流程（保留 `--test-card-pool-ownership` 单跑入口）。
+
+### 3. 编译与自动化验证结果（双分支全绿）
+
+- Release 编译（Beta `data_sts2_windows_x86_64`，`-o %TEMP%\gemini-build-beta`）：**0 错误，0 警告**。
+- Release 编译（正式版 `正式版_v0.111.1_20261117_2249_build26655341`，`-o %TEMP%\gemini-build-stable`）：**0 错误，0 警告**。
+- `STS2SkinChanger.LogicTests`（Beta + 正式版，开启 `SetErrorMode(3)`）：均通过（`Skin Changer logic policy tests passed.`）。
+- `STS2SkinChanger.RuntimeTests`（`--test-card-pool-ownership` + 无参全量，Beta + 正式版，开启 `SetErrorMode(3)`）：均通过（含 `Card pool ownership policy passed.` 与 `Workshop policy tests passed.`）。
+- 保护区离线回归（Beta）：`--test-protected-boundaries`、`--test-runtime-safety`、`--test-preview-binding` 全部通过（涉及加载第三方 DLL 的工坊专项留交 Claude 端执行）。
+
+### 4. 实机验证步骤
+
+1. **保留现有 `skin_changer.json`（无需手动删 `"cards:kurumi": "CNRIroncladCards"`）启动游戏**，打开卡牌总览切到**久留美**：
+   - 确认久留美所有攻击、技能、能力及先古牌全部显示久留美自己的卡面，不再出现白发少女（`CNRIroncladCards` 的 `StrikeIronclad`）覆盖；
+   - 确认日志中不再出现 `已批量隔离 kurumi/CNRIroncladCards` 以及 `ancients/CNRIroncladCards/.../strike_ironclad.tres` 或 `defend_ironclad.tres`。
+2. **检查卡牌皮肤设置列表**：
+   - 确认久留美（未安装久留美专属卡包时）下不再出现 `CNRIroncladCards` / `CuteIronclad-Cards` / `ATA_IronClad` 等铁甲卡包选项；
+   - 切到**铁甲战士**确认 `CNRIroncladCards` 仍正常生效（含铁甲打击/防御及铁甲先古牌），其他英雄与 `AncientWaifus` 卡图无回归。
+3. **开一局久留美战斗**：确认起手牌、抽牌堆及战斗内卡面均正常显示久留美自带卡图。
+
+
+---
+
+## #223（第一阶段：仅 `SkinCatalog.cs` 与测试，对应 #222 实现-1/2 与优化-1）
+
+按文件归属约束，本阶段仅改 `STS2SkinChanger/Catalog/SkinCatalog.cs` 与 `tests/STS2SkinChanger.RuntimeTests/CardPoolOwnershipTests.cs`（未碰 `SkinService.cs`；待 Claude 通知 GPT `#221` 完成后再接入 `SkinService.cs` 的实现-1 与优化-2）。
+
+### 1. 代码改动
+
+- **`STS2SkinChanger/Catalog/SkinCatalog.cs`**：
+  - **共用路径身份解析器与匹配谓词（实现-1）**：
+    - `CardArtIdentity` 改为 `internal readonly record struct`，新增 `internal readonly record struct CardMatchIdentity(PoolGroupId, TypeStem, Portrait, HasForeignPortrait)`；`FinalizeCardGroups` 同时保存 `_knownCardGroups` 与 `_knownCardPoolGroups`（经 `KnownCardGroups` / `KnownCardPoolGroups` 暴露）。
+    - 新增共用入口 `TryGetCardArtIdentity(path)` / `TryCreateCardMatchIdentity(...)` / `CardArtMatches(CardArtIdentity, CardMatchIdentity)` 及实例便捷重载、与 `NormalizeCardStemToken`，供目录与后续 `SkinService` 运行时直接复用同一份解析器和卡池上下文。
+    - 修正 `TryGetCardArtPathLayout` 目录优先级：先按内建卡池（`BuiltInCardPoolCategories`）或 `knownPoolGroups` 匹配目录段，再回退 `knownCardGroups` 和首层目录。即使 `knownCardGroups` 混入外层包装目录 `"default"`，`res://assets/card_portraits/default/ironclad/strike_ironclad.tres` 也稳定解析为 `ironclad` 分类并被判定为 `HasForeignPortrait = true`（修复龙娘 #222 复现的嵌套目录反例）。
+  - **目录构建预解析与平铺词干缓存（优化-1）**：
+    - `FinalizeCardGroups` 预先把所有 `CardCatalogEntry` 一次性解析为 `PreparedCard[]`（含 `CardMatchIdentity`），并用单次 `assetIdentityCache` 缓存所有唯一资源路径解析结果；每个 `_pckCardOptions` 先一次性预解析 `PreparedCardAsset[]`，内层卡×资源配对、角色先古牌镜像、`BuildUniqueCardTypesByStem` 与 `TryGetUniqueSharedPoolPortrait` 全程复用预解析结果，消除单包约 8.8 万次重复路径正则/切分/词干归一化。
+    - `ResolveCardForPortraitStem` 改为通过 `ConditionalWeakTable<IReadOnlyList<CardCatalogEntry>, CardStemResolutionContext>`（带 `Count` 校验）缓存批内 `knownPoolGroups` 与预解析卡词干，避免 `AttachCardArtPacks` / `LooseCardPortraitPackScanner` 每文件重扫全卡集合。
+- **`tests/STS2SkinChanger.RuntimeTests/CardPoolOwnershipTests.cs`**：
+  - 新增 `CheckNestedBorrowedPathAndSharedPredicate`（覆盖龙娘反例 `default/ironclad/strike_ironclad.tres` 对平铺 `strike_ironclad.png` 拒绝、对按类名 `kurumi_first_candle.png` 与自定义 atlas 路径放行、对铁甲自身嵌套路径放行、以及带污染 `knownCardGroups` 下目录与共用谓词一致性）。
+  - 新增 `CheckSingleFlatPackMatchingTwoCharactersAtRuntime`（同一平铺包同时含 `strike_ironclad.png` / `defend_ironclad.png` / `kurumi_first_candle.png` 时分别进入铁甲与久留美分组，运行时铁甲命中 `strike_ironclad.png`、久留美命中 `kurumi_first_candle.png`，借用防御占位路径的久留美未命中卡 `KurumiTryMachine` 返回 `null` 不被覆盖）。
+
+### 2. 验证结果（双分支全绿）
+
+- Release 编译（Beta + 正式版，`-o %TEMP%\gemini-build-{beta,stable}`）：均 **0 错误，0 警告**。
+- `LogicTests`（Beta + 正式版，开启 `SetErrorMode(3)`）：均通过。
+- 无参全量 `RuntimeTests`（Beta + 正式版，均已执行 `Card pool ownership policy passed.`）：均通过。
+- 保护区离线回归（Beta）：`--test-protected-boundaries`、`--test-runtime-safety`、`--test-preview-binding` 全通过。
+
+
+---
+
+## #227（#223 第二阶段：`SkinService.cs` 接入共用解析器/谓词与冷暖路径优化）
+
+在龙娘 `#221` 完成后接手 `STS2SkinChanger/Core/SkinService.cs`（未碰龙娘在 `SkinService.cs` / `SkinService.RuntimeSafety.cs` 中改动的内存守卫降级与战斗中延后清理逻辑）。
+
+### 1. 代码改动
+
+- **`STS2SkinChanger/Core/SkinService.cs`**：
+  - **运行时接入共用解析器与匹配谓词（实现-1 收尾）**：
+    - 删除 `SkinService` 内原有的重复解析/匹配副本（`CardPortraitIdentity`、`CardStemsMatch`、`IsNumberedCardVariant`、`NormalizeCardToken`、`HasSameResourceExtension`，净减约 90 行重复代码），统一改为调用 `SkinCatalog.TryCreateCardMatchIdentity` / `SkinCatalog.TryGetCardArtIdentity` / `SkinCatalog.CardArtMatches` / `SkinCatalog.NormalizeCardStemToken`，与目录构建共用同一份 `KnownCardGroups` / `KnownCardPoolGroups` 上下文与正则标记。
+    - 保留 `internal static bool CardArtMatches(string assetPath, CardModel card)` 包装入口，确保目录与运行时对嵌套目录与自定义 atlas 路径给出完全一致的结果。
+  - **冷路径卡身份上提（优化-2 冷路径）**：
+    - `ResolveCardLookup(CardModel card)` 只调用一次 `FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var baselinePath)` 与一次 `ResolveCardMatchIdentity(cardType, baselinePath, poolGroupId)`，将 `(cardType, cardIdentity)` 直接传入 `CardGroupAffectsCardUncached`、`CardOptionAffectsCardUncached` 与 `BuildCardOptionLookup`；且 `CardOptionAffectsCardUncached` 改为直接断言命中，不再为探测额外构造 `CardOptionLookup` 与数组。
+  - **暖路径单候选直返与多候选循环外预计算（优化-2 暖路径）**：
+    - `SelectProviderCardPath` 在 `paths.Count == 0` 返回 `null`、`paths.Count == 1` 时**直接返回 `paths[0]`**（跳过路径解析与反射）；多候选时将 `originalExtension`、`originalUsesBeta`、`originalIdentity`、`typeStem`、`expectedStem`、`hasDistinctTypeStem` 与 `GetCardPresentationLevel(card)` 全部提到循环外只算一次，并拆出零分配辅助 `TryScoreNumberedCardVariant` 保留随升级等级切换编号变体的行为。
+- **`tests/STS2SkinChanger.RuntimeTests/CardPoolOwnershipTests.cs`**：
+  - 补充运行时 `SkinService.CardArtMatches` 与目录侧的一致性断言：覆盖龙娘嵌套借用路径反例（`KurumiNestedCard` 对平铺 `strike_ironclad.png` 返回 `false`、对按类名 `kurumi_nested_card.png` 与自定义 `custom_card_atlas.sprites` 路径返回 `true`、铁甲自身嵌套路径返回 `true`）。
+  - 补充 `SkinService.SelectProviderCardPath` 暖路径回归：单候选直接返回、多候选编号变体随 `FakeUpgradeLevel` 从 0→1 正确切图（`strike_ironclad1.png` → `strike_ironclad2.png`）。
+
+### 2. 验证结果（双分支全绿）
+
+- Release 编译（Beta + 正式版，`-o %TEMP%\gemini-build-{beta,stable}`）：均 **0 错误，0 警告**。
+- `LogicTests`（Beta + 正式版，开启 `SetErrorMode(3)`）：均通过。
+- 无参全量 `RuntimeTests`（Beta + 正式版，均已执行 `Card pool ownership policy passed.` 与 `Workshop policy tests passed.`）：均通过。
+- 保护区离线回归（Beta）：`--test-protected-boundaries`、`--test-runtime-safety`、`--test-preview-binding` 全通过（未 commit/部署）。
+
+
+---
+
+## #229：实机连续浏览多页卡图后猎宝/愚者等卡面全部回退原版的根因排查与修复
+
+### 1. 日志实证（排除 `#228` 匹配回归，定位真正根因）
+
+逐行核对 00:33–00:37 局日志 `godot.log`（`1.0.36.103`，含 `#226+#224+#228`）及上一局 `godot2026-11-20T00.32.55.log`（`1.0.36.102`，`#224/#228` 之前）：
+
+1. **`#228` 的目录与运行时匹配未回归**：
+   - `godot.log` 整局共触发 **38 次 `已批量隔离`**，覆盖全部 10 个卡牌外观组：
+     - `ironclad/CNRIroncladCards`（L2527）、`colorless/CNROtherCards`（L3862–6593）、`ancients/AncientWaifus` 等（L6789–6791）、`misc/CNROtherCards` / `SorasakiMana`（L7726–10748）、`silent/SilentCardAnimerRework`（L11648）、`regent/CNRRegentCards`（L12339）、`necrobinder/CNRNecrobinderCards` + `CuteNecrobinder`（L14161–14163）、`watcher/*`（L15682–15683）、`defect/*`（L15710–15711）、`fool/NailongFool`（L17515）、`fool/SorasakiMana`（L17601）；且零 `kurumi/CNRIroncladCards` 串图。
+   - 另：`HildeFoolSkin` 在该局模组设置中处于禁用状态（L326：`Skipping loading mod HildeFoolSkin, it is set to disabled in settings`）。
+2. **真正的根因：`CardPortraitSessionCache` 512 MiB 上限无淘汰 + 永久负缓存毒化（1.0.36.101 `e23097a` 遗留问题，`1.0.36.102` 已出现 139 次相同报错）**：
+   - 对比两局日志：
+     - `1.0.36.102`（00:32:55）：`batches=32, fails=139`，从 L7095（`regent/CNRRegentCards/neutron_aegis.tres`）起大量卡图报 `卡牌皮肤资源不可用，已回退原版卡图：...；原因=资源包未返回可用卡牌贴图`。
+     - `1.0.36.103`（00:37:58）：`batches=38, fails=395`，铁甲（24 张）、无色（53 张）、先古（9 张）与部分杂项卡全部正常加载；到 L9368（`misc/CNROtherCards/curse/poor_sleep.tres`）与 L10489（`misc/ATA_Silent/shiv.tres` 所在大图集）后累计估算字节撞上 512 MiB 天花板，随后的**猎宝（76+23）、储君（25）、骨妹（72）、观者（25）、故障（25）、愚者奶蛙（55）+空崎日奈（31）全部返回 `null`**。
+   - 代码依据（`STS2SkinChanger/Core/CardPortraitSessionCache.cs`）：
+     - 原 L27–28 与 L50–51 仅做硬拒绝（`_estimatedBytes >= ResidentCacheBudget` 或 `bytes > ResidentCacheBudget - _estimatedBytes` 直接 `return null`），**没有任何 LRU 淘汰**；
+     - 原 L33 在校验预算前就先写入 `_entries.Add(path, null)`，一旦满额拒绝便把该路径永久负缓存为 `null`（且触发 `SkinService.GetOrLoadCardPortrait` 把 `CacheKey` 永久记入 `FailedCardPortraitRequests`）；
+     - `ResetCardPortraitSession()` 仅挂在 `RunManager.CleanUp`（结束对局时），浏览卡牌总览切 3–4 个页签填满 512 MiB 后，整个会话后续全部未缓存卡面及卡面切换均永久失效，直至结束一局或重启游戏。
+
+### 2. 代码改动
+
+- **`STS2SkinChanger/Core/CardPortraitSessionCache.cs`**：
+  - 引入基于 `LinkedList<string>` 的 **LRU 淘汰**与 `_backingTextureRefCounts`（按底层贴图 InstanceId 准确引用计数，共享图集仅在最后一条引用淘汰时扣减估算字节），并将真正失败/超单卡上限的路径独立存放到 `_failedPaths`（不再与活跃缓存混用）。
+  - 保留 `#14` 512 MiB 常驻预算与单张超大贴图保护：单张贴图自身 `>= ResidentCacheBudget`（512 MiB）仍立即拒绝、游戏线程释放并记入 `_failedPaths`；正常卡图遇到满额或满条数（`MaxPaths = 1024`）时，从 LRU 队头淘汰最久未用条目直至腾出空间。
+  - **防屏幕上卡面异常**：会话内 LRU 淘汰仅解除缓存持有（交由 Godot `RefCounted` 在节点不再引用后自然回收），不强行 `Dispose` 可能仍挂在节点上的纹理；`Clear()`（`RunManager.CleanUp` / 显式重置）保持原有显式 `DisposeTexture` 行为。
+- **`tests/STS2SkinChanger.RuntimeTests/CardPortraitSessionTests.cs`**：
+  - 新增 `#229` 回归：连续加载 20 张 2048×2048（32 MiB/张，合计 640 MiB > 512 MiB）卡图，验证全程不返回 `null`、常驻估算始终 `<= 512 MiB`、会话内淘汰不强行 `Dispose`、切回最早被淘汰的第 1 张卡图能正常重新加载（无永久负缓存毒化），且 `ResetCardPortraitSession()` 显式释放当前驻留的全部 16 张贴图。
+- **`tests/STS2SkinChanger.RuntimeTests/CardPoolOwnershipTests.cs`**：
+  - 新增 `CheckRealCatalogBuildRuntimeLookup`：按真实 `.tres.remap`/`.png.import` PCK 结构执行 `SkinCatalog.Build` + `FinalizeCardGroups`，验证运行时 `SkinService.ResolveCardPortraitRequest` 对铁甲原版打击卡（`CNRIroncladCards`）、猎宝原版中和卡（`SilentPack`）、愚者打击卡（`NailongFool`）全部准确命中，同时仍隔离久留美借用铁甲占位路径。
+
+### 3. 编译与自动化验证结果（双分支全绿）
+
+- Release 编译（Beta + 正式版，`-o %TEMP%\gemini-build-{beta,stable}`）：均 **0 错误，0 警告**。
+- `STS2SkinChanger.LogicTests`（Beta + 正式版，开启 `SetErrorMode(3)`）：均通过。
+- `STS2SkinChanger.RuntimeTests`（`--test-card-pool-ownership` + 无参全量，Beta + 正式版，开启 `SetErrorMode(3)`）：均通过（含 `Card portrait session passed` 与 `Card pool ownership policy passed`）。
+- 保护区离线回归（Beta）：`--test-protected-boundaries`、`--test-runtime-safety`、`--test-preview-binding` 全通过（未 commit/部署）。
+
+### 4. 实机验证步骤
+
+1. 打开**卡牌总览**，按顺序连续点完所有页签并上下滚动：**铁甲 → 无色 → 先古 → 杂项 → 猎宝（SilentCardAnimerRework）→ 储君 → 骨妹 → 观者 → 故障 → 愚者（空崎日奈 / 奶蛙）→ 久留美**：
+   - 确认浏览完前 4 个大页签后，切到**猎宝**和**愚者**时卡面全部正常显示（不再回退原版，日志不再出现批量 `原因=资源包未返回可用卡牌贴图`）；
+   - 确认**久留美**仍显示自带卡图、无铁甲白发少女串图；
+   - 在猎宝/愚者页签内切换不同卡图皮肤并来回翻回铁甲，确认热切换正常且画面无白块/报错。
+2. 若需同时测 Hilde，请先在游戏 Mod 列表重新勾选启用 `HildeFoolSkin`（00:33 那局它在游戏设置里是禁用状态）。

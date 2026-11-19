@@ -153,3 +153,16 @@ v0.111.1 与 v0.113.1 源码构建均为 0 警告、0 错误，两端 LogicTests
 `FoolWaifuRuntimeCompat.cs` 用现有愚者选择判断拦截 `SkinVisuals.AttachMerchant(NMerchantCharacter)`，覆盖 Ready 和动画两条调用。选回 Waifu 仍允许它挂载。变更只涉及该兼容文件与 `FoolWaifuIdentityTests.cs`，未涉及商人热切换实现。离线合成测试验证旧回调尚在时，选中 Hilde 会拦住两次挂载，选中 Waifu 会放行。双端主工程均 0 警告、0 错误，LogicTests 和完整 RuntimeTests 均通过。日志在 `%TEMP%\sts2-gpt-166-1795060091778`。
 
 请云用同样的存档或路线复测。先选一次 Waifu，再换 Hilde 进商店，核对愚者玩家模型尺寸和待机动画，并确认没有 Waifu 挂载警告。最后选回 Waifu 再进商店，确认它自己的商店表现仍在。
+
+### #221 · 联机战斗建模降级
+
+#221 已完成。Gemini 可以接手 `Core/SkinService.cs` 的卡图改动。修复留在 `fix/1.0.36-stability` 的工作区，基线 `b3dc0da`。
+
+玩家日志 91958 行显示第三名队友的外观资源申请被内存守卫拒绝，异常从 `Creature.CreateVisuals` 传回 `NCombatRoom._Ready`，中断后续队友、怪物和站位初始化。92008、92094、92347 和 92683 行是同一局的顶栏贴图替换失败。
+
+- `Creature.CreateVisuals`、`NCreature._Ready` 只捕获切换器自己的范围初始化、场景替换和外观后置异常。范围申请失败时释放临时选择及资源覆盖，允许游戏建模和 Ready 继续。后置失败保留游戏调用已经返回的模型，释放放弃的替换节点。创建时已经降级的模型在 Ready 跳过重复申请及相应的外观回调。原生调用抛出的异常由 Harmony Finalizer 原样交还。
+- 资源加载失败时删除失败条目的引用，战斗中的全量清理登记到下一次非战斗更新再执行。顶栏头像与接管贴图失败时保留现有控件或贴图，同类警告每 30 秒最多一条。512 MiB 系统内存余量、分别预估运行包与解码内存、只计实际载入贴图的规则继续适用。
+- 正式版 v0.111.1 和测试版 v0.113.1 的主工程与测试项目均为 0 警告、0 错误。两端 LogicTests、完整 RuntimeTests、`--test-runtime-safety`、`--test-protected-boundaries`、`--test-preview-binding`、十字军实包 hooks、十字军与两版贞德实包套件均通过。完整套件包含当前共享工作区里的卡图用例。日志在 `%TEMP%/sts2-gpt-221-1795104646919/{official,beta}-final.log`。
+- 新回归安装真实 Harmony 补丁，用替身提供原生模型结果和 Ready 完成点，并在创建前置、创建后置、Ready 前置和 Ready 外观回调分别注入内存拒绝。确认游戏返回的模型对象被保留，Ready 继续，下一个单位独立创建，原生异常仍是同一个对象，战斗中待执行的清理请求继续保留。
+
+尚需真实四人联机复测。用同一个 Boss 存档，先在正常内存下进战斗，检查四名队友、怪物、站位和各自皮肤。再用测试构建仅对第三名队友注入一次外观余量拒绝，检查其可见模型、后续单位与站位，双方出牌一回合并核对 checksum。连续打开顶栏和投票头像，检查贴图仍在且警告没有刷屏。实机环节尚未执行。未提交、未部署，也未改第三方包。

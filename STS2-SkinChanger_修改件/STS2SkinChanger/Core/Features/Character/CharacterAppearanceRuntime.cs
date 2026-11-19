@@ -144,6 +144,8 @@ internal static class CharacterAppearanceRuntime
         new(StringComparer.OrdinalIgnoreCase);
     private static long _combatRuntimeScopeLease;
     private static bool _combatRuntimeScopeActive;
+    internal static bool IsCombatRuntimeScopeActive =>
+        _combatRuntimeScopeActive || TryGetActiveCombatRoom(NRun.Instance) != null;
     private static float _playerLayoutScaling = 1f;
     private static bool _fullyCenterPlayers;
 
@@ -2693,8 +2695,12 @@ internal static class BossMapPointSkinPresentationPatch
 internal static class CharacterAppearanceCreatureReadyPatch
 {
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NCreature __instance) =>
-        CharacterAppearanceRuntime.OnCreatureReady(__instance);
+    private static void Postfix(NCreature __instance)
+    {
+        if (CombatAppearanceBoundary.SkipAppearance) return;
+        try { CharacterAppearanceRuntime.OnCreatureReady(__instance); }
+        catch (Exception error) { CombatAppearanceBoundary.SkipAfterFailure(error); }
+    }
 }
 
 [FeaturePatch(FeatureIds.Character)]
@@ -2712,8 +2718,11 @@ internal static class CombatRoomRuntimeProviderScopePatch
 {
     [HarmonyPrefix]
     [HarmonyPriority(Priority.First)]
-    private static void Prefix(ICombatRoomVisuals visuals) =>
-        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnCombatRoom(visuals);
+    private static void Prefix(ICombatRoomVisuals visuals)
+    {
+        try { CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnCombatRoom(visuals); }
+        catch (Exception error) { CombatAppearanceBoundary.Warn("战斗外观准备", error); }
+    }
 }
 
 [FeaturePatch(FeatureIds.Character)]
