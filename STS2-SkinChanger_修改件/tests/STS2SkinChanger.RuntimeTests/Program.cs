@@ -803,6 +803,7 @@ LargeProviderOverlayTests.Run();
 CardPortraitSessionTests.Run();
 ProviderAssemblyReuseTests.Run();
 MerchantFigureScopeTests.Run();
+MerchantLifecycleTests.RunInputIsolation();
 StorageLifecycleTests.Run();
 StorageLifecycleTests.TestQuitAndLockedFiles();
 QuitBoundaryTests.Run();

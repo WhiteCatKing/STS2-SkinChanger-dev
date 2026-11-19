@@ -4,8 +4,10 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Animation;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Characters;
+using MegaCrit.Sts2.Core.Models.Monsters;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
@@ -14,13 +16,15 @@ using STS2SkinChanger.Catalog;
 
 namespace STS2SkinChanger.Core;
 
-/// <summary>Scopes Orchis 0.1.8's independent room callbacks to the player's selected appearance.</summary>
+/// <summary>Scopes Orchis 0.1.8's independent room and text callbacks to the player's selected appearance.</summary>
 internal static class OrchisSkinFixCompat
 {
     private const string FixAssembly = "STS2-OrchisNecrobinderSkinFix";
     internal const string ProviderId = "OrchisNecrobinderSkinMod";
     private const string FixNamespace = "STS2OrchisNecrobinderSkinFix.Patches.";
     private const string ProviderEntry = "OrchisNecrobinderSkinMod.Scripts.Entry";
+    private const string TextReplacePatchType = "OrchisNecrobinderSkinMod.Scripts.TextReplacePatch";
+    private const string FixOstyScalingPatch = FixNamespace + "OrchisOstyScalingPatch";
     private const string Body = "necrobinder";
     private const string OstyGroup = "osty";
     private const string RestBodyPath = "res://OrchisNecrobinderSkinMod/animations/rest_site/necrobinder/rest_site_necrobinder_skel_data.tres";
@@ -53,11 +57,16 @@ internal static class OrchisSkinFixCompat
     private static void InstallLoaded()
     {
         var assemblies = AppDomain.CurrentDomain.GetAssemblies();
-        if (!assemblies.Any(assembly => IsNamed(assembly, FixAssembly))) return;
+        var hasFix = assemblies.Any(assembly => IsNamed(assembly, FixAssembly));
         foreach (var assembly in assemblies)
         {
             if (IsNamed(assembly, FixAssembly)) InstallFixCallbacks(assembly);
-            else if (IsNamed(assembly, ProviderId)) InstallProviderCallbacks(assembly);
+            else if (IsNamed(assembly, ProviderId))
+            {
+                InstallProviderTextCallbacks(assembly);
+                InstallProviderOstyCallbacks(assembly);
+                if (hasFix) InstallProviderCallbacks(assembly);
+            }
         }
     }
 
@@ -74,16 +83,37 @@ internal static class OrchisSkinFixCompat
             [typeof(string), typeof(Resource).MakeByRefType()], nameof(FilterRestSiteSkeleton));
         Patch(assembly, FixNamespace + "NRestSiteCharacterReadyPatch", "Postfix",
             [typeof(NRestSiteCharacter)], nameof(EnterRestSitePlayer), nameof(ExitRestSitePlayer));
+        Patch(assembly, FixOstyScalingPatch, "ResolveScaleFactor",
+            [typeof(float), typeof(NCreature), typeof(float)], nameof(AllowFixOstyScale));
+    }
+
+    private static void InstallProviderTextCallbacks(Assembly assembly)
+    {
+        Patch(assembly, TextReplacePatchType, "ShouldReplace",
+            [typeof(LocString)], nameof(AllowTextReplace));
+        Patch(assembly, TextReplacePatchType, "TryGetCharacterText",
+            [typeof(LocString), typeof(string).MakeByRefType()], nameof(AllowCharacterTextReplace));
+    }
+
+    private static void InstallProviderOstyCallbacks(Assembly assembly)
+    {
+        Patch(assembly, ProviderEntry + "+CreatureCreateVisualsPatch", "Postfix",
+            [typeof(Creature), typeof(NCreatureVisuals).MakeByRefType()], nameof(AllowCreatureVisuals));
+        Patch(assembly, ProviderEntry + "+ScaleAndPositionOstyPatch", "Prefix",
+            [typeof(NCreature), typeof(float), typeof(double)], nameof(AllowOstyScale));
+        Patch(assembly, ProviderEntry, "SnapLocalOstyToOwner",
+            [typeof(NCreature)], nameof(AllowOstyNode));
+        // The author's ordering callback can be deferred past a selection change, so gate
+        // the method that actually moves the node as well as the original scale prefix.
+        Patch(assembly, ProviderEntry, "PutCombatOstyBelowCharacters",
+            [typeof(NCreature)], nameof(AllowOstyNode));
     }
 
     private static void InstallProviderCallbacks(Assembly assembly)
     {
-        var visuals = typeof(NCreatureVisuals).MakeByRefType();
-        Patch(assembly, ProviderEntry + "+CreatureCreateVisualsPatch", "Postfix",
-            [typeof(Creature), visuals], nameof(AllowCreatureBody));
         Patch(assembly, ProviderEntry, "ApplyNecrobinderCombatScale", [typeof(NCreature)], nameof(AllowCreatureNodeBody));
         Patch(assembly, ProviderEntry + "+CharacterModelCreateVisualsPatch", "Postfix",
-            [typeof(CharacterModel), visuals], nameof(AllowCharacterBody));
+            [typeof(CharacterModel), typeof(NCreatureVisuals).MakeByRefType()], nameof(AllowCharacterBody));
         Patch(assembly, ProviderEntry + "+CharacterSelectBgPatch", "Postfix",
             [typeof(CharacterModel), typeof(string).MakeByRefType()], nameof(AllowCharacterBody));
         Patch(assembly, ProviderEntry + "+CharacterSelectScreenPatch", "Postfix",
@@ -114,6 +144,43 @@ internal static class OrchisSkinFixCompat
         {
             ModLog.Warn($"[兼容] 奥契丝补丁 {typeName}.{methodName} 安装失败：{error.GetBaseException().Message}");
         }
+    }
+
+    private static bool AllowTextReplace(ref bool __result)
+    {
+        if (AllowsText()) return true;
+        __result = false;
+        return false;
+    }
+
+    private static bool AllowCharacterTextReplace(ref string __1, ref bool __result)
+    {
+        if (AllowsText()) return true;
+        __1 = string.Empty;
+        __result = false;
+        return false;
+    }
+
+    internal static bool AllowsText() => Allows(Body);
+
+    private static bool AllowCreatureVisuals(Creature __0) =>
+        __0.Monster is Osty ? Allows(OstyGroup, __0.PetOwner) : AllowCreatureBody(__0);
+
+    private static bool AllowOstyNode(NCreature __0) =>
+        __0.Entity.Monster is not Osty || Allows(OstyGroup, __0.Entity.PetOwner);
+
+    private static bool AllowOstyScale(NCreature __0, ref bool __result)
+    {
+        if (AllowOstyNode(__0)) return true;
+        __result = true; // The upstream prefix was skipped, so the game's scaling still runs.
+        return false;
+    }
+
+    private static bool AllowFixOstyScale(float __0, NCreature __1, ref float __result)
+    {
+        if (AllowOstyNode(__1)) return true;
+        __result = __0;
+        return false;
     }
 
     private static bool AllowCreatureBody(Creature __0) =>

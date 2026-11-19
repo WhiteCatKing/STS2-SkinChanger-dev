@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
@@ -1530,7 +1530,10 @@ internal static class MerchantRuntimeAppearance
         var index = previous.GetIndex();
         var originalName = previous.Name;
         var wasFocused = previous.HasFocus();
-        if (!MerchantVariantScenes.IsBlitzType(replacement.GetType())) CopyControlRuntimeState(previous, replacement);
+        // The new scene and its provider own the button's input route and focus policy.
+        // Neow uses a silhouette hit control and makes its own native button ignore the mouse.
+        // Copy only visual state so that setting never leaks to the next button.
+        if (!MerchantVariantScenes.IsBlitzType(replacement.GetType())) CopyCanvasItemVisualState(previous, replacement);
         CopyRequiredUniqueNode(previous, replacement, "MerchantSelectionReticle");
         SetOwnerRecursive(replacement, replacement);
         if (replacement.GetNodeOrNull<Node>("%MerchantVisual") == null ||
@@ -1547,7 +1550,7 @@ internal static class MerchantRuntimeAppearance
             replacement.PlayerDeadLines = previous.PlayerDeadLines;
             parent.AddChild(replacement);
             parent.MoveChild(replacement, index);
-            if (!MerchantVariantScenes.IsBlitzType(replacement.GetType())) CopyControlRuntimeState(previous, replacement);
+            if (!MerchantVariantScenes.IsBlitzType(replacement.GetType())) CopyCanvasItemVisualState(previous, replacement);
             if (replacement.GetNodeOrNull<Node>("%MerchantVisual") == null ||
                 replacement.GetNodeOrNull<Node>("%MerchantSelectionReticle") == null)
             {
@@ -1799,16 +1802,6 @@ internal static class MerchantRuntimeAppearance
         target.SelfModulate = source.SelfModulate;
         target.ZIndex = source.ZIndex;
         target.ZAsRelative = source.ZAsRelative;
-    }
-
-    private static void CopyControlRuntimeState(Control source, Control target)
-    {
-        // Position, size, scale, rotation and pivot are authored by the newly selected scene.
-        // Copying them from the live previous skin leaks provider-specific transforms and makes
-        // repeated hot swaps accumulate offsets. Only preserve transient UI state.
-        CopyCanvasItemVisualState(source, target);
-        target.MouseFilter = source.MouseFilter;
-        target.FocusMode = source.FocusMode;
     }
 
     private static void CopyRequiredUniqueNode(Node baseline, Node replacement, string uniqueName)

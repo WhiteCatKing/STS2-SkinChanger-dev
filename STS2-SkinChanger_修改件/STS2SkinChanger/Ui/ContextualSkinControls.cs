@@ -212,6 +212,8 @@ internal static partial class ContextualSkinControls
         RemoveStaleProviderCharacterSelectControls(screen, character);
         var selector = EnsureCharacterSelector(screen);
         selector.SetMeta("sc_workshop_target", character.Id.Entry.ToLowerInvariant());
+        ProviderModeSelectOverlayBridge.RegisterScreenLifecycle(screen);
+        ProviderModeSelectOverlayBridge.SyncExclusiveScreenPollers(screen);
         var group = FindGroup(character.Id.Entry);
         if (group != null)
         {
@@ -2028,6 +2030,7 @@ internal static partial class ContextualSkinControls
             if (!CharacterModelPreviewControls.BindNow(screen, character))
                 throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
             CharSelectStageCycle.Attach(screen, character);
+            ProviderModeSelectOverlayBridge.Attach(screen, character);
             ProviderModeSelectOverlayBridge.SyncModeBackgroundClickPassthrough(screen, character);
             return;
         }
@@ -2070,6 +2073,7 @@ internal static partial class ContextualSkinControls
                 if (!CharacterModelPreviewControls.BindNow(screen, character))
                     throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
                 CharSelectStageCycle.Attach(screen, character);
+                ProviderModeSelectOverlayBridge.Attach(screen, character);
                 ProviderModeSelectOverlayBridge.SyncModeBackgroundClickPassthrough(screen, character);
                 return;
             }
@@ -2127,6 +2131,7 @@ internal static partial class ContextualSkinControls
         if (!CharacterModelPreviewControls.BindNow(screen, character))
             throw new AppearanceResourceUnavailableException("角色预览尚未就绪，停止提交不完整外观。");
         CharSelectStageCycle.Attach(screen, character);
+        ProviderModeSelectOverlayBridge.Attach(screen, character);
         ProviderModeSelectOverlayBridge.SyncModeBackgroundClickPassthrough(screen, character);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
         DescribeCharacterSelectBackground(screen, groupId, character);
@@ -2684,6 +2689,7 @@ internal static partial class ContextualSkinControls
         // Keep the current background until its replacement was instantiated and bound.
         foreach (var child in container.GetChildren())
         {
+            ProviderModeSelectOverlayBridge.StopBackgroundPollers(child, queueFree: true);
             container.RemoveChildSafely(child);
             child.QueueFreeSafely();
         }
