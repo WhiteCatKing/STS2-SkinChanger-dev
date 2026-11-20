@@ -38,19 +38,18 @@ internal static class MerchantRuntimeAppearance
 {
     internal const string GroupId = "merchant";
     internal const string FakeMerchantGroupId = "fake_merchant_monster";
-    // v0.113.0 split the shop room into two concrete scenes and dropped the shared
-    // scenes/rooms/merchant_room.tscn: loading the old path now yields a non-PackedScene
-    // resource ("独立皮肤资源不是场景"), which is why the merchant preview refused to refresh.
+    // Formal builds ship the shared scenes/rooms/merchant_room.tscn; v0.113.0 split it into
+    // standard_merchant_room.tscn and blitz_merchant_room.tscn and dropped the legacy path.
+    // Always resolve against the active game archive instead of hardcoding one branch.
+    internal const string LegacyMerchantRoomScenePath = "res://scenes/rooms/merchant_room.tscn";
     internal const string StandardMerchantRoomScenePath = "res://scenes/rooms/standard_merchant_room.tscn";
     internal const string BlitzMerchantRoomScenePath = "res://scenes/rooms/blitz_merchant_room.tscn";
 
     /// <summary>Scene used when the live room type is unknown (preview prewarm, base fallback).</summary>
-    internal const string MerchantRoomScenePath = StandardMerchantRoomScenePath;
+    internal static string MerchantRoomScenePath => GetMerchantScenePath();
 
     internal static string ResolveMerchantRoomScenePath(NMerchantRoom? room) =>
-        room != null && string.Equals(room.GetType().Name, "NBlitzMerchantRoom", StringComparison.Ordinal)
-            ? BlitzMerchantRoomScenePath
-            : StandardMerchantRoomScenePath;
+        GetMerchantScenePath(GroupId, room?.GetType());
     private const string FakeMerchantScenePath = "res://scenes/events/custom/fake_merchant.tscn";
     private const string MerchantInventoryScenePath = "res://scenes/merchant/merchant_inventory.tscn";
     private const string MerchantPreviewRootMeta = "skin_changer_merchant_preview_root";
@@ -1694,12 +1693,52 @@ internal static class MerchantRuntimeAppearance
         field.SetValue(target, node);
     }
 
-    internal static string GetMerchantScenePath(string groupId = GroupId, Type? roomType = null) =>
-        groupId.Equals(FakeMerchantGroupId, StringComparison.OrdinalIgnoreCase)
-            ? FakeMerchantScenePath
-            : roomType?.FullName == "MegaCrit.Sts2.Core.Nodes.Rooms.NBlitzMerchantRoom"
-                ? "res://scenes/rooms/blitz_merchant_room.tscn"
-                : MerchantVariantScenes.HasBlitz ? MerchantRoomScenePath : "res://scenes/rooms/merchant_room.tscn";
+    internal static string GetMerchantScenePath(string groupId = GroupId, Type? roomType = null)
+    {
+        var catalog = SkinService.Catalog;
+        Func<string, bool>? hasGameScene = catalog == null
+            ? null
+            : path => catalog.IsBaseGameResource(path) || catalog.IsBaseGameResource(path + ".remap");
+        return ResolveMerchantScenePath(groupId, roomType, hasGameScene, MerchantVariantScenes.HasBlitz);
+    }
+
+    internal static string ResolveMerchantScenePath(
+        string groupId,
+        Type? roomType,
+        Func<string, bool>? hasGameScene,
+        bool hasBlitzBranch)
+    {
+        if (groupId.Equals(FakeMerchantGroupId, StringComparison.OrdinalIgnoreCase))
+        {
+            return FakeMerchantScenePath;
+        }
+
+        var isBlitzRoom = roomType != null &&
+            (string.Equals(
+                 roomType.FullName,
+                 "MegaCrit.Sts2.Core.Nodes.Rooms.NBlitzMerchantRoom",
+                 StringComparison.Ordinal) ||
+             string.Equals(roomType.Name, "NBlitzMerchantRoom", StringComparison.Ordinal));
+        if (isBlitzRoom && (hasGameScene == null || hasGameScene(BlitzMerchantRoomScenePath)))
+        {
+            return BlitzMerchantRoomScenePath;
+        }
+
+        if (hasGameScene != null)
+        {
+            if (hasGameScene(StandardMerchantRoomScenePath))
+            {
+                return StandardMerchantRoomScenePath;
+            }
+
+            if (hasGameScene(LegacyMerchantRoomScenePath))
+            {
+                return LegacyMerchantRoomScenePath;
+            }
+        }
+
+        return hasBlitzBranch ? StandardMerchantRoomScenePath : LegacyMerchantRoomScenePath;
+    }
 
     private static PackedScene LoadRuntimeOrBaseScene(
         string scenePath,
@@ -1860,7 +1899,7 @@ internal static class MerchantRoomPrewarmPatch
     private static void Postfix() =>
         SkinService.PrewarmRuntimeSceneOverlay(
             MerchantRuntimeAppearance.GroupId,
-            MerchantRuntimeAppearance.MerchantRoomScenePath);
+            MerchantRuntimeAppearance.GetMerchantScenePath());
 }
 
 // v0.113.0 removed NMerchantRoom.Create(): the shop room is no longer rebuilt through a static

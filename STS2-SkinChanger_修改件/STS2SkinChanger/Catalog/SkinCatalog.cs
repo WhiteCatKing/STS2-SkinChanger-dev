@@ -1166,6 +1166,18 @@ internal sealed partial class SkinCatalog : IDisposable
                 var handBackToGameLoader = false;
                 if (mod.RootPath != null)
                 {
+                    // A pure-asset *.cardartpack.json bundle may ship beside a fallback .pck
+                    // containing raw .godot/imported/ shared atlas payloads (such as
+                    // card_atlas_0.png-<hash>.bptc.ctex) without standard .import entries.
+                    // Isolate the mod's PCK so the game never mounts it globally; RegisterCardArtPacks
+                    // still discovers and serves the bundle when the player selects it.
+                    var sidecarCardArtPacks = CardArtPackScanner.Describe(mod.RootPath);
+                    if (sidecarCardArtPacks.Count > 0)
+                    {
+                        cardAssets = Math.Max(cardAssets, sidecarCardArtPacks.Count);
+                        hasResourceBackedCosmetics = true;
+                    }
+
                     runtimeImages = DiscoverRuntimeAncientImages(mod).Count;
                     hasResourceBackedCosmetics |= runtimeImages > 0;
 
@@ -3025,6 +3037,38 @@ internal sealed partial class SkinCatalog : IDisposable
             : null;
     }
 
+    private const string LegacyAncientCardTemplateRoot =
+        "res://images/atlases/compressed.sprites/card_template/";
+    private const string AncientCardTemplateRoot =
+        "res://images/atlases/compressed_atlas.sprites/";
+    private static readonly (string Legacy, string Current)[] AncientCardTemplatePaths =
+    [
+        (LegacyAncientCardTemplateRoot + "ancient_card_border.tres", AncientCardTemplateRoot + "ancient_card_border.tres"),
+        (LegacyAncientCardTemplateRoot + "ancient_card_text_bg_attack.tres", AncientCardTemplateRoot + "ancient_text_bg_attack.tres"),
+        (LegacyAncientCardTemplateRoot + "ancient_card_text_bg_skill.tres", AncientCardTemplateRoot + "ancient_text_bg_skill.tres"),
+        (LegacyAncientCardTemplateRoot + "ancient_card_text_bg_power.tres", AncientCardTemplateRoot + "ancient_text_bg_power.tres")
+    ];
+
+    internal string? ResolveCardPresentationBaselinePath(string path)
+    {
+        foreach (var (legacy, current) in AncientCardTemplatePaths)
+        {
+            var other = path.Equals(legacy, StringComparison.OrdinalIgnoreCase) ? current
+                : path.Equals(current, StringComparison.OrdinalIgnoreCase) ? legacy : null;
+            if (other == null) continue;
+
+            // Match the active game archive, independent of the assembly used to build the
+            // Mod. Loading an obsolete atlas path returns the game's NOPE debug texture.
+            if (HasGameFile(path)) return path;
+            return HasGameFile(other) ? other : null;
+        }
+
+        return path;
+
+        bool HasGameFile(string candidate) =>
+            _gameArchive.Contains(candidate) || _gameArchive.Contains(candidate + ".remap");
+    }
+
     public ResourceAsset? ResolveBaseline(string sourcePath)
     {
         for (var i = _baselineIndexes.Count - 1; i >= 0; i--)
@@ -3214,7 +3258,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 // the RelicModel getter patch instead. Timeline epoch portraits and epoch atlases
                 // are also served via isolated runtime overrides so unselected packs stay vanilla
                 // and Beta/Stable atlas layouts never collide.
-                var asset = !IsRelicAtlasSpritePath(takeoverSourcePath) &&
+                // A different character's getter may borrow this game's icon path. The
+                // owner gets the selected texture through its model-aware private loader.
+                var asset = !IsCanonicalCharacterSelectPortrait(takeoverSourcePath) &&
+                            !ProtectSharedGameImportedPayloadFile(takeoverSourcePath) &&
+                            !IsRelicAtlasSpritePath(takeoverSourcePath) &&
                             !IsRelicBigIconPath(takeoverSourcePath) &&
                             !IsEpochPortraitPath(takeoverSourcePath) &&
                             !IsEpochAtlasPath(takeoverSourcePath) &&
@@ -3227,13 +3275,26 @@ internal sealed partial class SkinCatalog : IDisposable
                     continue;
                 }
 
+                var isProviderAsset = selected != null &&
+                                      selected.Assets.TryGetValue(sourcePath, out var providerSelectedAsset) &&
+                                      ReferenceEquals(asset, providerSelectedAsset);
                 foreach (var file in asset.Files)
                 {
                     var targetPath = MapAssetFilePath(sourcePath, asset.SourcePath, file.Path);
+                    if (isProviderAsset && ProtectGlobalCanonicalPackFile(targetPath))
+                    {
+                        continue;
+                    }
+
                     files[targetPath] = file;
                     var takeoverPath = NormalizeTakeoverPath(targetPath);
                     if (!takeoverPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
                     {
+                        if (isProviderAsset && ProtectGlobalCanonicalPackFile(takeoverPath))
+                        {
+                            continue;
+                        }
+
                         files[takeoverPath] = file;
                     }
                 }
@@ -3924,6 +3985,65 @@ internal sealed partial class SkinCatalog : IDisposable
             CharacterIconSceneRegex().IsMatch(path) ||
             CharacterMapMarkerRegex().IsMatch(path));
 
+    internal static bool IsCanonicalCharacterSelectPortrait(string path) =>
+        path.StartsWith("res://images/packed/character_select/", StringComparison.OrdinalIgnoreCase) &&
+        CharacterSelectIconRegex().IsMatch(StripResourceRedirectSuffix(path));
+
+    private HashSet<string>? _canonicalSelectPortraitPayloads;
+
+    internal bool ProtectCanonicalSelectPortraitFile(string path)
+    {
+        var canonical = NormalizeTakeoverPath(path);
+        if (IsCanonicalCharacterSelectPortrait(canonical)) return true;
+        if (!canonical.StartsWith("res://.godot/", StringComparison.OrdinalIgnoreCase)) return false;
+
+        _canonicalSelectPortraitPayloads ??= _gameArchive.Paths
+            .Where(IsCanonicalCharacterSelectPortrait)
+            .Where(path => path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
+                           path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(path => EnumerateDependencyPaths(new ResourceFile(_gameArchive, path)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _canonicalSelectPortraitPayloads.Contains(canonical);
+    }
+
+    internal static bool IsSharedGameAtlasPath(string path)
+    {
+        var stripped = StripResourceRedirectSuffix(NormalizeTakeoverPath(path));
+        return SharedGameCardAtlasRegex().IsMatch(stripped) ||
+               RelicAtlasTextureRegex().IsMatch(stripped) ||
+               EpochAtlasRegex().IsMatch(stripped);
+    }
+
+    private HashSet<string>? _sharedGameImportedPayloads;
+
+    /// <summary>
+    /// Shared game atlas pages (card_atlas_N, relic_atlas, epoch_atlas, ui_atlas, etc.) and
+    /// vanilla card portrait imported payloads (<c>res://.godot/imported/...</c>) must never be
+    /// published globally from a provider PCK: overwriting one shared atlas page replaces every
+    /// unrelated card/icon drawn from that page even when set to game default.
+    /// </summary>
+    internal bool ProtectSharedGameImportedPayloadFile(string path)
+    {
+        var canonical = NormalizeTakeoverPath(path);
+        if (IsSharedGameAtlasPath(canonical)) return true;
+        if (!canonical.StartsWith("res://.godot/", StringComparison.OrdinalIgnoreCase)) return false;
+
+        _sharedGameImportedPayloads ??= _gameArchive.Paths
+            .Where(candidate =>
+                (candidate.StartsWith("res://images/atlases/", StringComparison.OrdinalIgnoreCase) ||
+                 candidate.StartsWith("res://images/packed/card_portraits/", StringComparison.OrdinalIgnoreCase)) &&
+                (candidate.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
+                 candidate.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)))
+            .SelectMany(candidate => EnumerateDependencyPaths(new ResourceFile(_gameArchive, candidate)))
+            .Where(dependency => dependency.StartsWith("res://.godot/", StringComparison.OrdinalIgnoreCase))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _sharedGameImportedPayloads.Contains(canonical);
+    }
+
+    internal bool ProtectGlobalCanonicalPackFile(string path) =>
+        ProtectCanonicalSelectPortraitFile(path) ||
+        ProtectSharedGameImportedPayloadFile(path);
+
     private static bool IsCharacterIconSourcePath(string sourcePath) =>
         TryGetCharacterIconGroup(NormalizeTakeoverPath(sourcePath)) != null;
 
@@ -4004,14 +4124,15 @@ internal sealed partial class SkinCatalog : IDisposable
         return files;
     }
 
-    private static bool ShouldMountProviderDependency(
+    private bool ShouldMountProviderDependency(
         SkinOption selected,
         string dependencyPath,
         IReadOnlySet<string> selectableProviderFiles)
     {
         var takeoverPath = NormalizeTakeoverPath(dependencyPath);
         var strippedTakeoverPath = StripResourceRedirectSuffix(takeoverPath);
-        if (AncientBackgroundSceneRegex().IsMatch(strippedTakeoverPath) ||
+        if (ProtectGlobalCanonicalPackFile(takeoverPath) ||
+            AncientBackgroundSceneRegex().IsMatch(strippedTakeoverPath) ||
             IsEpochPortraitPath(strippedTakeoverPath) ||
             IsEpochAtlasPath(strippedTakeoverPath))
         {
@@ -4139,6 +4260,11 @@ internal sealed partial class SkinCatalog : IDisposable
                              index,
                              index.Mod.ResourceNamespaceId))
                 {
+                    if (ProtectGlobalCanonicalPackFile(file.Path))
+                    {
+                        continue;
+                    }
+
                     files[file.Path] = file;
                 }
             }
@@ -5405,11 +5531,12 @@ internal sealed partial class SkinCatalog : IDisposable
             // Canonical redirect files emitted by the alias overlay deliberately point binary
             // scene dependencies at their fresh payload aliases. Do not replace those bridges
             // with the provider's original .remap/.import file.
-            files.TryAdd(dependency.Key, dependency.Value);
+            if (!ProtectGlobalCanonicalPackFile(dependency.Key))
+                files.TryAdd(dependency.Key, dependency.Value);
         }
 
         var canonicalDependencyPaths = overlay.CanonicalDependencyPaths
-            .Concat(dependencyFiles.Keys)
+            .Concat(dependencyFiles.Keys.Where(path => !ProtectGlobalCanonicalPackFile(path)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return ValidateSpinePages(overlay with { Files = files, CanonicalDependencyPaths = canonicalDependencyPaths });
@@ -5487,7 +5614,8 @@ internal sealed partial class SkinCatalog : IDisposable
         SkinOption? selected,
         List<RuntimeResource> resources,
         bool reuseMountedPrivateDependencies = false,
-        IReadOnlySet<string>? availableSourcePaths = null)
+        IReadOnlySet<string>? availableSourcePaths = null,
+        bool isolateCardDependencies = false)
     {
         IReadOnlyList<PckResourceIndex> selectedIndexes = selected == null
             ? []
@@ -5553,7 +5681,10 @@ internal sealed partial class SkinCatalog : IDisposable
                     }
                 }
                 var allowImportedPayloadAlias = IsRewritableTextResource(dependencyFile.Path);
-                foreach (var sourcePath in EnumerateDependencyPaths(dependencyFile))
+                var dependencies = isolateCardDependencies
+                    ? EnumerateCardDependencyPaths(dependencyFile, resource.SourcePath)
+                    : EnumerateDependencyPaths(dependencyFile);
+                foreach (var sourcePath in dependencies)
                 {
                     if (discoveredResourcePaths.Contains(sourcePath) ||
                         !CanAliasDependency(sourcePath, allowImportedPayloadAlias) ||
@@ -5747,6 +5878,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 requiresAliasedLocation);
         }
     }
+
+    private static IEnumerable<string> EnumerateCardDependencyPaths(ResourceFile file, string sourcePath) =>
+        IsDependencyGraphTextResource(file.Path) && CardBinaryResource.Parse(file.Read()) is { } binary
+            ? binary.Dependencies(sourcePath)
+            : EnumerateDependencyPaths(file);
 
     private static IEnumerable<string> EnumerateDependencyPaths(ResourceAsset asset) =>
         asset.Files
@@ -6049,13 +6185,15 @@ internal sealed partial class SkinCatalog : IDisposable
                 : null,
             resources,
             availableSourcePaths: existingResourcePaths?.Keys.ToHashSet(
-                StringComparer.OrdinalIgnoreCase));
+                StringComparer.OrdinalIgnoreCase),
+            isolateCardDependencies: true);
 
         return BuildAliasedResourceOverlay(
             resources,
             resources.Select(resource => resource.SourcePath).ToArray(),
             aliasToken,
-            existingSourceAliases: existingResourcePaths);
+            existingSourceAliases: existingResourcePaths,
+            isolateCardDependencies: true);
     }
 
     private ResourceAsset? ResolveCardProviderAsset(CardSkinOption option, string resourcePath)
@@ -6091,7 +6229,8 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyCollection<string> resourcePaths,
         string aliasToken,
         bool redirectDirectScenesAtCanonicalPath = false,
-        IReadOnlyDictionary<string, string>? existingSourceAliases = null)
+        IReadOnlyDictionary<string, string>? existingSourceAliases = null,
+        bool isolateCardDependencies = false)
     {
         var sourceAliases = existingSourceAliases == null
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -6131,11 +6270,14 @@ internal sealed partial class SkinCatalog : IDisposable
             if (resource.DirectFile != null)
             {
                 var bytes = resource.DirectFile.Read();
-                files[sourceAliases[resource.SourcePath]] = RewriteAliasedResourceBytes(
-                    resource.DirectFile.Path,
-                    bytes,
-                    sourceAliases,
-                    payloadAliases);
+                files[sourceAliases[resource.SourcePath]] = isolateCardDependencies &&
+                    CardBinaryResource.Parse(bytes) is { } binaryDirect
+                    ? binaryDirect.Rewrite(resource.SourcePath, sourceAliases, payloadAliases)
+                    : RewriteAliasedResourceBytes(
+                        resource.DirectFile.Path,
+                        bytes,
+                        sourceAliases,
+                        payloadAliases);
 
                 // A raw provider scene can coexist with a later-loaded Mod that supplies a
                 // .tscn.remap for the same canonical path. Godot prefers the lingering remap,
@@ -6156,13 +6298,16 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (var payloadFile in resource.PayloadFiles)
             {
                 var bytes = payloadFile.Read();
-                files[payloadAliases[payloadFile.Path]] = RewriteAliasedResourceBytes(
-                    payloadFile.Path,
-                    bytes,
-                    sourceAliases,
-                    payloadAliases,
-                    rewriteOnlySpineAtlas: true,
-                    stripUids: false);
+                files[payloadAliases[payloadFile.Path]] = isolateCardDependencies &&
+                    CardBinaryResource.Parse(bytes) is { } binaryPayload
+                    ? binaryPayload.Rewrite(resource.SourcePath, sourceAliases, payloadAliases)
+                    : RewriteAliasedResourceBytes(
+                        payloadFile.Path,
+                        bytes,
+                        sourceAliases,
+                        payloadAliases,
+                        rewriteOnlySpineAtlas: true,
+                        stripUids: false);
             }
 
             if (resource.RemapFile == null)
@@ -6200,7 +6345,10 @@ internal sealed partial class SkinCatalog : IDisposable
             // paths are where an installed event pack shows its redrawn art, so redirecting them
             // would keep the fight on the vanilla tent even though the event showed the new one.
             var canonicalRemapPath = resource.SourcePath + remapSuffix;
-            if (!FakeMerchantEventArtPolicy.SuppressesCanonicalRedirect(resource.SourcePath))
+            if (!isolateCardDependencies &&
+                !IsCanonicalCharacterSelectPortrait(resource.SourcePath) &&
+                !IsSharedGameAtlasPath(resource.SourcePath) &&
+                !FakeMerchantEventArtPolicy.SuppressesCanonicalRedirect(resource.SourcePath))
             {
                 files[canonicalRemapPath] = rewrittenRemap;
                 canonicalRedirectPaths.Add(canonicalRemapPath);
@@ -9813,7 +9961,7 @@ internal sealed partial class SkinCatalog : IDisposable
         "^(?:res://animations/backgrounds/(?:blitz_)?merchant_room/|" +
         "res://animations/customs/merchant/|" +
         "res://animations/customs/merchant2cute_ii/blitz_merchant/|" +
-        "res://scenes/rooms/(?:(?:blitz_)?merchant_button|blitz_merchant_room|standard_merchant_room)\\.tscn$|" +
+        "res://scenes/rooms/(?:(?:blitz_)?merchant_button|(?:blitz_|standard_)?merchant_room)\\.tscn$|" +
         "res://scenes/merchant/(?!characters/)[^/]+\\.tscn$)",
         RegexOptions.IgnoreCase)]
     private static partial Regex MerchantAppearancePathRegex();
@@ -9867,6 +10015,11 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("^res://images/ui/top_panel/character_icon_([^/.]+?)(?:_outline)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterUiTextureRegex();
+
+    [GeneratedRegex(
+        "^res://images/atlases/card_atlas(?:_\\d+)?\\.(?:png|tpsheet)$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex SharedGameCardAtlasRegex();
 
     [GeneratedRegex(
         "^res://images/atlases/relic(?:_outline)?_atlas\\.sprites/[^/]+\\.tres$",

@@ -8,9 +8,11 @@ internal static class IndependentFoolSkinTests
     internal static void Run(string game, string workshop)
     {
         var silence = AuditLogSilencer.Install();
-        var specs = new[] { ("3838977271", "Fool_Waifu"), ("3838744026", "NailongFool"), ("3838976517", "FoolSkinStatic") };
+        var specs = new[] { ("3838977271", "Fool_Waifu"), ("3838744026", "NailongFool"), ("3838976517", "FoolSkinStatic") }.ToList();
+        // NonoFoolSkin (workshop 3841262975) is optional on machines that have not subscribed to it.
+        if (File.Exists(Path.Combine(workshop, "3841262975", "NonoFoolSkin.dll"))) specs.Add(("3841262975", "NonoFoolSkin"));
         var mods = specs.Select(s => new SkinModDescriptor(s.Item2, s.Item2,
-            s.Item2 == "Fool_Waifu" ? Path.Combine(workshop, s.Item1, s.Item2 + ".pck") : null,
+            s.Item2 is "Fool_Waifu" or "NonoFoolSkin" ? Path.Combine(workshop, s.Item1, s.Item2 + ".pck") : null,
             false, Path.Combine(workshop, s.Item1), true)).ToArray();
         foreach (var mod in mods)
         {
@@ -85,7 +87,10 @@ internal static class IndependentFoolSkinTests
         var sprite = Assembly.LoadFrom(Path.Combine(workshop, "3838976517", "FoolSkinStatic.dll")).GetType("FoolSkinStatic.Patches", true)!;
         foreach (var method in new[] { "EnsureCharacter", "MakeSprite", "Play", "BlinkLoop" })
             Require(sprite.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public).Any(m => m.Name == method), "Real preview method missing: " + method);
-        Console.WriteLine("Three actual Fool skin packages passed: PCK/assets/embedded images, full dropdown ownership, mutually exclusive selection, default off and native mount suppression.");
+        var nonoDir = Path.Combine(workshop, "3841262975");
+        if (File.Exists(Path.Combine(nonoDir, "NonoFoolSkin.dll")))
+            NonoFoolPreviewTests.VerifyRealPackageContract(nonoDir);
+        Console.WriteLine($"{mods.Length} actual Fool skin packages passed: PCK/assets/embedded images, full dropdown ownership, mutually exclusive selection, default off and native mount suppression.");
     }
     private static void Require(bool condition, string message) { if (!condition) throw new Exception(message); }
 }

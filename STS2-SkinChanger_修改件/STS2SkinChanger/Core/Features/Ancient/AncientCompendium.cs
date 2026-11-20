@@ -1799,10 +1799,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
             new OtherEntry(
                 "merchant",
                 GetLocalizedTitle("map", "LEGEND_MERCHANT.title", "商人"),
-                // v0.107 embeds NMerchantButton in merchant_room.tscn; v0.111 also ships a
-                // standalone merchant_button scene. The room scene exists in both versions
-                // and lets the preview use the same resource graph on either branch.
-                "res://scenes/rooms/merchant_room.tscn"),
+                // Resolve against the active game archive: formal builds ship merchant_room.tscn,
+                // while beta splits it into standard_merchant_room.tscn / blitz_merchant_room.tscn.
+                MerchantRuntimeAppearance.GetMerchantScenePath()),
             new OtherEntry(
                 "fake_merchant_monster",
                 GetLocalizedTitle("events", "FAKE_MERCHANT.title", "商人？？？"),

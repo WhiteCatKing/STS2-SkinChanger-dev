@@ -2608,7 +2608,8 @@ internal static partial class ContextualSkinControls
                 ? character.CharacterSelectLockedIcon
                 : character.CharacterSelectIcon;
             button.GetNode<TextureRect>("%Icon").Texture =
-                SkinService.LoadCharacterSelectIcon(character.Id.Entry, button.IsLocked) ?? fallback;
+                SkinService.GetCharacterSelectIcon(character.Id.Entry.ToLowerInvariant(),
+                    character.Id.Entry, button.IsLocked) ?? fallback;
         }
 
         // 切皮肤会替换选人头像的贴图文件，其它角色的按钮也可能受影响，一起按当前皮肤重刷。
@@ -2623,7 +2624,8 @@ internal static partial class ContextualSkinControls
         foreach (var candidate in EnumerateNodes(screen).OfType<NCharacterSelectButton>())
         {
             var character = candidate.Character;
-            if (character == null || candidate.IsRandom || !GodotObject.IsInstanceValid(candidate)) continue;
+            if (character == null || candidate.IsRandom || !GodotObject.IsInstanceValid(candidate) ||
+                FindGroup(character.Id.Entry) == null) continue;
             try
             {
                 CharacterStripPortraits.Refresh(candidate, character, () =>

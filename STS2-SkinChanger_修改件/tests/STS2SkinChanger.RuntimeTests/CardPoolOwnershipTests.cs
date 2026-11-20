@@ -34,8 +34,211 @@ internal static class CardPoolOwnershipTests
         CheckBorrowedIroncladPlaceholderIsolation();
         CheckSingleFlatPackMatchingTwoCharactersAtRuntime();
         CheckRealCatalogBuildRuntimeLookup();
+        CheckPrivateBinaryPortraits();
+        CheckStockPresentationFallback();
 
         Console.WriteLine("Card pool ownership policy passed.");
+    }
+
+    private static readonly List<string> PresentationLoadPaths = [];
+
+    private static void CheckStockPresentationFallback()
+    {
+        const string legacy = "res://images/atlases/compressed.sprites/card_template/";
+        const string current = "res://images/atlases/compressed_atlas.sprites/";
+        var pairs = new[]
+        {
+            (legacy + "ancient_card_border.tres", current + "ancient_card_border.tres"),
+            (legacy + "ancient_card_text_bg_attack.tres", current + "ancient_text_bg_attack.tres"),
+            (legacy + "ancient_card_text_bg_skill.tres", current + "ancient_text_bg_skill.tres"),
+            (legacy + "ancient_card_text_bg_power.tres", current + "ancient_text_bg_power.tres")
+        };
+        var harmony = new Harmony("Gurio.SkinChanger.Tests.StockCardPresentation");
+        var log = AuditLogSilencer.Install();
+        var root = Directory.CreateTempSubdirectory("sc-stock-card-");
+        var writer = PckArchive.WriteOutput;
+        var oldCatalog = SkinService.Catalog;
+        var catalogProperty = AccessTools.Property(typeof(SkinService), "Catalog");
+        try
+        {
+            PckArchive.WriteOutput = null;
+            var load = typeof(ResourceLoader).GetMethods().Single(method =>
+                method.Name == nameof(ResourceLoader.Load) && method.IsGenericMethodDefinition);
+            harmony.Patch(load.MakeGenericMethod(typeof(Texture2D)),
+                prefix: new HarmonyMethod(typeof(CardPoolOwnershipTests), nameof(CapturePresentationLoad)));
+
+            foreach (var version in new[] { "legacy", "current", "absent" })
+            {
+                var game = Path.Combine(root.FullName, version + ".pck");
+                var files = new Dictionary<string, byte[]> { ["res://fixture.bin"] = [0] };
+                foreach (var (oldPath, newPath) in pairs)
+                {
+                    var path = version == "legacy" ? oldPath : newPath;
+                    if (version != "absent") files[path] = "[gd_resource type=\"AtlasTexture\" format=3]\n[resource]\n"u8.ToArray();
+                }
+                PckArchive.Write(game, files);
+                using var catalog = SkinCatalog.Build(game, []);
+                catalogProperty.SetValue(null, catalog);
+                var card = InitCard(new EchoForm(), new DefectCardPool(), "ECHO_FORM");
+                PresentationLoadPaths.Clear();
+                foreach (var (oldPath, newPath) in pairs)
+                {
+                    SkinService.LoadCardPresentationResource<Texture2D>(card, oldPath);
+                    SkinService.LoadCardPresentationResource<Texture2D>(card, newPath);
+                }
+                var expected = version == "absent" ? [] : pairs
+                    .SelectMany(pair => Enumerable.Repeat(version == "legacy" ? pair.Item1 : pair.Item2, 2))
+                    .ToArray();
+                Require(PresentationLoadPaths.SequenceEqual(expected),
+                    "Moved Ancient textures must use the active game archive. A missing pair must never load NOPE.");
+                const string authoredPath = "res://pack/private/card_overlay.png";
+                Require(catalog.ResolveCardPresentationBaselinePath(authoredPath) == authoredPath,
+                    "The compatibility lookup must leave authored resource paths alone.");
+            }
+        }
+        finally
+        {
+            catalogProperty.SetValue(null, oldCatalog);
+            PckArchive.WriteOutput = writer;
+            harmony.UnpatchAll(harmony.Id);
+            log.UnpatchAll(log.Id);
+        }
+    }
+
+    private static bool CapturePresentationLoad(string path, ref Texture2D? __result)
+    {
+        PresentationLoadPaths.Add(path);
+        __result = null;
+        return false;
+    }
+
+    private static void CheckPrivateBinaryPortraits()
+    {
+        const string rebound = "res://images/atlases/card_atlas.sprites/event/rebound.tres";
+        const string normalPng = "res://images/packed/card_portraits/event/Rebound.png";
+        const string betaPng = "res://images/packed/card_portraits/event/beta/rebound.png";
+        const string payload = "res://.godot/exported/rebound.res";
+        const string providerTexture = "res://.godot/imported/rebound-skin.ctex";
+        const string gameTexture = "res://.godot/imported/rebound-game.ctex";
+        var root = Directory.CreateTempSubdirectory("sc-private-card-");
+        var previousWriter = PckArchive.WriteOutput;
+        var previousCatalog = SkinService.Catalog;
+        var catalogProperty = AccessTools.Property(typeof(SkinService), "Catalog");
+        try
+        {
+            PckArchive.WriteOutput = null;
+            var game = Path.Combine(root.FullName, "game.pck");
+            static byte[] Remap(string target) => System.Text.Encoding.UTF8.GetBytes($"[remap]\npath=\"{target}\"\n");
+            PckArchive.Write(game, new Dictionary<string, byte[]>
+            {
+                [betaPng + ".import"] = Remap(gameTexture),
+                [gameTexture] = TestTexture(10)
+            });
+
+            var options = new List<SkinModDescriptor>();
+            foreach (var option in new[] { "ReboundA", "ReboundB" })
+            {
+                var pck = Path.Combine(root.FullName, option + ".pck");
+                PckArchive.Write(pck, new Dictionary<string, byte[]>
+                {
+                    [rebound + ".remap"] = Remap(payload),
+                    [payload] = MakeBinaryPortrait(normalPng.ToLowerInvariant(), compress: options.Count == 1),
+                    [normalPng + ".import"] = Remap(providerTexture),
+                    [providerTexture] = TestTexture((byte)option[^1])
+                });
+                options.Add(new(option, option, pck, false));
+            }
+            using var catalog = SkinCatalog.Build(game, options);
+            catalog.FinalizeCardGroups([new("Rebound", rebound, "misc", "event", "event")]);
+
+            foreach (var option in options)
+            {
+                var overlay = catalog.BuildIsolatedCardResource("misc", option.Id, rebound, true, option.Id);
+                var aliases = overlay.ResourcePaths;
+                var patched = CardBinaryResource.Parse(overlay.Files[overlay.PayloadAliases[payload]])!;
+                Require(overlay.CanonicalDependencyPaths.Count == 0 &&
+                        overlay.Files.Keys.All(path => path.StartsWith("res://sts2_skin_runtime/" + option.Id + "/")),
+                    "Isolated card PCKs must never write to a canonical path.");
+                Require(patched.Dependencies(rebound).Single() == aliases[normalPng] &&
+                        aliases[normalPng].EndsWith("/Rebound.png", StringComparison.Ordinal) &&
+                        overlay.Files[overlay.PayloadAliases[providerTexture]].SequenceEqual(TestTexture((byte)option.Id[^1])),
+                    "Two skins of the same card must resolve their own dependency and retain its concrete import case.");
+                var patchedBytes = overlay.Files[overlay.PayloadAliases[payload]];
+                Require(System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(patchedBytes.AsSpan(patchedBytes.Length - 16)) ==
+                        patchedBytes.Length - 8 && patchedBytes.AsSpan(patchedBytes.Length - 4).SequenceEqual("RSRC"u8),
+                    "Growing a dependency path must preserve the body and move its internal offset.");
+            }
+
+            catalogProperty.SetValue(null, catalog);
+            var card = InitCard(new Rebound(), new EventCardPool(), "REBOUND");
+            var baseline = AccessTools.Method(typeof(SkinService), "ResolveGameCardPortraitFallback")
+                .Invoke(null, [card, rebound]);
+            Require((string?)baseline == betaPng && catalog.ResolveBaseline(rebound) == null,
+                "Game default for a card with only a beta PNG must choose the game archive's own portrait.");
+            var defaultOverlay = catalog.BuildIsolatedCardResource("misc", SkinCatalog.BaseOptionId, betaPng, false, "base");
+            Require(defaultOverlay.CanonicalDependencyPaths.Count == 0 &&
+                    defaultOverlay.Files[defaultOverlay.PayloadAliases[gameTexture]].SequenceEqual(TestTexture(10)),
+                "Game default after the two skins must resolve the baseline texture.");
+        }
+        finally
+        {
+            catalogProperty.SetValue(null, previousCatalog);
+            PckArchive.WriteOutput = previousWriter;
+        }
+    }
+
+    private static byte[] TestTexture(byte marker)
+    {
+        var bytes = new byte[52];
+        "GST2"u8.CopyTo(bytes);
+        bytes[40] = bytes[42] = 8;
+        bytes[51] = marker;
+        return bytes;
+    }
+
+    private static byte[] MakeBinaryPortrait(string texturePath, bool compress)
+    {
+        using var buffer = new MemoryStream();
+        using var writer = new BinaryWriter(buffer);
+        static void WriteString(BinaryWriter writer, string value)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(value);
+            writer.Write(bytes.Length + 1);
+            writer.Write(bytes);
+            writer.Write((byte)0);
+        }
+        if (!compress) writer.Write("RSRC"u8);
+        foreach (var number in new[] { 0, 0, 4, 5, 6 }) writer.Write(number);
+        WriteString(writer, "AtlasTexture");
+        writer.Write(0L);
+        writer.Write(2);
+        writer.Write(1234L);
+        for (var i = 0; i < 11; i++) writer.Write(0);
+        writer.Write(0); // String table
+        writer.Write(1);
+        WriteString(writer, "Texture2D");
+        WriteString(writer, texturePath);
+        writer.Write(5678L);
+        writer.Write(1);
+        WriteString(writer, "local://Main");
+        writer.Write(buffer.Position + sizeof(long));
+        writer.Write(42);
+        writer.Write("RSRC"u8);
+        if (!compress) return buffer.ToArray();
+
+        using var block = new MemoryStream();
+        using (var deflate = new System.IO.Compression.ZLibStream(block, System.IO.Compression.CompressionMode.Compress, leaveOpen: true))
+            deflate.Write(buffer.ToArray());
+        using var container = new MemoryStream();
+        using var packed = new BinaryWriter(container);
+        packed.Write("RSCC"u8);
+        packed.Write((int)Godot.FileAccess.CompressionMode.Deflate);
+        packed.Write(4096);
+        packed.Write((int)buffer.Length);
+        packed.Write((int)block.Length);
+        packed.Write(block.ToArray());
+        packed.Write("RSCC"u8);
+        return container.ToArray();
     }
 
     private static void CheckRealCatalogBuildRuntimeLookup()
@@ -459,7 +662,7 @@ internal static class CardPoolOwnershipTests
     private static SkinCatalog NewCatalog(params CardSkinOption[] pckOptions)
     {
         var catalog = (SkinCatalog)RuntimeHelpers.GetUninitializedObject(typeof(SkinCatalog));
-        foreach (var name in new[] { "_cardGroups", "_configuredCardGroups", "_pckCardOptions", "_providerInstanceIdentities" })
+        foreach (var name in new[] { "_cardGroups", "_configuredCardGroups", "_pckCardOptions", "_providerInstanceIdentities", "_baselineIndexes" })
         {
             var field = AccessTools.Field(typeof(SkinCatalog), name);
             field.SetValue(catalog, Activator.CreateInstance(typeof(List<>).MakeGenericType(field.FieldType.GenericTypeArguments[0])));
