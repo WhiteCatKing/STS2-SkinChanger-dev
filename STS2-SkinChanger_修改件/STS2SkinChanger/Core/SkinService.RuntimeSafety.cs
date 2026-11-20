@@ -91,6 +91,10 @@ internal static partial class SkinService
     private static void BindRuntimeDependency(string canonical, string alias, Resource resource,
         List<CanonicalRuntimeResourceOwnershipEntry> bindings)
     {
+        // Select portraits and shared game atlas textures are served privately, never globally.
+        if (STS2SkinChanger.Catalog.SkinCatalog.IsCanonicalCharacterSelectPortrait(canonical) ||
+            STS2SkinChanger.Catalog.SkinCatalog.IsSharedGameAtlasPath(canonical)) return;
+
         PrivateMerchantResourceIdentity.Register(resource, canonical);
         var previous = ResourceLoader.HasCached(canonical)
             ? ResourceLoader.Load<Resource>(canonical, null, ResourceLoader.CacheMode.Reuse) : null;

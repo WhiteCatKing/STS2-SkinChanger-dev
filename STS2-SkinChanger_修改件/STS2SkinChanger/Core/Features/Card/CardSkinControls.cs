@@ -21,6 +21,7 @@ namespace STS2SkinChanger.Ui;
 
 internal static class CardSkinControls
 {
+    private const string ToolbarName = "STS2CardSkinToolbar";
     private const string SelectorName = "STS2CardSkinSelector";
     private const string PriorityButtonName = "CardSkinPriorityButton";
     private const string PresetButtonName = "CardSkinPresetButton";
@@ -33,6 +34,7 @@ internal static class CardSkinControls
     private const string PresetPanelMarginName = "Margin";
     private const string PresetContentName = "PresetContent";
     private const string AvailabilityFilterName = "STS2SkinnedCardsOnly";
+    private const string LibraryToolbarParentPath = "Sidebar/MarginContainer/TopVBox";
     private const string AvailabilityFilterMeta = "sts2_skinned_cards_only";
     private const string GroupMeta = "sts2_card_skin_group";
     private const string SourceIndicatorName = "STS2CardSkinSources";
@@ -61,14 +63,28 @@ internal static class CardSkinControls
         AccessTools.Field(typeof(NCardHighlight), "_shaderMaterial");
     private static Texture2D? _normalTextBackgroundCoverTexture;
 
+    private static HBoxContainer? FindToolbarSelector(NCardLibrary screen) =>
+        screen.GetNodeOrNull<HBoxContainer>($"{LibraryToolbarParentPath}/{ToolbarName}/{SelectorName}");
+
+    private static NLibraryStatTickbox? FindAvailabilityFilter(NCardLibrary screen) =>
+        screen.GetNodeOrNull<NLibraryStatTickbox>($"{LibraryToolbarParentPath}/{ToolbarName}/{AvailabilityFilterName}");
+
     public static void Attach(NCardLibrary screen)
     {
         SkinService.InitializeCardGroupsAfterModels();
-        var bottom = screen.GetNodeOrNull<VBoxContainer>("Sidebar/MarginContainer/BottomVBox");
-        if (bottom == null || bottom.GetNodeOrNull<HBoxContainer>(SelectorName) != null)
+        var sidebarTop = screen.GetNodeOrNull<VBoxContainer>(LibraryToolbarParentPath);
+        if (sidebarTop == null || sidebarTop.GetNodeOrNull<VBoxContainer>(ToolbarName) != null)
         {
             return;
         }
+
+        var toolbar = new VBoxContainer
+        {
+            Name = ToolbarName,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        sidebarTop.AddChild(toolbar);
+        sidebarTop.MoveChild(toolbar, 0);
 
         var selector = new HBoxContainer
         {
@@ -77,12 +93,10 @@ internal static class CardSkinControls
             MouseFilter = Control.MouseFilterEnum.Stop,
             Visible = false
         };
+        selector.AddThemeConstantOverride("separation", 4);
+
         var priorityOverlay = CreatePriorityOverlay();
-        screen.AddChild(priorityOverlay);
-        priorityOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
         var presetOverlay = CreatePresetOverlay();
-        screen.AddChild(presetOverlay);
-        presetOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
         var priorityButton = new Button
         {
@@ -107,8 +121,7 @@ internal static class CardSkinControls
         presetButton.Pressed += () => OpenPresetOverlay(screen, selector, presetOverlay);
         selector.AddChild(presetButton);
 
-        bottom.AddChild(selector);
-        bottom.MoveChild(selector, 0);
+        toolbar.AddChild(selector);
 
         NLibraryStatTickbox? availabilityFilter = null;
         var filterScene = ResourceLoader.Load<PackedScene>(
@@ -118,8 +131,8 @@ internal static class CardSkinControls
             availabilityFilter = filterScene.Instantiate<NLibraryStatTickbox>(
                 PackedScene.GenEditState.Disabled);
             availabilityFilter.Name = AvailabilityFilterName;
-            bottom.AddChild(availabilityFilter);
-            bottom.MoveChild(availabilityFilter, 1);
+            // Adding it to the live sidebar runs _Ready, which binds the label used by SetLabel.
+            toolbar.AddChild(availabilityFilter);
             availabilityFilter.SetLabel(ModLocalization.Get(ModText.SkinnedCardsOnly));
             availabilityFilter.IsTicked = false;
             availabilityFilter.Connect(
@@ -127,6 +140,11 @@ internal static class CardSkinControls
                 Callable.From<NTickbox>(tickbox =>
                     SetAvailabilityFilter(screen, AvailabilityFilterMeta, tickbox.IsTicked)));
         }
+
+        screen.AddChild(priorityOverlay);
+        priorityOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        screen.AddChild(presetOverlay);
+        presetOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
         ShowFirstAvailableGroup(selector);
         ModLocalization.Bind(screen, () =>
@@ -163,8 +181,7 @@ internal static class CardSkinControls
             return;
         }
 
-        var selector = screen.GetNodeOrNull<HBoxContainer>(
-            $"Sidebar/MarginContainer/BottomVBox/{SelectorName}");
+        var selector = FindToolbarSelector(screen);
         if (selector == null)
         {
             return;
@@ -178,8 +195,7 @@ internal static class CardSkinControls
 
     public static void SyncToSelectedFilter(NCardLibrary screen)
     {
-        var selector = screen.GetNodeOrNull<HBoxContainer>(
-            $"Sidebar/MarginContainer/BottomVBox/{SelectorName}");
+        var selector = FindToolbarSelector(screen);
         if (selector == null)
         {
             return;
@@ -215,8 +231,7 @@ internal static class CardSkinControls
         NCardLibrary? library = null;
         for (var parent = card.GetParent(); parent != null; parent = parent.GetParent())
             if (parent is NCardLibrary screen) { library = screen; break; }
-        var selector = library?.GetNodeOrNull<HBoxContainer>(
-            $"Sidebar/MarginContainer/BottomVBox/{SelectorName}");
+        var selector = library == null ? null : FindToolbarSelector(library);
         var displayGroupId = selector?.GetMeta(GroupMeta, string.Empty).AsString();
         var sources = SkinService.GetCardSkinSources(card.Model, displayGroupId);
         if (sources.Count == 0)
@@ -1128,8 +1143,7 @@ internal static class CardSkinControls
     public static void ResetAvailabilityFilter(NCardLibrary screen)
     {
         screen.SetMeta(AvailabilityFilterMeta, false);
-        var availabilityFilter = screen.GetNodeOrNull<NLibraryStatTickbox>(
-            $"Sidebar/MarginContainer/BottomVBox/{AvailabilityFilterName}");
+        var availabilityFilter = FindAvailabilityFilter(screen);
         if (availabilityFilter != null)
         {
             availabilityFilter.IsTicked = false;

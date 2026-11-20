@@ -27,6 +27,12 @@ internal static class JoanStageBindingTests
         var tick = Calls(AccessTools.Method(cycle, "Tick"));
         foreach (var name in new[] { "LoadStageData", "ReapplyPalette", "WearEnabled" })
             Require(tick.Any(m => m.Name == name), "Rebuilt background lost binding: " + name);
+        var click = Calls(AccessTools.Method(cycle, "CycleWithLog"));
+        foreach (var name in new[] { "LoadStageData", "ReapplyPalette", "RefreshCharacterButtons" })
+            Require(click.Any(m => m.Name == name), "Stage click lost a presentation step: " + name);
+        Require(cycle.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                    .SelectMany(Calls).All(m => m.Name != "LoadResourcePack"),
+            "Select-screen stage changes must never mount the raw provider PCK.");
         var input = Calls(AccessTools.Method(cycle, "OnClick"));
         Require(input.Any(m => m.Name == "AcceptEvent") && input.Any(m => m.Name == "WearEnabled"),
             "One click must be consumed once and preserve the author's wear toggle.");
