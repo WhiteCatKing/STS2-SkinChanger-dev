@@ -346,45 +346,6 @@ internal static class CharSelectStageCycle
     }
 
 
-    private static readonly HashSet<string> MountedStagePacks = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Mounts the PCK of the selected package so its stage files are reachable at their original
-    /// res://<root>/... paths. A package that is only a delta (same assembly identity as the loaded
-    /// copy) is otherwise never mounted whole, which is why its s2/s3 data could not be loaded after
-    /// switching to it at runtime.
-    /// </summary>
-    private static void EnsureProviderPackMounted(string groupId)
-    {
-        try
-        {
-            var selection = SkinService.GetCharacterSelectionOptionId(groupId);
-            if (string.IsNullOrWhiteSpace(selection) ||
-                SkinService.Catalog?.GetProviderResourcePackPaths(selection) is not { } packs)
-            {
-                return;
-            }
-
-            foreach (var pack in packs)
-            {
-                var full = System.IO.Path.GetFullPath(pack);
-                if (!MountedStagePacks.Add(full))
-                {
-                    continue;
-                }
-
-                if (ProjectSettings.LoadResourcePack(full, replaceFiles: true))
-                {
-                    ModLog.Info($"[战损档] 已挂载皮肤包自身资源包以读取战损档：{System.IO.Path.GetFileName(full)}");
-                }
-            }
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn("挂载皮肤包自身资源包失败：" + exception.GetBaseException().Message);
-        }
-    }
-
     /// <summary>
     /// File names (relative to the skeleton's folder) that may hold one damage stage, in priority order.
     /// The Joan packs use <c>s&lt;stage&gt;_&lt;group&gt;_data.tres</c>; the alternatives cover the obvious
@@ -416,8 +377,9 @@ internal static class CharSelectStageCycle
     {
         try
         {
-            // Both Joan packages export identical canonical paths. Never consult the global
-            // ResourceLoader cache first: an existing resource may belong to the other package.
+            // Both Joan packages export identical canonical paths. Load only the selected
+            // stage graph through its aliases; mounting the whole PCK publishes its shared
+            // character select portrait and reading the canonical cache can borrow another pack.
             return SkinService.WithRuntimeResources(
                 groupId,
                 StageBatchPaths(path),

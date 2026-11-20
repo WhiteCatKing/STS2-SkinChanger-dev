@@ -2338,17 +2338,39 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         });
     }
 
-    private void SetAppliedStatus(string? liveRefreshError)
+    internal static string? FormatAppliedStatus(string? liveRefreshError)
     {
         if (string.IsNullOrWhiteSpace(liveRefreshError))
+        {
+            return null;
+        }
+
+        var entries = liveRefreshError.Split(
+            ';',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (entries.Length > 0 && entries.All(IsIndependentSummonOwnershipNotice))
+        {
+            // When an independent summon mod (e.g. OstyDefectImpostor) owns the companion body,
+            // switching the player character's skin already succeeded; do not raise a failure banner.
+            return null;
+        }
+
+        return ModLocalization.Get(ModText.AppearanceSavedNextTime);
+    }
+
+    private static bool IsIndependentSummonOwnershipNotice(string entry) =>
+        entry.Contains("independent summon mod owns this body", StringComparison.OrdinalIgnoreCase);
+
+    private void SetAppliedStatus(string? liveRefreshError)
+    {
+        var status = FormatAppliedStatus(liveRefreshError);
+        if (string.IsNullOrWhiteSpace(status))
         {
             SetStatus(string.Empty, warning: false);
             return;
         }
 
-        SetStatus(
-            ModLocalization.Get(ModText.AppearanceFailed) + ": " + liveRefreshError,
-            warning: true);
+        SetStatus(status, warning: false);
     }
 
     private static SpinBox BuildOffsetSpinBox()

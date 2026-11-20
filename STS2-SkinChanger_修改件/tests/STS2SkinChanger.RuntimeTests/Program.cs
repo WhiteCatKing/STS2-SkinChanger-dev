@@ -85,6 +85,18 @@ if (args.Length == 1 && args[0] == "--test-card-pool-ownership")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-fool-card-pack-isolation")
+{
+    FoolCardPackIsolationTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-hina-ui-osty")
+{
+    HinaUiOstyRegressionTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-character-select-modes")
 {
     CharacterSelectModeTests.Run();
@@ -155,6 +167,12 @@ if (args.Length == 1 && args[0] == "--test-runtime-safety")
     RuntimeSafetyTests.Run();
     return;
 }
+if (args is ["--test-hibiki-select-portrait", var hibikiGame, var hibikiRoot, var hibikiJoan, var hibikiRitsu, var hibikiSignature])
+{
+    CharacterSelectPortraitIsolationTests.Audit(hibikiGame, hibikiRoot, hibikiJoan, hibikiRitsu, hibikiSignature);
+    return;
+}
+
 if (args.Length >= 3 && args[0] == "--test-protected-characters")
 {
     ProtectedCharacterTests.Run(args[1], args.Skip(2).ToArray());
@@ -812,6 +830,7 @@ ProviderToolbarTests.Run();
 CharacterSelectModeBackgroundTests.Run();
 ManualCharacterVariantTests.Run();
 AppearanceResourceBoundaryTests.Run();
+CharacterSelectPortraitIsolationTests.Run();
 CreatureIntentLayoutTests.Run();
 ManagedCardPortraitTests.Run();
 RandomCharacterSkinTests.Run();
@@ -869,6 +888,10 @@ CardSkinRefreshContractTests.Run();
 CardProviderBridgeContractTests.Run();
 SceneAppearanceLifecycleTests.Run();
 MerchantPlayerCharacterIsolationTests.Run();
+MerchantRoomPathTests.Run();
+NonoFoolPreviewTests.Run();
+FoolCardPackIsolationTests.Run();
+HinaUiOstyRegressionTests.Run();
 RelicOwnershipTests.Run();
 AncientWaifusSupportTests.Run();
 LoadOrderSafetyTests.Run();

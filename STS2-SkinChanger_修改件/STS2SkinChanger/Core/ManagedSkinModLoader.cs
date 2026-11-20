@@ -1771,6 +1771,14 @@ internal static class ManagedSkinModLoader
                    patch.Target.Name.Contains("Path", StringComparison.OrdinalIgnoreCase);
         }
 
+        // TryGetBaselinePortraitPath reads CardModel.PortraitPath. A provider can change that
+        // path even with Game Default selected, so keep the getter under the card-art selector.
+        if (patch.Target is MethodInfo { Name: "get_" + nameof(CardModel.PortraitPath) } getter &&
+            getter.GetBaseDefinition().DeclaringType == typeof(CardModel))
+        {
+            return true;
+        }
+
         if (!typeof(CharacterModel).IsAssignableFrom(declaringType) &&
             !typeof(MonsterModel).IsAssignableFrom(declaringType))
         {

@@ -63,7 +63,6 @@ internal static partial class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, IsolatedCardOverlayState> IsolatedCardOverlayCache =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly CanonicalResourceOwnershipTracker CardCanonicalResourceOwners = new();
     private static readonly Dictionary<string, string> CardPreviewSelections =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, string> CharacterPreviewSelections =
@@ -1197,7 +1196,6 @@ internal static partial class SkinService
                 BaselineRelicAtlasCache.Clear();
                 BaselineRelicIconCache.Clear();
                 IsolatedCardOverlayCache.Clear();
-                CardCanonicalResourceOwners.Reset();
                 CharacterPreviewSelections.Clear();
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
                 AncientStyleMethods.Clear();
@@ -3345,60 +3343,52 @@ internal static partial class SkinService
                 return typedCached;
             }
 
-            T? resource = null;
-            if (lookup.Group != null)
+            // Preserve an explicitly supplied provider texture. Only translate the stock
+            // fallback, using the game PCK rather than the application's build reference.
+            var resource = option?.ProviderRootPath != null
+                ? LoadIsolatedPresentation(resourcePath, useSelectedProvider: true)
+                : null;
+            if (resource == null)
             {
-                foreach (var useSelectedProvider in new[] { true, false })
+                var baselinePath = Catalog is { } catalog
+                    ? catalog.ResolveCardPresentationBaselinePath(resourcePath)
+                    : resourcePath;
+                if (baselinePath != null)
                 {
-                    if (useSelectedProvider && option?.ProviderRootPath == null)
-                    {
-                        continue;
-                    }
-
-                    try
-                    {
-                        var providerPaths = useSelectedProvider && option != null
-                            ? option.CardPresentations.Values
-                                .SelectMany(presentation => presentation.ResourcePaths)
-                                .Append(resourcePath)
-                            : [resourcePath];
-                        var overlay = EnsureIsolatedCardOverlay(
-                            lookup.Group.Id,
-                            selection,
-                            useSelectedProvider,
-                            providerPaths);
-                        if (overlay.ResourcePaths.TryGetValue(resourcePath, out var isolatedPath))
-                        {
-                            resource = ResourceLoader.Load<T>(
-                                isolatedPath,
-                                null,
-                                overlay.CanReuseExternalDependencies
-                                    ? ResourceLoader.CacheMode.Ignore
-                                    : ResourceLoader.CacheMode.IgnoreDeep);
-                        }
-                    }
-                    catch
-                    {
-                        // Provider configs may intentionally point at a base-game resource. Try the
-                        // isolated baseline next so another globally loaded skin cannot supply it.
-                    }
-
-                    if (resource != null)
-                    {
-                        break;
-                    }
+                    resource = LoadIsolatedPresentation(baselinePath, useSelectedProvider: false) ??
+                        ResourceLoader.Load<T>(baselinePath, null, ResourceLoader.CacheMode.Reuse);
                 }
             }
-
-            resource ??= ResourceLoader.Load<T>(
-                resourcePath,
-                null,
-                ResourceLoader.CacheMode.Reuse);
             if (resource != null)
             {
                 RuntimeResourceCache[cacheKey] = resource;
             }
             return resource;
+
+            T? LoadIsolatedPresentation(string path, bool useSelectedProvider)
+            {
+                if (lookup.Group == null) return null;
+                try
+                {
+                    var requestedPaths = useSelectedProvider && option != null
+                        ? option.CardPresentations.Values
+                            .SelectMany(presentation => presentation.ResourcePaths)
+                            .Append(path)
+                        : [path];
+                    var overlay = EnsureIsolatedCardOverlay(
+                        lookup.Group.Id, selection, useSelectedProvider, requestedPaths);
+                    return overlay.ResourcePaths.TryGetValue(path, out var alias)
+                        ? ResourceLoader.Load<T>(alias, null, overlay.CanReuseExternalDependencies
+                            ? ResourceLoader.CacheMode.Ignore
+                            : ResourceLoader.CacheMode.IgnoreDeep)
+                        : null;
+                }
+                catch
+                {
+                    // A provider may refer to a stock texture. Try the stock archive next.
+                    return null;
+                }
+            }
         }
     }
 
@@ -3624,6 +3614,7 @@ internal static partial class SkinService
         {
             if (lookup.Options.Count == 0) return null;
             if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var originalPath)) return null;
+            originalPath = ResolveGameCardPortraitFallback(card, originalPath);
             return new CardPortraitRequest(
                 lookup.GroupId,
                 selection,
@@ -3644,8 +3635,11 @@ internal static partial class SkinService
         if (optionLookup.Option.StatefulArt != null && StatefulCardArtRuntime.For(optionLookup.Option) is {} runtime)
         {
             if (!runtime.Enabled && FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var originalPath))
+            {
+                originalPath = ResolveGameCardPortraitFallback(card, originalPath);
                 return new CardPortraitRequest(lookup.GroupId, SkinCatalog.BaseOptionId, originalPath,
                     $"{lookup.GroupId}\n{selection}\nstateful-disabled\n{originalPath}", false, false);
+            }
             configuredPath = runtime.Portrait(card, configuredPath) ?? configuredPath;
         }
         if (!string.IsNullOrWhiteSpace(configuredPath))
@@ -3664,6 +3658,8 @@ internal static partial class SkinService
             optionLookup.MatchedAssetPaths,
             card,
             baselinePath);
+        if (selectedProviderPath == null)
+            baselinePath = ResolveGameCardPortraitFallback(card, baselinePath);
         return selectedProviderPath == null
             // The winning provider may own only the frame/layout. Missing layers belong to the
             // game baseline, never to the next provider in the priority list. Load an isolated
@@ -3683,6 +3679,32 @@ internal static partial class SkinService
                 $"{lookup.GroupId}\n{selection}\npck\n{selectedProviderPath}",
                 UseSelectedProvider: true,
                 WrapAtlas: false);
+    }
+
+    private static string ResolveGameCardPortraitFallback(CardModel card, string atlasPath)
+    {
+        var catalog = Catalog;
+        if (catalog == null || card.GetType().Assembly != typeof(CardModel).Assembly ||
+            catalog.ResolveBaseline(atlasPath) != null) return atlasPath;
+
+        // A base-game card may only ship an individual or beta portrait (Rebound). Its
+        // nominal atlas path still identifies the card for provider matching.
+        const string atlasRoot = "res://images/atlases/card_atlas.sprites/";
+        const string pngRoot = "res://images/packed/card_portraits/";
+        if (!atlasPath.StartsWith(atlasRoot, StringComparison.OrdinalIgnoreCase) ||
+            !atlasPath.EndsWith(".tres", StringComparison.OrdinalIgnoreCase)) return atlasPath;
+
+        var betaAtlas = card.BetaPortraitPath;
+        if (!betaAtlas.StartsWith(atlasRoot, StringComparison.OrdinalIgnoreCase) ||
+            !betaAtlas.EndsWith(".tres", StringComparison.OrdinalIgnoreCase)) return atlasPath;
+
+        var png = pngRoot + atlasPath[atlasRoot.Length..^5] + ".png";
+        var betaPng = pngRoot + betaAtlas[atlasRoot.Length..^5] + ".png";
+        foreach (var path in new[] { png, betaAtlas, betaPng })
+        {
+            if (catalog.ResolveBaseline(path) != null) return path;
+        }
+        return atlasPath;
     }
 
     private static Texture2D? GetOrLoadCardPortrait(CardPortraitRequest request)
@@ -4127,11 +4149,9 @@ internal static partial class SkinService
             : $"{SkinCatalog.BaseOptionId}\n{sourceName}";
         if (!IsolatedCardOverlayCache.TryGetValue(cacheKey, out var state))
         {
-            state = new IsolatedCardOverlayState(cacheKey);
+            state = new IsolatedCardOverlayState();
             IsolatedCardOverlayCache.Add(cacheKey, state);
         }
-
-        ReactivateIsolatedCardOverlayIfNeeded(state);
 
         var missingPaths = resourcePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -4176,13 +4196,8 @@ internal static partial class SkinService
             {
                 throw new InvalidOperationException("Godot 拒绝加载批量独立卡牌资源包。");
             }
-            state.OverlayPaths.Add(overlayPath);
             state.MountedFilePaths.UnionWith(newFiles.Keys);
-            state.CanonicalRedirectPaths.UnionWith(overlay.CanonicalDependencyPaths);
             state.CanReuseExternalDependencies &= overlay.CanReuseExternalDependencies;
-            CardCanonicalResourceOwners.MarkActivated(
-                state.OwnerId,
-                overlay.CanonicalDependencyPaths);
             stopwatch.Stop();
             if (missingPaths.Length > 1 || stopwatch.ElapsedMilliseconds >= 100)
             {
@@ -4211,31 +4226,6 @@ internal static partial class SkinService
         }
 
         return state;
-    }
-
-    private static void ReactivateIsolatedCardOverlayIfNeeded(IsolatedCardOverlayState state)
-    {
-        if (state.OverlayPaths.Count == 0 ||
-            !CardCanonicalResourceOwners.RequiresActivation(
-                state.OwnerId,
-                state.CanonicalRedirectPaths))
-        {
-            return;
-        }
-
-        foreach (var overlayPath in state.OverlayPaths)
-        {
-            if (!File.Exists(overlayPath) ||
-                !SkinChangerPaths.LoadResourcePack(overlayPath, replaceFiles: true))
-            {
-                throw new InvalidOperationException(
-                    "Godot 拒绝重新激活已缓存的独立卡牌资源包。");
-            }
-        }
-
-        CardCanonicalResourceOwners.MarkActivated(
-            state.OwnerId,
-            state.CanonicalRedirectPaths);
     }
 
     internal static string? SelectProviderCardPath(
@@ -7068,6 +7058,31 @@ internal static partial class SkinService
         }
     }
 
+    private static string PrepareSelectPortraitSafePack(SkinCatalog catalog, string source)
+    {
+        using var archive = PckArchive.Open(source);
+        var excluded = archive.Paths.Where(catalog.ProtectGlobalCanonicalPackFile)
+            .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (excluded.Length == 0) return source;
+
+        // Keep the provider's private namespace and its other runtime resources. Stock
+        // select portraits and shared game atlas/card imported payloads must never enter
+        // the high-priority full pack, even before correction.
+        var info = new System.IO.FileInfo(source);
+        var fingerprint = source + "\n" + info.Length + "\n" + info.LastWriteTimeUtc.Ticks + "\n" +
+                          string.Join('\n', excluded);
+        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint)));
+        var output = System.IO.Path.Combine(SkinChangerPaths.CacheDirectory, $"select_safe_{key}.pck");
+        if (!File.Exists(output))
+        {
+            var removed = excluded.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var files = archive.Paths.Where(path => !removed.Contains(path))
+                .ToDictionary(path => path, path => (archive, path), StringComparer.OrdinalIgnoreCase);
+            SkinChangerPaths.WriteCache(output, () => PckArchive.WriteFromArchives(output, files));
+        }
+        return output;
+    }
+
     private static void MountContextualFullRuntimeProviderPacks(
         SkinCatalog catalog,
         string selection)
@@ -7088,7 +7103,7 @@ internal static partial class SkinService
         foreach (var resourcePackPath in catalog.GetProviderResourcePackPaths(selection))
         {
             var normalizedPath = System.IO.Path.GetFullPath(resourcePackPath);
-            if (!SkinChangerPaths.LoadResourcePack(normalizedPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(PrepareSelectPortraitSafePack(catalog, normalizedPath), replaceFiles: true))
             {
                 throw new InvalidOperationException(
                     $"无法为联机玩家挂载 {selection} 的完整运行时资源包。");
@@ -7120,7 +7135,7 @@ internal static partial class SkinService
                 // skeleton alone. Mount its original PCK as a low-priority dependency namespace.
                 // Canonical game paths remain owned by the game/current generated overlay because
                 // replaceFiles is false, while provider-private res:// paths become available.
-                if (!SkinChangerPaths.LoadResourcePack(normalizedPath, replaceFiles: false))
+                if (!SkinChangerPaths.LoadResourcePack(PrepareSelectPortraitSafePack(catalog, normalizedPath), replaceFiles: false))
                 {
                     MountedScopedRuntimeProviderPacks.Remove(normalizedPath);
                     throw new InvalidOperationException(
@@ -7213,7 +7228,7 @@ internal static partial class SkinService
                     continue;
                 }
 
-                if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: false))
+                if (!SkinChangerPaths.LoadResourcePack(PrepareSelectPortraitSafePack(catalog, packPath), replaceFiles: false))
                 {
                     MountedCompanionOnlyProviderPacks.Remove(packPath);
                     ModLog.Warn(
@@ -7253,7 +7268,7 @@ internal static partial class SkinService
             // 注意：这里**不能**因为「本次会话已提权过」就跳过。校正覆盖层每次都挂在整包上面，
             // 它会把整包里的规范路径再写一遍；如果不再把整包压回栈顶，像 Orchis 的
             // 原版特效替换这类「靠整包压栈顶生效」的资源就会被游戏原版盖掉（1.0.30.195 的教训）。
-            if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(PrepareSelectPortraitSafePack(catalog, packPath), replaceFiles: true))
             {
                 throw new InvalidOperationException(
                     $"无法直接挂载完整外观资源包：{System.IO.Path.GetFileName(packPath)}");
@@ -7560,10 +7575,7 @@ internal static partial class SkinService
         foreach (var slice in files.GroupBy(pair => pair.Value.Archive))
             MountArchiveOverlay(slice.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase),
                 "cards", "Godot 拒绝加载生成的卡牌皮肤资源包。");
-        // The baseline card pack intentionally reclaims canonical source/import/remap paths.
-        // Cached binary AtlasTexture overlays must therefore reacquire only the bridge paths
-        // they actually depend on when the corresponding skin is requested again.
-        CardCanonicalResourceOwners.Reset();
+
     }
 
     /// <summary>
@@ -7668,7 +7680,9 @@ internal static partial class SkinService
         long writtenBytes = 0;
         if (!MountedOverlayCache.TryGetValue(signature, out var overlayPath) || !File.Exists(overlayPath))
         {
-            overlayPath = TryGetCompleteSourceArchive(files);
+            var canReuseCompleteArchive = Catalog == null ||
+                !files.Keys.Any(Catalog.ProtectGlobalCanonicalPackFile);
+            overlayPath = canReuseCompleteArchive ? TryGetCompleteSourceArchive(files) : null;
             if (overlayPath != null)
             {
                 PerfTrace.Report($"覆盖包[{category}] 直接复用原整包", 0, files.Count);
@@ -7950,18 +7964,14 @@ internal static partial class SkinService
         public long LastUse { get; set; } = Stopwatch.GetTimestamp();
     }
 
-    private sealed class IsolatedCardOverlayState(string ownerId)
+    private sealed class IsolatedCardOverlayState
     {
-        public string OwnerId { get; } = ownerId;
         public string? AliasToken { get; set; }
         public Dictionary<string, string> ResourcePaths { get; } =
             new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> UnavailablePaths { get; } =
             new(StringComparer.OrdinalIgnoreCase);
-        public List<string> OverlayPaths { get; } = [];
         public HashSet<string> MountedFilePaths { get; } =
-            new(StringComparer.OrdinalIgnoreCase);
-        public HashSet<string> CanonicalRedirectPaths { get; } =
             new(StringComparer.OrdinalIgnoreCase);
         public bool CanReuseExternalDependencies { get; set; } = true;
     }

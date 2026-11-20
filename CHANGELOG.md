@@ -1,3 +1,10 @@
+## 1.0.37.3（2026-11-21，内测）
+- 合并维护者分支 `merge/1.0.37-fixes-20261121`（`450b92a`，对应 `fix/1.0.36-stability` 的 `6a8a9f6` / 1.0.36.105），四处版本号随之升到 `1.0.37.3`。
+- 卡图：卡图运行包只用私有路径、不再写原版路径，原版缺图时回退同卡的 Beta 图（修 RTR 系列「回弹」被全局换图、选「游戏默认」换不回）；先古卡的说明底图与边框按实际游戏包找新旧位置，找不到就不画（修半透明 NOPE 占位）；带 `.cardartpack.json` 的素材包也隔离原 PCK，皮肤包里与本体共享图集同名的文件一律不进全局（修愚者卡面美化 v5.01、CuteFool-Cards 选「游戏默认」仍显示）。
+- 新增 Mod 兼容：响木天音选角头像改用它自己包里的图（不再被贞德包改写，并删掉会把贞德原包整包挂全局的旧代码）；NonoFoolSkin 加入独立愚者皮肤名单并补选人界面预览；选中空崎日奈时只拦它改卡牌原版图路径的那一个补丁。
+- 其他：正式版商人房间路径按实际游戏包里存在的场景查找（不再写死测试版拆分的场景）；卡牌图鉴左下角「皮肤优先级 / 有皮肤卡牌」挪到左侧栏搜索框上方，不再被返回箭头挡住；独立召唤 Mod 接管骨手时不再误报「应用角色外观失败：OSTY…」，其余「已保存、下次生效」改成正常提示（15 种语言）。
+- 删除已无引用的 `Core/CanonicalResourceOwnershipTracker.cs`；测试夹具不再写死某台机器的绝对路径：真实 PCK 先认环境变量 `STS2_OFFICIAL_PCK` / `STS2_BETA_PCK`，再按 Steam 库探测（含 `libraryfolders.vdf`），并用包内是否拆出 `standard_merchant_room.tscn` 判定正式版/测试版。
+- 验证：正式版 `C:\sts2refs\stable` 与测试版 `D:\steam\steamapps\common\Slay the Spire 2` 双引用均 0 警告 0 错误；LogicTests 与完整无参数 RuntimeTests 全绿（末行 `Workshop policy tests passed.`）。已部署两处测试版安装包（3,901,440 B）。未 push 远端、未发工坊。
 ## 1.0.37.2（2026-11-20，已发布工坊）
 - 合并维护者分支 `fix/1.0.36-stability` 后两轮（`b3dc0da` 1.0.36.103、`a1f2a99` 1.0.36.104）：商人热切换按 MouseFilter 判定、战损档点选通用化、狐猎 `SILK_bg` 背景、奥契丝文本与奥斯提站位；联机战斗建模失败时降级原版不再抛异常；久留美卡面；卡图匹配谓词统一且不跨卡池；卡面 LRU 只负缓存真失败。
 - 双端引用构建 0 警告 0 错误；LogicTests 与完整无参数 RuntimeTests 全绿（末行 `Workshop policy tests passed.`）；部署到两处测试版安装包。

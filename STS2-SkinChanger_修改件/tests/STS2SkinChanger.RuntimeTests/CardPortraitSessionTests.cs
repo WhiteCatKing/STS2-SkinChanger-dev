@@ -45,7 +45,7 @@ internal static class CardPortraitSessionTests
             using var catalog = SkinCatalog.Build(gamePath, []);
             catalogProperty.SetValue(null, catalog);
             var overlayType = AccessTools.Inner(service, "IsolatedCardOverlayState");
-            var overlay = Activator.CreateInstance(overlayType, stateKey)!;
+            var overlay = Activator.CreateInstance(overlayType, nonPublic: true)!;
             AccessTools.Property(overlayType, "CanReuseExternalDependencies").SetValue(overlay, false);
             var paths = (Dictionary<string, string>)AccessTools.Property(overlayType, "ResourcePaths").GetValue(overlay)!;
             overlayStates[stateKey] = overlay;

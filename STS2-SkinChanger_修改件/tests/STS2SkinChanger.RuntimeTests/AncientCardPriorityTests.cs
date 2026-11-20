@@ -258,7 +258,7 @@ internal static class AncientCardPriorityTests
     private static object NewCatalog()
     {
         var catalog = RuntimeHelpers.GetUninitializedObject(CatalogType);
-        foreach (var name in new[] { "_cardGroups", "_configuredCardGroups", "_pckCardOptions", "_providerInstanceIdentities" })
+        foreach (var name in new[] { "_cardGroups", "_configuredCardGroups", "_pckCardOptions", "_providerInstanceIdentities", "_baselineIndexes" })
         {
             var field = AccessTools.Field(CatalogType, name);
             field.SetValue(catalog, Activator.CreateInstance(typeof(List<>).MakeGenericType(field.FieldType.GenericTypeArguments[0])));

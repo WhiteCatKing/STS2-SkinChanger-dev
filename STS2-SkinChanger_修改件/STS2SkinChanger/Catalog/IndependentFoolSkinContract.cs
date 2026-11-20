@@ -29,6 +29,10 @@ internal static class IndependentFoolSkinContract
             "Fool_Waifu" => "FoolWaifu.OwnRigSkin",
             "NailongFool" => "NailongFool.NailongFoolMod",
             "FoolSkinStatic" => "FoolSkinStatic.SkinSpec",
+            // NonoFoolSkin draws The Fool with its own SpriteFrames and reads its own PCK
+            // through a private GDPC reader; the manifest id and initializer type are the
+            // only stable contract (contributed by the package author, 2026-11-20).
+            "NonoFoolSkin" => "NonoFoolSkin.Entry",
             _ => null
         };
         if (requiredType == null) return false;

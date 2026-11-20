@@ -4,7 +4,7 @@
   "title": "Skin Changer",
   "statementHeading": "Statement",
   "version": "1.0.37",
-  "internalTestVersion": "1.0.37.2",
+  "internalTestVersion": "1.0.37.3",
   "featureUpdate": "[h2]1.0.37[/h2]\nCrash fixes for large visual packs, card rewards, missing Spine pages and the stable multiplayer lobby. In multiplayer combat a failing skin now falls back to the vanilla model instead of faulting, card portraits no longer stay blank, and merchants stay clickable after repeated hot switches.",
   "cardPriorityUpdate": "",
   "multiplayerUpdate": "",
