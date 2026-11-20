@@ -205,7 +205,7 @@ Initialize()
 
 ## 8. 当前状态 / 待办
 
-- 主线 `main` = **1.0.37.2**（`0619028`，远端）；本地已合并 `origin/merge/1.0.37-fixes-20261121`，工作区版本为 **内测 1.0.37.3**（未 push、未发工坊）。工坊公开版 `1.0.37`（包 3,899,559 B，2026-11-20 02:07 发布，14 种语言简介已同步）。仓库已改为公开：`https://github.com/WhiteCatKing/STS2-SkinChanger-dev`，写权限仅 `WhiteCatKing`（admin）、`zuimao-feng`、`1800yun-debug`。
+- 主线 `main` = **1.0.37.2**（`0619028`，远端）；本地已合并 `origin/merge/1.0.37-fixes-20261121`，工作区版本为 **内测 1.0.37.3**（未 push）。工坊公开版 `1.0.37` 已用 1.0.37.3 内容重新发布（2026-11-21 03:26，包 3,919,527 B，简介与更新说明已同步）。仓库已改为公开：`https://github.com/WhiteCatKing/STS2-SkinChanger-dev`，写权限仅 `WhiteCatKing`（admin）、`zuimao-feng`、`1800yun-debug`。
 - 1.0.37.3 已构建并部署到桌面与游戏目录两处测试版安装包（`Gurio.SkinChanger.dll` 3,901,440 B，旧文件改名 `*.disabled_20261121` 保留）；双端引用 0 警告 0 错误、LogicTests 与完整无参数 RuntimeTests 全绿。
 - 已知未修缺陷：Ancient 稀有度卡牌的卡图包组归属不一致——注册时用 `CatalogGroupId`（`fool`），运行时 Ancient 卡却走 `ancients` 组，导致 `divine_shot`（神力射击）、`lost_lute`（失落鲁特琴）检测不到卡图包。定位见 `STS2-SkinChanger_修改件/docs/agents/pitfalls-checklist.md`；修法是让卡图包 option 也走 `FinalizeCardGroups` 的 Ancient 镜像规则。
 - 待作者真机确认：商人读档后的刷新、联机 4 人战斗、选人界面中央预览小人、贞德真实包回归（本机只有十字军包）。
