@@ -2,7 +2,7 @@
 
 用途：以后遇到相似症状，先在这张表里按「症状」找根因，避免重复试错。
 记录范围：本轮会话（2026-11-12 ~ 11-14）遇到的全部缺陷，含已修复、已回退、暂停观察。
-配套文档：`CHANGELOG.md`（逐版改动）、`更新日志_1.0.31.80.md`（对外发布说明）、`STS2-SkinChanger_修改件\docs\merchant-isolation-design.md`（商人模块设计）。
+配套文档：[CHANGELOG.md](../../../CHANGELOG.md)（逐版改动）、[商家模块设计](../merchant-isolation-design.md)（商人模块设计）。
 
 ## 一、启动与加载
 
