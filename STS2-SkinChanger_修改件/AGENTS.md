@@ -1,33 +1,33 @@
 # Skin Changer 开发约定
 
-动手前先读 [docs/agents/maintenance-rules.md](docs/agents/maintenance-rules.md)：这是维护者共同遵守的规矩，列了不许丢的修复、改完必须做的双引用构建与测试、需要停下来先问的产品取舍，以及交接格式。
+《杀戮尖塔 2》皮肤切换器（Gurio.SkinChanger）——独立的皮肤管理 Mod，不改写其他 Mod 的安装文件，也不依赖旧版「皮肤管理器」。
 
-## 当前环境
+## 先读这几份
 
-- 主环境为 Windows 原生 PowerShell。仓库位于 `C:/Users/gurio/Documents/ChatGPT/STS2-SkinChanger`。
-- 使用 Windows 的 `dotnet` 构建和测试。SDK 版本由 `global.json` 约束。
-- `Directory.Build.props` 集中管理游戏引用：默认正式版 `v0.107.1`；测试版 `v0.111.0` 必须显式传入 `GameAssemblyDir`。不能因为正式版文件缺失而自动改用测试版。
-- 代码与配置使用 LF；不要批量改写整库换行。
+动手前按顺序读：
 
-## 发现与修改
+- [docs/agents/maintenance-rules.md](docs/agents/maintenance-rules.md) — 维护规矩：不许丢的修复、改完必须做的构建与测试、必须停下来先问的取舍、交接格式。
+- [docs/agents/fix-and-test-workflow.md](docs/agents/fix-and-test-workflow.md) — 修复与测试流程：从读日志定根因到双引用构建、完整测试、部署的固定步骤。
+- [docs/agents/pitfalls-checklist.md](docs/agents/pitfalls-checklist.md) — 踩坑复盘与按症状排查清单（历史实例，先看再改）。
+- [docs/issues/maintenance/](docs/issues/maintenance/) — 维修日志归档（每次合并他人修复后的排查与修复记录）。
 
-- 优先使用 codebase-memory-mcp 的图查询；当前 Windows 索引名为 `STS2-SkinChanger`。命名、增量索引与变更检测的注意事项见 [docs/agents/codebase-memory.md](docs/agents/codebase-memory.md)。
-- MCP 未重新连接时，可用 `codebase-memory-mcp cli` 调用同一套工具。工具不可用、索引排除或解析不完整时再用 `rg`，不要运行 CodeGraph。
-- 定位、调用链、影响面先走图查询，不要习惯性先 `rg`；改完代码用 `detect_changes` 自查影响面。只有目标在索引之外（游戏 `sts2.dll`、框架、第三方 Mod 包等二进制）时才用 `rg` 或反编译。
-- 直接在 master 修改；不创建隔离工作区，尽量不派子智能体。
-- 排查中已确认原因的错误直接修复并验证，不再单独停下来询问是否修复；涉及新的设计取舍、额外权限或无法确认原因时再说明。
-- 改完后提交，并提升四段内测版本：未上传时只加第四位，第三位只在实际上传工坊时提升，并与三段公开版本一起更新。四段内测标记需同步 csproj、Entry、SkinChanger.json 和 workshop/workshop.json。
-- 不控制游戏做实机测试；用户不参与实机验证，交付质量由离线测试套件、反编译核对与静态审查保障，无法离线覆盖的画面类风险在结论中如实说明。
+## 环境
 
-## 验证与发布
+- Windows + PowerShell；仓库根为上层目录 `工作2/`，唯一可改的源码树是本目录。
+- 构建必须传 `GameAssemblyDir`：正式版 `C:\sts2refs\stable`（v0.107.1 基线副本）、测试版 `D:\steam\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64`（v0.113.1）。
+- 代码与配置用 LF，换行与编码不要批量改写。
 
-- 常用命令见 README 的“构建”和“开发检查工具”。发布产物必须来自默认正式版引用的 `Release` 构建，保持 `AnyCPU`。
-- 测试版验证用 `ReleaseBeta` 配置，避免覆盖正式版发布产物。
-- 部署前确认游戏已退出；核对构建产物、workshop/content、测试版工坊目录和正式版快照缓存的 DLL 版本及 SHA-256。
-- 仅用户要求时上传；先 Steam 工坊，再推 GitHub。工坊标题/描述变化须同步全部 15 种语言。
-- 游戏内工坊清单的重启标签核验规则见 [docs/agents/workshop-catalog.md](docs/agents/workshop-catalog.md)。
-- 不向全局 Python 安装项目依赖；本项目核心构建不需要 Python。
+## 硬性约束
 
-## 沟通
+- 只改与本次任务相关的文件；不顺手重构。
+- 改动涉及「不许丢的修复」清单里的代码时，必须保留对应行为并让对应测试继续通过。
+- 交付前：正式版与测试版两种引用各构建一次，都必须 0 错误；跑完整的 LogicTests 与无参数 RuntimeTests，末行 `Workshop policy tests passed.`。
+- 版本号四处同步：`Entry.cs`、`STS2SkinChanger.csproj`、`SkinChanger.json`、`workshop/workshop.json`。
+- 不启动游戏做实机测试：游戏内验证由作者本人完成，我负责读日志排查。原因不明的问题先给结论和证据，不动代码。
+- 提交信息用中文，写清改了什么、为什么改。
 
-- 回答保持简短：只给结论、当前状态和用户需要做的动作；实现细节、排查过程、改动文件清单与验证流水不展开，用户问了再讲。
+## 仓库与发布
+
+- 远端 `origin` 指向 `https://github.com/WhiteCatKing/STS2-SkinChanger-dev`（公开仓库，`main` 为默认分支）。
+- 直连 GitHub 失败时加代理：`git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 -c http.version=HTTP/1.1`。
+- 仅作者要求时才上传工坊或推送远端；工坊标题 / 简介变化须同步 15 种语言。

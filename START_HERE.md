@@ -3,7 +3,7 @@
 《杀戮尖塔 2》皮肤切换器（Skin Changer）的交接文档。2026-11-16 重写，取代旧 `START_HERE.md` 与 `D:\给接手AI的说明.md`。
 作者是「白猫大魔王」（GitHub `WhiteCatKing`）。工坊条目 ID `3787302680`，appId `2868840`。
 
-只读这一份就能开工；细节按需跳转 [项目自带交接](STS2-SkinChanger_修改件/docs/handoff/GENERAL.md)、[开发约定](STS2-SkinChanger_修改件/AGENTS.md)、[索引笔记](STS2-SkinChanger_修改件/docs/agents/)。
+只读这一份就能开工；细节按需跳转 [维护规矩](STS2-SkinChanger_修改件/docs/agents/maintenance-rules.md)、[修复与测试流程](STS2-SkinChanger_修改件/docs/agents/fix-and-test-workflow.md)、[踩坑与排查清单](STS2-SkinChanger_修改件/docs/agents/pitfalls-checklist.md)、[开发约定](STS2-SkinChanger_修改件/AGENTS.md)、[变更记录](CHANGELOG.md)。
 
 ---
 
@@ -13,7 +13,7 @@
 D:\Storage\Desktop\工作2\STS2-SkinChanger_修改件\   ← 唯一要改的源码工程（git 仓库内容）
 ```
 
-`D:\Storage\Desktop\工作2` 是 git 仓库根（remote `https://github.com/WhiteCatKing/STS2-SkinChanger.git`，主线 `main`）。
+`D:\Storage\Desktop\工作2` 是 git 仓库根（remote `https://github.com/WhiteCatKing/STS2-SkinChanger-dev`，公开仓库，主线 `main`）。
 
 绝对不要动：
 
@@ -98,9 +98,9 @@ git commit -q -F $tmp
 | `workshop\workshop.json` | `internalTestVersion` |
 | `STS2SkinChanger\STS2SkinChanger.csproj` | `Version` / `AssemblyVersion` / `FileVersion` / `InformationalVersion` |
 
-规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.36`；后续内测保持此公开版本，只提高四段内测标记。
+规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.37`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.36.0`（工坊公开 `1.0.36`）。本次发布见 `RELEASE_2026-11-17_workshop_1.0.36.md`，累计项目记录见 `项目工作记录_本次对话至1.0.36_2026-11-17.md`，踩坑与排查必读 `项目注意事项_踩坑复盘与排查清单_2026-11-17.md`。
+当前值：`1.0.37.2`（工坊公开 `1.0.37`）。发布记录在 `STS2-SkinChanger_修改件/docs/issues/RELEASE_*.md`，维修记录在 `STS2-SkinChanger_修改件/docs/issues/maintenance/`，累计变更见 `CHANGELOG.md`，踩坑与排查必读 `STS2-SkinChanger_修改件/docs/agents/pitfalls-checklist.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -205,12 +205,12 @@ Initialize()
 
 ## 8. 当前状态 / 待办
 
-- 版本 `1.0.32.7` 已构建、离线测试、部署四处；按作者要求提交并推送 origin/main，不上传工坊。上一版大卡问题作者已实机确认修复；CZN 兼容与闪退防护的画面表现尚未真机核验。
-- 最近提交（新→旧）：`106b643` 缓存无上限修复 → `058c5d6` 版本统一 + 八模块分区 → `f044092` 合入维修版 1.0.32.1 → `fd0d344` 看门狗热修。
-- 待作者真机确认：进游戏看日志有无「退出缓存清理：已删除 N 个文件」或「皮肤缓存超出 8 GB 预算」。
+- 主线 `main` = **1.0.37.2**（`0619028`），已推送远端；工坊公开版 `1.0.37`（包 3,899,559 B，2026-11-20 02:07 发布，14 种语言简介已同步）。仓库已改为公开：`https://github.com/WhiteCatKing/STS2-SkinChanger-dev`，写权限仅 `WhiteCatKing`（admin）、`zuimao-feng`、`1800yun-debug`。
+- 已拉取但**未合并**：`origin/merge/1.0.37-fixes-20261121`（维修日志称内测 1.0.37.3），合并前需作者确认。
+- 已知未修缺陷：Ancient 稀有度卡牌的卡图包组归属不一致——注册时用 `CatalogGroupId`（`fool`），运行时 Ancient 卡却走 `ancients` 组，导致 `divine_shot`（神力射击）、`lost_lute`（失落鲁特琴）检测不到卡图包。定位见 `STS2-SkinChanger_修改件/docs/agents/pitfalls-checklist.md`；修法是让卡图包 option 也走 `FinalizeCardGroups` 的 Ancient 镜像规则。
+- 待作者真机确认：商人读档后的刷新、联机 4 人战斗、选人界面中央预览小人、贞德真实包回归（本机只有十字军包）。
 - 待决定：八个模块是否改按需激活（见 §5.2）。
 - 已搁置：卡面下拉「打开即变默认」（`Ui\CardSkinControls.cs` 已回退到 1.0.31.99，`a08b5c0`；此前查明是引擎程序化搬焦点导致 `PopupMenu.IdFocused` 收到 0→1→2→3→1，再动前先找可用事件源，别直接改 `IdFocused`）。
-- 待真机验证：商人读档后的刷新。
 
 ---
 
@@ -221,89 +221,6 @@ Initialize()
 - 只改与任务相关的文件，不做无关重构；`AGENTS.md` 的规则优先于本文档的重复描述。
 - 回答简短：结论、当前状态、需要作者做什么。
 
-- 版本 1.0.32.8：修复商店局内角色被 CZN 外来皮肤覆盖，双重检查事件/呈现归属，核对战斗与火堆边界；作者确认上一版商人正常。本版离线回归通过，未实机核验；三文件同步四处，提交并推送 main/标签，不上传工坊。
+## 10. 变更历史
 
-- 版本 1.0.32.9：修复首次进新商店旧缓存商人套用当前皮肤位姿的问题；Ready 后一次性重建独立商人外观，保留库存/购买状态。新增 200 房间去重及生命周期回归通过，未实机验证；三文件同步四处并提交推送 main/标签，不上传工坊。
-
-- 版本 1.0.32.10：作者确认上版首次进店问题已解决；补注册 CrusaderSkin 新版自定义钩子模型，修复只有选牌前摇而缺正式出招，并按玩家皮肤限制常驻订阅。真实 DLL/逻辑/CZN/商店离线回归通过，未实机核验；三文件同步四处，提交并推送 main/标签，不上传工坊。
-
-- 版本 1.0.32.11：十字军/贞德相关 12 模块移入 STS2SkinChanger/ProtectedCharacters，后续须遵守该目录 AGENTS.md 并运行 tools/check-protected-characters.ps1。加入解码/缓存预算、低内存/缺失失败冷却、有界遍历和选角文件预读；结束对局不删除已挂载联机 PCK；开局/退出兜底保持。真实 13 选项及专项/既有回归通过，未宣称消除所有原生崩溃；三文件同步四处并推送 main/标签。
-
-- 版本 1.0.32.12：选项变体优先，同源外观标识与选人失败回滚；角色预览始终启用、奥斯提仅骨妹显示；完整依赖图隔离复用；空闲分片文件预读、需求插队、输入暂停，保留开局/退出兜底。详细边界及离线验证见本版本问题记录。
-
-- 1.0.32.13：修复可战损贞德变体重建后背景调色/点击绑定；隔离加载三档并共用稳定图，消费一次点击，保留 WearEnabled 与 SFW 无战损边界。
-
-- 1.0.32.14：定位 .12 规范缓存接管导致旧背景资源路径被清空；保护被替换者及私有别名占用者的路径。新增测试在 .13 DLL 明确失败、修复版通过 200 次替换与临时恢复，纳入战士保护必跑脚本。
-
-- 1.0.32.15：采纳玩家瓦库散图背景补丁，保留 Image 并添加供官方回调写图的隐藏 TextureRect 空槽；防缺失节点中断与彩蛋覆盖。旧 DLL 负对照失败、修复版与先古卡牌专项通过；从当前源码打包，不部署玩家旧注入 DLL。
-
-- 正式版 1.0.33（内部 1.0.33.0）已上传原工坊条目 3787302680，15 语言逐一回读成功；汇总至 .32.15 的修复，更新 GitHub 链接及说明，保留 12 张预览图。发布详情见 RELEASE_2026-11-16_workshop_1.0.33.md。
-
-- 1.0.33.1：修复可战损贞德第二/三档遗漏调色页而退回原色，保护区 StagePalettePages 按所选包补齐并继承当前权重；四变体 24 次档位循环和真实三档调色资源纳入保护回归。
-
-- 1.0.33.2：恢复瓦库原图默认预览，新增仅瓦库可选的官方彩蛋，沿用默认菱形/黄色样式；选择可保存，分类不自动选中彩蛋，外部散图及原生进度保留。
-
-2026-11-17 内测 1.0.33.3：修复雪霁改一代涅奥替换商人漏识别，接入私有 Spine/商店房间回调，详见 [问题记录](STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_private_neow_merchant_discovery.md)。公开版仍为 1.0.33。
-
-- 1.0.33.4：修复私有商人选中仍显示原版：真实作者骨架路径匹配器适配切换器隔离身份；同时拦住新版具体商店的预览游戏初始化，保留真实商店 Ready，详见对应问题记录。
-
-- 1.0.33.5：标准/极速/恐惧共用选人皮肤控件与模型预览；新增模式大厅/开局同步，恐惧沿用原生子视口与灰度材质。详情及作者专属扩展限制见对应问题记录。
-
-- 1.0.33.6：新增 MLM 可卸载上下文兼容，在共享框架根程序集装入前修正加载决策，保留旧加载排序同步；详见对应问题记录，已加载程序集不能事后迁移。
-
-- 1.0.33.7：MLM 清单 first 优先级及 Entry 最前顺序拒绝，交给 MLM 原生加载错误流程；一键整理回到 MLM 之后，已加载皮肤后必须重启。对应问题记录包含真实 MLM 排序/错误识别验证。
-
-- 1.0.33.8：MLM 排序要求直接展示在错误正文；立即持久恢复自己的优先级并在原一键整理后定位第 2 位，保留依赖校验和其他开关/偏好。已备份修复本机旧 ignorePriority 标记，个人配置未进 Git。
-
-- 1.0.33.9：CznStyleUI 整体 UI 包保持原生加载，参见 STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_czn_style_ui_native_loading.md。
-
-- 1.0.33.10：狐猎背景七档点击重挂；同名合并方案与原皮肤同时显示属于用户配置，不自动删除。
-
-- 1.0.33.11：联机商店遇第三方 CharacterModel 时保留原生创建流程，避免替代循环抢先执行强制类型转换。
-
-- 1.0.33.12：DefectSkinMod 旧初始化失败后的场景预载与选角回调恢复。
-
-- 1.0.33.13：鸡煲娘化小预览使用作者 CharacterScene，保持战斗 Ready 跳过保护。
-
-- 1.0.33.14：三个独立愚者皮肤（Fool_Waifu/NailongFool/FoolSkinStatic）识别与选中运行合同，见 docs/issues/ISSUE_2026-11-17_three_fool_skin_packages.md。
-
-- 1.0.33.15：图集页保持所选皮肤纹理所有权；单图预览在 Ready 后替换与隐藏原身体。
-
-- 1.0.33.16：生产 DLL 必须用正式版引用编译，再用 tools/check-dual-branch.ps1 把同一产物放入两端测试；测试版构建仅用于隔离验证，禁止覆盖正式发布产物。
-
-- 1.0.33.17：自动崩溃诊断位于 Core/CrashDiagnostics.cs 与内嵌 Diagnostics/CrashWatch.ps1；使用 --test-crash-diagnostics 只监视自建测试进程，禁止拿游戏做崩溃/卡死实验。日志副本/转储在用户数据 Gurio.SkinChanger/diagnostics/<session>。
-- 当前本机游戏已切回测试版。发布显式使用工作区 stable-api-1071 的正式版引用快照（MVID 97f10687-c306-4798-ab75-8b9f23f34dfb），不能把 D:/steam 当前安装路径继续当正式版引用。
-
-2026-11-17 工坊发布 1.0.34（内部 1.0.34.0）：汇总 1.0.33.1–17，正式版 v0.107.1 / 测试版 v0.113.1 同 DLL 离线回归通过；新增 Windows 自动崩溃日志诊断。发布记录见 `STS2-SkinChanger_修改件/docs/issues/RELEASE_2026-11-17_workshop_1.0.34.md`。
-
-1.0.34.1：修复局内面板 Bad IL / 极速商店按钮类型与 CrossbowFool 极速、恐惧选角点击；见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_inrun_abstract_merchant_and_crossbow_modes.md`。公开工坊仍 1.0.34，本次未上传。
-
-1.0.34.2：统一三模式选角背景回调和普通/高亮头像；CznCore 按当前选中 profile 走原生 ModeSelectionBackground，单图愚者复用作者 BuildPortrait。见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_character_select_mode_presentation_parity.md`。本次未上传工坊。
-
-1.0.34.3：鸡煲新模式背景、商人三场景与极速图鉴；普通/极速共用 merchant 选择，假商人保留自己的选择，但两家族列出相同包，未制作部分原版回退。详情见 `STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_defect_modes_and_merchant_variants.md`。未上传工坊。
-
-## 2026-11-17：未点击角色的头像（1.0.34.4）
-
-当前内部版本 **1.0.34.4**；工坊公开版仍为 1.0.34。新 CharacterStripPortraits 在列表刷新时按每个角色保存的选择读取代码头像，支持头像 getter / 按钮 Init postfix，未聚焦角色无需先点击。保留资源皮肤优先级、锁定状态及双层贴图同步，不激活其他角色完整 runtime。双端、真实愚者合同和保护角色离线回归通过，未实机渲染。详见 STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_unfocused_character_portraits.md。
-
-## 2026-11-17：工坊 1.0.35 已发布
-
-当前交付版本为 **1.0.35 / 内部 1.0.35.0**，汇总上方四个内测修复。用户确认后已更新原条目 3787302680，15 语言回读全部通过。正式/测试安装包、staging、游戏本地和订阅目录已同步校验；项目记录见根目录 项目工作记录_本次对话至1.0.35_2026-11-17.md，发布证据见 RELEASE_2026-11-17_workshop_1.0.35.md。后续未上传修复从 1.0.35.1 开始。
-
-## 2026-11-17：生物图鉴扩展（内部 1.0.35.1）
-
-生物图鉴补齐奥斯提、异鸟成鸟、瓦皮；奥斯提下拉和状态与选人界面共用，提供实际可用动作并支持帧动画。新版显示五项，正式版保留原两项加奥斯提。专项证据见 STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_extra_creatures_compendium.md。同 DLL 双端和保护回归通过；本次只部署内测包并推送 Git，工坊公开版保持 1.0.35。
-
-## 2026-11-17：成鸟完整攻击（内部 1.0.35.2）
-
-接入原生 byrdine_overlay_vfx 的全屏俯冲，按 GodByrdPower 的 0.6 秒延时和原声播放；保留准备/落地及拖尾材质，隔离真实战斗工厂。重复点击与图鉴退出会取消并清理。详见 STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-17_byrdine_full_attack.md。双端和生物专项通过，未实机渲染；本次不上传工坊。
-
-## 2026-11-17：工坊 1.0.36 与新增交接文档
-
-当前交付 **1.0.36 / 内部 1.0.36.0**，用户确认后已汇总生物扩展及完整成鸟攻击上传原条目，15 语言回读通过。根目录新增 项目工作记录_本次对话至1.0.36_2026-11-17.md、项目注意事项_踩坑复盘与排查清单_2026-11-17.md 和 RELEASE_2026-11-17_workshop_1.0.36.md。注意事项按已确认/历史待确认区分，附全部 67 份 ISSUE 索引。后续内测从 1.0.36.1 开始。
-
-## 2026-11-18 补充
-当前内部版本 1.0.36.1（公开仍为 1.0.36），事件包切换修复及验证见 [排查记录](STS2-SkinChanger_修改件/docs/issues/ISSUE_2026-11-18_event_pack_switching.md)。未上传工坊。
-
-## 1.0.36.2 补充
-恢复假商人背景多来源选择；详见 [修复报告](假商人背景修复报告_1.0.36.2.md)。公开版本仍为 1.0.36，未上传工坊。
+每个版本的改动、验证范围与发布状态统一记在 [CHANGELOG.md](CHANGELOG.md)；发布记录与维修日志在 `STS2-SkinChanger_修改件/docs/issues/`。本文档只保留当前状态与操作说明，不再按版本追加流水。
