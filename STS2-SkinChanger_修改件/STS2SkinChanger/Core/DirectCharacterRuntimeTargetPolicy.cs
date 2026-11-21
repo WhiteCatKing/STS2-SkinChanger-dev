@@ -37,9 +37,18 @@ internal static class DirectCharacterRuntimeTargetPolicy
             .Where(char.IsLetterOrDigit)
             .Select(char.ToLowerInvariant)
             .ToArray());
-        return normalized is "characterid" or "characterentry" ||
-               normalized.StartsWith("targetcharacter", StringComparison.Ordinal) ||
-               normalized.StartsWith("skincharacter", StringComparison.Ordinal) ||
-               normalized.StartsWith("runtimeskincharacter", StringComparison.Ordinal);
+        // 作者声明「本包替换哪个角色」的字段名各式各样（CharacterKey、TargetCharacterId、
+        // SkinCharacter…）。这里只按名字含 character 收窄候选，真正的判定在
+        // ResolveTargets：常量值必须正好等于已知角色组 id。名字里带 default/original/
+        // fallback 的是「没选中时退回谁」的兼容字段，不能当成声明，否则完整皮肤会串进
+        // 另一个角色的列表。
+        if (normalized.Contains("default", StringComparison.Ordinal) ||
+            normalized.Contains("original", StringComparison.Ordinal) ||
+            normalized.Contains("fallback", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return normalized.Contains("character", StringComparison.Ordinal);
     }
 }

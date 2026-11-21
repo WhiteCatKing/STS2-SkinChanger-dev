@@ -2016,6 +2016,7 @@ ModPrivateDependencyPolicyTests.Run();
 GamePackLocatorTests.Run();
 QuitInterceptionTests.Run();
 MonsterRuntimePresentationPolicyTests.Run();
+DirectCharacterRuntimeTargetPolicyTests.Run();
 BackgroundSkinPolicyTests.Run();
 FakeMerchantEventArtPolicyTests.Run();
 MerchantFigureRestorePolicyTests.Run();

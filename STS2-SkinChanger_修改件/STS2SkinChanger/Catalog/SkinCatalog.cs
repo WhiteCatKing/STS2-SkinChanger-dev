@@ -1021,6 +1021,16 @@ internal sealed partial class SkinCatalog : IDisposable
                     remapFilter: null);
             }
 
+            // 与 BuildGroups 同一口径：从基线反推已知角色组 id。整包运行时外观的静态识别要用它
+            // 校验作者声明的目标角色，避免把普通字符串字段误当成角色声明。
+            var knownCharacterGroupIds = baselineIndexes
+                .SelectMany(index => index.Assets.Keys)
+                .Select(TryGetUnambiguousCharacterGroup)
+                .Where(group => group != null)
+                .Cast<GroupIdentity>()
+                .Select(group => group.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
             foreach (var mod in modList.Where(mod => !mod.AffectsGameplay))
             {
                 if (IndependentFoolSkinContract.Matches(mod))
@@ -1222,6 +1232,16 @@ internal sealed partial class SkinCatalog : IDisposable
                                 $"未按皮肤接管 {mod.Name ?? mod.Id}：它的补丁接管的是资源加载管线" +
                                 "（AssetCache/AssetLoadingSession），属于资源替换工具而不是外观包；" +
                                 "已交回游戏原加载器，其 DLL 与 PCK 按作者原意完整加载。");
+                        }
+                        else if (DeclaresDirectCharacterRuntimeTarget(
+                                     mod,
+                                     knownCharacterGroupIds))
+                        {
+                            // 自绘角色的整包皮肤（例如私有的 actor.tscn + 网格动画 + 自定义 shader）：
+                            // DLL 补丁 CharacterModel.CreateVisuals 自己实例化角色，包里一套规范资源
+                            // 都不覆盖。只要静态能确认它替换的是哪个角色，就按皮肤接管——被选中时挂载
+                            // 它的 PCK 并启用其补丁，未选中时角色走原皮或其他皮肤。
+                            visualGroups = 1;
                         }
                         else if (packResourceCount >= SubstantialPackResourceCount)
                         {
@@ -6833,6 +6853,40 @@ internal sealed partial class SkinCatalog : IDisposable
     internal static string? ResolvePartTakeoverDefault(IEnumerable<SkinOption> options) =>
         BaselinePartTakeoverPolicy.ResolveAdoptedDefault(
             [.. options.Where(option => option.IsBaselinePartOverride).Select(option => option.Id)]);
+
+    /// <summary>
+    /// Whether a package statically declares which character it replaces at runtime. Some full
+    /// character skins ship a private actor scene (their own <c>actor.tscn</c>, mesh animation data
+    /// and shaders) and instantiate it from a Harmony patch instead of overriding canonical game
+    /// resources; then the declared character is the only evidence that the pack targets a
+    /// pickable character. Only assembly metadata is read — the DLL is never loaded or executed.
+    /// </summary>
+    private static bool DeclaresDirectCharacterRuntimeTarget(
+        SkinModDescriptor mod,
+        IReadOnlySet<string> knownCharacterGroupIds)
+    {
+        if (mod.RootPath == null || !mod.HasDll || knownCharacterGroupIds.Count == 0)
+        {
+            return false;
+        }
+
+        if (!ReplacesCharacterVisualsAtRuntime(mod))
+        {
+            return false;
+        }
+
+        try
+        {
+            return DirectCharacterRuntimeTargetScanner
+                .Scan(mod.RootPath, mod.ResourceNamespaceId, knownCharacterGroupIds)
+                .Count > 0;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or BadImageFormatException)
+        {
+            return false;
+        }
+    }
 
     private static void AddDirectCharacterRuntimeProviderOptions(
         IReadOnlyCollection<PckResourceIndex> indexes,
