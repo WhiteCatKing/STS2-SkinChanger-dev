@@ -98,9 +98,9 @@ git commit -q -F $tmp
 | `workshop\workshop.json` | `internalTestVersion` |
 | `STS2SkinChanger\STS2SkinChanger.csproj` | `Version` / `AssemblyVersion` / `FileVersion` / `InformationalVersion` |
 
-规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.37`；后续内测保持此公开版本，只提高四段内测标记。
+规则：**没上传工坊只加第四位**；真正上传工坊时提升第三位、第四位归零，并同步公开三段版本与安装包 manifest。当前公开版本为 `1.0.38`；后续内测保持此公开版本，只提高四段内测标记。
 
-当前值：`1.0.37.2`（工坊公开 `1.0.37`）。发布记录在 `STS2-SkinChanger_修改件/docs/issues/RELEASE_*.md`，维修记录在 `STS2-SkinChanger_修改件/docs/issues/maintenance/`，累计变更见 `CHANGELOG.md`，踩坑与排查必读 `STS2-SkinChanger_修改件/docs/agents/pitfalls-checklist.md`。
+当前值：`1.0.38.0`（工坊公开 `1.0.38`）。发布记录在 `STS2-SkinChanger_修改件/docs/issues/RELEASE_*.md`，维修记录在 `STS2-SkinChanger_修改件/docs/issues/maintenance/`，累计变更见 `CHANGELOG.md`，踩坑与排查必读 `STS2-SkinChanger_修改件/docs/agents/pitfalls-checklist.md`。
 
 发布（**只在作者明确要求时做**，顺序：先工坊再 GitHub）：
 
@@ -199,14 +199,14 @@ Initialize()
 6. `PowerShell` 里 `Select-String -Path 'dir\**\*.cs'` **不递归**，统计会少算；要用 `Get-ChildItem -Recurse -Filter *.cs | Select-String`。
 7. 提交信息：PowerShell 没有 heredoc，写临时文件 + `git commit -F`（UTF-8 无 BOM）。
 8. 直连 GitHub push 被重置，必须走 `http.proxy=http://127.0.0.1:7890`。
-9. 版本号四处漏一处就不一致——改版本时先搜 `1.0.32`：`git grep -n "1\.0\.32\."`。
+9. 版本号四处漏一处就不一致——改版本时先搜 `1.0.38`：`git grep -n "1\.0\.38\."`。
 
 ---
 
 ## 8. 当前状态 / 待办
 
-- 主线 `main` = **1.0.37.2**（`0619028`，远端）；本地已合并 `origin/merge/1.0.37-fixes-20261121`，工作区版本为 **内测 1.0.37.3**（未 push）。工坊公开版 `1.0.37` 已用 1.0.37.3 内容重新发布（2026-11-21 03:26，包 3,919,527 B，简介与更新说明已同步）。仓库已改为公开：`https://github.com/WhiteCatKing/STS2-SkinChanger-dev`，写权限仅 `WhiteCatKing`（admin）、`zuimao-feng`、`1800yun-debug`。
-- 1.0.37.3 已构建并部署到桌面与游戏目录两处测试版安装包（`Gurio.SkinChanger.dll` 3,901,440 B，旧文件改名 `*.disabled_20261121` 保留）；双端引用 0 警告 0 错误、LogicTests 与完整无参数 RuntimeTests 全绿。
+- 远端 `main` = `0619028`（1.0.37.2）；本地已合并 `docs/maintenance-rules`（`10bacda6`）与 `merge/1.0.37-fixes-20261121`（`60588696`），工作区版本为 **公开 1.0.38 / 内测 1.0.38.0**（未 push）。工坊已用 1.0.38 内容重新发布（2026-11-22 02:52，包 3,765,415 B，简介 + 14 种语言 + 更新说明已同步）。仓库已改为公开：`https://github.com/WhiteCatKing/STS2-SkinChanger-dev`，写权限仅 `WhiteCatKing`（admin）、`zuimao-feng`、`1800yun-debug`。
+- 1.0.38.0 已构建并部署到桌面与游戏目录两处测试版安装包（`Gurio.SkinChanger.dll` 3,747,328 B，旧文件改名 `*.disabled_20261122c` 保留）；双端引用 0 警告 0 错误、LogicTests 与完整无参数 RuntimeTests 全绿、受保护四项全 0。正式版引用目录 `C:\sts2refs\stable` 已换成游戏 v0.111.1 的程序集，旧的 v0.107.1 副本备份在 `C:\sts2refs\v0.107.1`。
 - 已知未修缺陷：Ancient 稀有度卡牌的卡图包组归属不一致——注册时用 `CatalogGroupId`（`fool`），运行时 Ancient 卡却走 `ancients` 组，导致 `divine_shot`（神力射击）、`lost_lute`（失落鲁特琴）检测不到卡图包。定位见 `STS2-SkinChanger_修改件/docs/agents/pitfalls-checklist.md`；修法是让卡图包 option 也走 `FinalizeCardGroups` 的 Ancient 镜像规则。
 - 待作者真机确认：商人读档后的刷新、联机 4 人战斗、选人界面中央预览小人、贞德真实包回归（本机只有十字军包）。
 - 待决定：八个模块是否改按需激活（见 §5.2）。

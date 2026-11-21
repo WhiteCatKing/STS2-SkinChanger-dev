@@ -1,3 +1,11 @@
+## 1.0.38.0（2026-11-22，已发布工坊）
+- 首次正式上传：按规矩把公开版本升到 `1.0.38`、内测升到 `1.0.38.0`（csproj 四字段、`Entry.InternalTestVersion`、`SkinChanger.json`、`workshop/workshop.json` 同步），生产包用**正式版引用** `C:\sts2refs\stable`（已换成 v0.111.1 的 13 个程序集）产出的 Release 构建，不再用 ReleaseBeta 产物上台。
+- 内容 = 1.0.37.4 的全部修复（图鉴「切换 / 其他图鉴」入口不再消失、对局清理不再让别人手里的卡图失效、卡牌管线第三方异常隔离、加载顺序风险提示）+ 合并进来的维护者修复。
+- 门禁：`Release` 3,747,328 B / SHA256 `1CCCA4673CBC2A71`、`ReleaseBeta` 3,951,104 B / `3B9B0ABE5ABF2017`，双引用均 0 警告 0 错误；LogicTests 末行 `Skin Changer logic policy tests passed.`；完整无参数 RuntimeTests 116 行、`EXIT=0`、末行 `Workshop policy tests passed.`；受保护四项（runtime-safety / protected-boundaries / preview-binding / crusader-hooks）全部 0。`--test-protected-characters` 未跑——本机无贞德真实包（脚本必填 `-JoanSfwRoot`/`-JoanWearRoot`）。
+- 部署：Release 产物（3,747,328 B、FileVersion 1.0.38.0、SHA256 `7914BB81E929BAE9`）与 `SkinChanger.json` 已写入桌面与游戏两处 mod 目录，旧文件改名 `*.disabled_20261122c`。
+- 工坊：`content-only` → `desc-only` → `langs`（14 种语言全 `k_EResultOK`）→ `note-only` 四次 `k_EResultOK`；API 回读 `file_size=3765415`、`time_updated` 2026-11-22 02:52:02、简介 2,345 字（`1.0.38` 出现 2 次、无 `0.107.1` 残留、开源与投稿链接改指向 `STS2-SkinChanger-dev`）。简介的 `[h2]1.0.38[/h2]` 段与更新说明换成 1.0.38 文案，14 种语言各补一句本版修复说明并把「正式版 v0.107.1」更正为「v0.111.1」。
+- 未 push 远端。
+
 ## 1.0.37.4（2026-11-22，内测）
 - 修正式版 v0.111.1「怪物图鉴右上角的『切换 / 其他图鉴』入口消失」：`Core/VakuuVanillaArt.cs` 的 `VakuuVanillaArtPatch` 只在测试版存在目标方法 `Vakuu.ConfigureBackgroundScene`，正式版没有。原先靠 `TargetMethods()` 一个都不产出来「和平跳过」，但 Harmony 在补丁类最终 0 个目标时抛 `ArgumentException / Undefined target method for patch method`，于是 `FeatureRegistry` 按「整套要么全装」把 `ancient` 模块 15 个补丁类整体回滚，`BestiaryEntranceSwitcher` 提供的入口随之消失。
 - 修法：补上 `private static bool Prepare() => FindTarget() is not null;`，让 Harmony 在目标缺失时整类跳过（同仓库 `SkinWorkshopService`、`ManagedSkinModLoader` 已有的写法），其余 14 个 ancient 补丁照常安装。
