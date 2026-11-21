@@ -3,6 +3,7 @@
 动手前先读两份：
 - [docs/agents/maintenance-rules.md](docs/agents/maintenance-rules.md)：不许丢的修复、改完必须做的双引用构建与测试、需要停下来先问的产品取舍、交接格式、排查第三方 Mod 的经验。
 - [docs/agents/maintenance-workflow.md](docs/agents/maintenance-workflow.md)：一个问题从报上来到交付的六个步骤和每步的通过标准，末尾有交件前核对清单，每次交件逐项核对。
+- [docs/agents/optimization-plan.md](docs/agents/optimization-plan.md)：近期（2026-11-21 起约一周）的优化计划、两边分工、改到哪些文件前先打招呼。
 
 ## 当前环境
 
