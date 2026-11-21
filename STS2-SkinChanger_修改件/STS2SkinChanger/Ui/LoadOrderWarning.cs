@@ -19,9 +19,8 @@ internal static class LoadOrderWarningController
     private static bool _pending;
     private static bool _shownThisSession;
     private static bool _autoReorderedThisSession;
-    private static bool _choiceDialog;
-    private static Mod[] _actionableProviders = [];
-    private static Mod[] _choiceProviders = [];
+    private static LoadOrderPromptPlan? _pendingPlan;
+    private static Mod[] _reorderTargets = [];
 
     public static void Schedule()
     {
@@ -32,43 +31,59 @@ internal static class LoadOrderWarningController
 
         var currentOrder = BuildOrderSnapshot();
         var previousOrder = SkinService.GetLastKnownSkinProviderOrder();
-        if (previousOrder == null)
+        var providersAboveSelf = ManagedSkinModLoader.SkinProvidersBeforeSelf;
+        var hasExternalManager = LoadOrderRiskDetector.IsExternalLoadOrderManagerLoaded(ModManager.Mods);
+        var dangerousProviders = LoadOrderRiskDetector.DetectDangerousProviders(
+            providersAboveSelf,
+            SkinService.Catalog);
+        if (dangerousProviders.Count > 0)
         {
-            if (!SkinService.HasLoadOrderHistory())
+            ModLog.Warn(LoadOrderRiskDetector.FormatRiskLogLine(dangerousProviders));
+        }
+
+        var isFirstInstall = previousOrder == null && !SkinService.HasLoadOrderHistory();
+        var isUpgradeBaseline = previousOrder == null && !isFirstInstall;
+        var isLegacySnapshot = previousOrder != null && previousOrder.Any(Entry.IsSelfModId);
+        var orderChanged = previousOrder != null &&
+                           !isLegacySnapshot &&
+                           !currentOrder.SequenceEqual(previousOrder, StringComparer.OrdinalIgnoreCase);
+
+        if (dangerousProviders.Count == 0)
+        {
+            if (isUpgradeBaseline)
             {
-                // Genuine first install: keep the original auto-move + prompt behaviour.
-                ScheduleFirstInstall();
+                // Upgraded from a build that did not store an order snapshot. There is nothing to
+                // compare against, so treat this launch as the baseline and stay silent; the next
+                // launch can then honour the AND condition (order changed AND provider before us).
+                SkinService.SetLastKnownSkinProviderOrder(currentOrder);
+                ModLog.Info("已记录当前 Mod 顺序快照（没有上一次快照，不弹出加载顺序询问）。");
                 return;
             }
 
-            // Upgraded from a build that did not store an order snapshot. There is nothing to
-            // compare against, so treat this launch as the baseline and stay silent; the next
-            // launch can then honour the AND condition (order changed AND provider before us).
-            SkinService.SetLastKnownSkinProviderOrder(currentOrder);
-            ModLog.Info("已记录当前 Mod 顺序快照（没有上一次快照，不弹出加载顺序询问）。");
-            return;
+            if (isLegacySnapshot)
+            {
+                // Snapshot written by the previous build stored every skin provider including self.
+                // Migrate it to the new "providers above self only" format without prompting.
+                SkinService.SetLastKnownSkinProviderOrder(currentOrder);
+                ModLog.Info("已迁移旧版加载顺序快照为“本 Mod 之前的提供者”格式，不弹出询问。");
+                return;
+            }
         }
 
-        if (previousOrder.Any(Entry.IsSelfModId))
-        {
-            // Snapshot written by the previous build stored every skin provider including self.
-            // Migrate it to the new "providers above self only" format without prompting.
-            SkinService.SetLastKnownSkinProviderOrder(currentOrder);
-            ModLog.Info("已迁移旧版加载顺序快照为“本 Mod 之前的提供者”格式，不弹出询问。");
-            return;
-        }
+        var shouldShowWarning = SkinService.ShouldShowLoadOrderWarning(
+            ManagedSkinModLoader.IsBeforeAllSkinProviders);
+        var plan = LoadOrderRiskDetector.ResolvePromptPlan(
+            hasExternalManager,
+            isFirstInstall,
+            isUpgradeBaseline || isLegacySnapshot,
+            orderChanged,
+            shouldShowWarning,
+            providersAboveSelf,
+            dangerousProviders);
 
-        var orderChanged = !currentOrder.SequenceEqual(previousOrder, StringComparer.OrdinalIgnoreCase);
-        if (!orderChanged)
+        if (plan.Kind == LoadOrderPromptKind.None)
         {
-            // Order is exactly what it was last run: do not prompt and do not move anything,
-            // even if providers are still above SkinChanger (the player declined last time).
-            return;
-        }
-        var providersAboveSelf = ManagedSkinModLoader.SkinProvidersBeforeSelf;
-        if (!ShouldPromptForOrderChange(orderChanged, providersAboveSelf.Count))
-        {
-            if (providersAboveSelf.Count == 0)
+            if (plan.SaveSnapshotOnSchedule)
             {
                 SkinService.SetLastKnownSkinProviderOrder(currentOrder);
             }
@@ -76,72 +91,70 @@ internal static class LoadOrderWarningController
             return;
         }
 
-        if (!SkinService.ShouldShowLoadOrderWarning(
-                ManagedSkinModLoader.IsBeforeAllSkinProviders))
+        if (plan.ShouldAutoMove)
         {
-            // Order changed, but no skin provider is before SkinChanger. Remember the new order
-            // and stay silent.
+            if (!TryAutoMoveFirstInstall(providersAboveSelf))
+            {
+                return;
+            }
+
+            SkinService.SetLastKnownSkinProviderOrder([]);
+        }
+        else if (plan.SaveSnapshotOnSchedule)
+        {
             SkinService.SetLastKnownSkinProviderOrder(currentOrder);
-            return;
         }
 
-        if (providersAboveSelf.Count == 0)
-        {
-            SkinService.SetLastKnownSkinProviderOrder(currentOrder);
-            return;
-        }
-
-        _choiceProviders = providersAboveSelf.ToArray();
-        _choiceDialog = true;
+        _pendingPlan = plan;
+        _reorderTargets = providersAboveSelf.ToArray();
         _pending = true;
-        ModLog.Info(
-            "检测到皮肤 Mod 排序变更且位于本 Mod 之前，准备询问是否移动本 Mod：" +
-            string.Join("、", providersAboveSelf.Select(mod => mod.manifest?.name ?? mod.manifest?.id ?? mod.path)));
+        ModLog.Info(DescribeScheduledPlan(plan, hasExternalManager));
         TryShow();
     }
 
-    private static void ScheduleFirstInstall()
+    private static bool TryAutoMoveFirstInstall(IReadOnlyList<Mod> providersAboveSelf)
     {
-        // Keep the original first-install flow untouched: auto-move and the old prompt.
-        if (!SkinService.ShouldShowLoadOrderWarning(
-                ManagedSkinModLoader.IsBeforeAllSkinProviders))
+        if (_autoReorderedThisSession)
         {
-            SkinService.SetLastKnownSkinProviderOrder([]);
-            return;
+            return true;
         }
 
-        var providersAboveSelf = ManagedSkinModLoader.SkinProvidersBeforeSelf;
-        if (providersAboveSelf.Count == 0)
+        try
         {
-            SkinService.SetLastKnownSkinProviderOrder([]);
-            return;
+            MoveSelfBeforeSkinProviders(providersAboveSelf
+                .Select(mod => mod.manifest?.id ?? string.Empty)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToArray());
+            _autoReorderedThisSession = true;
+            ModLog.Info(
+                "已自动将皮肤切换器-Skin Changer 移到未手动上移的皮肤 Mod 之前；需要重启游戏后才能开始接管。");
+            return true;
         }
-
-        _actionableProviders = providersAboveSelf.ToArray();
-        if (!_autoReorderedThisSession)
+        catch (Exception exception)
         {
-            try
-            {
-                MoveSelfBeforeSkinProviders(providersAboveSelf
-                    .Select(mod => mod.manifest?.id ?? string.Empty)
-                    .Where(id => !string.IsNullOrWhiteSpace(id))
-                    .ToArray());
-                _autoReorderedThisSession = true;
-                ModLog.Info(
-                    "已自动将皮肤切换器-Skin Changer 移到未手动上移的皮肤 Mod 之前；需要重启游戏后才能开始接管。");
-            }
-            catch (Exception exception)
-            {
-                ModLog.Error("自动调整皮肤 Mod 加载顺序失败：" + exception.GetBaseException().Message);
-                return;
-            }
+            ModLog.Error("自动调整皮肤 Mod 加载顺序失败：" + exception.GetBaseException().Message);
+            return false;
         }
+    }
 
-        SkinService.SetLastKnownSkinProviderOrder([]);
-        _choiceDialog = false;
-        _pending = true;
-        ModLog.Info("已准备显示首次安装的加载顺序提示。");
-        TryShow();
+    private static string DescribeScheduledPlan(LoadOrderPromptPlan plan, bool hasExternalManager)
+    {
+        var names = string.Join("、", plan.ListedProviders.Select(LoadOrderRiskDetector.GetDisplayName));
+        return plan.Kind switch
+        {
+            LoadOrderPromptKind.FirstInstallAutoMoved =>
+                "已准备显示首次安装的加载顺序提示。",
+            LoadOrderPromptKind.FirstInstallRiskAutoMoved =>
+                "已自动调整首次安装顺序，准备显示提前加载危险提供者的重启提示：" + names,
+            LoadOrderPromptKind.RiskChoice =>
+                "检测到提前加载的危险皮肤提供者，准备弹出风险提示：" + names,
+            LoadOrderPromptKind.RiskWithExternalManager =>
+                "检测到 LoadOrderManager 且存在提前加载的危险皮肤提供者，准备显示手动调整提示（不自动移动）：" + names,
+            LoadOrderPromptKind.OrderWithExternalManager =>
+                "检测到 LoadOrderManager 且有皮肤提供者排在本 Mod 前面，准备显示手动调整提示（不自动移动）：" + names,
+            _ =>
+                $"检测到皮肤 Mod 排序变更且位于本 Mod 之前（LoadOrderManager={hasExternalManager}），准备询问是否移动本 Mod：{names}"
+        };
     }
 
     // Only the providers currently above SkinChanger matter. Ordering changes after SkinChanger
@@ -157,19 +170,18 @@ internal static class LoadOrderWarningController
     public static void TryShow()
     {
         var container = NModalContainer.Instance;
-        if (!_pending || _shownThisSession ||
+        if (!_pending || _shownThisSession || _pendingPlan == null ||
             container == null || container.OpenModal != null)
         {
             return;
         }
 
         _pending = false;
-        TaskHelper.RunSafely(ShowWarning(container));
+        TaskHelper.RunSafely(ShowWarning(container, _pendingPlan));
     }
 
-    private static async Task ShowWarning(NModalContainer container)
+    private static async Task ShowWarning(NModalContainer container, LoadOrderPromptPlan plan)
     {
-        var choiceDialog = _choiceDialog;
         try
         {
             var popup = NGenericPopup.Create();
@@ -197,30 +209,57 @@ internal static class LoadOrderWarningController
 
             verticalPopup.SetText(
                 ModLocalization.Get(ModText.LoadOrderTitle),
-                choiceDialog ? BuildChoiceMessage() : BuildLoadOrderMessage());
-            verticalPopup.YesButton.SetText(ModLocalization.Get(ModText.PrioritizeAndRestart));
-            verticalPopup.NoButton.SetText(ModLocalization.Get(
-                choiceDialog ? ModText.LoadOrderDecline : ModText.Acknowledge));
-            _choiceDialog = false;
-            _shownThisSession = true;
-            ModLog.Info(choiceDialog
-                ? "已显示“是否将本 Mod 移到前面”的加载顺序询问框。"
-                : "已显示需要重启才能生效的加载顺序提示框。");
-
-            var restartRequested = await confirmation;
-            if (choiceDialog)
+                BuildPromptMessage(plan));
+            if (plan.ShowRestartButton)
             {
-                if (!restartRequested)
+                verticalPopup.YesButton.SetText(ModLocalization.Get(ModText.PrioritizeAndRestart));
+                verticalPopup.NoButton.SetText(ModLocalization.Get(
+                    plan.ShouldAutoMove ? ModText.Acknowledge : ModText.LoadOrderDecline));
+            }
+            else
+            {
+                verticalPopup.YesButton.SetText(ModLocalization.Get(ModText.Acknowledge));
+                verticalPopup.NoButton.Hide();
+            }
+
+            _pendingPlan = null;
+            _shownThisSession = true;
+            ModLog.Info(plan.Kind switch
+            {
+                LoadOrderPromptKind.RiskChoice or LoadOrderPromptKind.RiskWithExternalManager =>
+                    "已显示提前加载危险皮肤提供者的风险提示框。",
+                LoadOrderPromptKind.OrderWithExternalManager =>
+                    "已显示 LoadOrderManager 加载顺序手动调整提示框。",
+                LoadOrderPromptKind.OrderChangedChoice =>
+                    "已显示“是否将本 Mod 移到前面”的加载顺序询问框。",
+                _ =>
+                    "已显示需要重启才能生效的加载顺序提示框。"
+            });
+
+            var confirmed = await confirmation;
+            if (!plan.ShowRestartButton)
+            {
+                ModLog.Info("玩家确认已知晓加载顺序提示（未执行自动移动或重启）。");
+                return;
+            }
+
+            if (!plan.ShouldAutoMove)
+            {
+                if (!confirmed)
                 {
-                    // Save the current order so the same unchanged order does not prompt again.
-                    SkinService.SetLastKnownSkinProviderOrder(BuildOrderSnapshot());
+                    if (plan.SaveSnapshotOnDecline)
+                    {
+                        // Save the current order so the same unchanged non-risky order does not prompt again.
+                        SkinService.SetLastKnownSkinProviderOrder(BuildOrderSnapshot());
+                    }
+
                     ModLog.Info("玩家选择“先不了”，保留当前 Mod 顺序。");
                     return;
                 }
 
                 try
                 {
-                    MoveSelfBeforeSkinProviders(_choiceProviders
+                    MoveSelfBeforeSkinProviders(_reorderTargets
                         .Select(mod => mod.manifest?.id ?? string.Empty)
                         .Where(id => !string.IsNullOrWhiteSpace(id))
                         .ToArray());
@@ -240,7 +279,7 @@ internal static class LoadOrderWarningController
                 return;
             }
 
-            if (restartRequested)
+            if (confirmed)
             {
                 RestartGame(verticalPopup);
             }
@@ -254,20 +293,26 @@ internal static class LoadOrderWarningController
             ModLog.Error("显示加载顺序提示框失败：" + exception.GetBaseException().Message);
             if (!_shownThisSession)
             {
+                _pendingPlan = plan;
                 _pending = true;
             }
         }
     }
 
-    private static string BuildChoiceMessage()
+    internal static string BuildPromptMessage(LoadOrderPromptPlan plan)
     {
-        var providers = _choiceProviders
-            .Select(mod => mod.manifest?.name ?? mod.manifest?.id ?? mod.path)
+        if (plan.MessageKey is not { } messageKey)
+        {
+            return string.Empty;
+        }
+
+        var providers = plan.ListedProviders
+            .Select(LoadOrderRiskDetector.GetDisplayName)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Distinct(StringComparer.CurrentCultureIgnoreCase)
             .Select(name => "• " + EscapeBbCode(name))
             .ToArray();
-        return ModLocalization.Get(ModText.LoadOrderChoiceMessage)
+        return ModLocalization.Get(messageKey)
             .Replace("{0}", string.Join("\n", providers), StringComparison.Ordinal);
     }
 
@@ -301,18 +346,6 @@ internal static class LoadOrderWarningController
                 ModLocalization.Get(ModText.LoadOrderFailure) + "\n\n" +
                 exception.GetBaseException().Message);
         }
-    }
-
-    private static string BuildLoadOrderMessage()
-    {
-        var providers = _actionableProviders
-            .Select(mod => mod.manifest?.name ?? mod.manifest?.id ?? mod.path)
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .Distinct(StringComparer.CurrentCultureIgnoreCase)
-            .Select(name => "• " + EscapeBbCode(name))
-            .ToArray();
-        return ModLocalization.Get(ModText.LoadOrderMessage)
-            .Replace("{0}", string.Join("\n", providers), StringComparison.Ordinal);
     }
 
     private static string EscapeBbCode(string value) => value

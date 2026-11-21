@@ -121,7 +121,11 @@ internal enum ModText
     BundleScopeConflict,
     RandomCharacterSkin,
     LoadOrderChoiceMessage,
-    LoadOrderDecline
+    LoadOrderDecline,
+    LoadOrderRiskMessage,
+    LoadOrderRiskWithManagerMessage,
+    LoadOrderWithManagerMessage,
+    LoadOrderRiskFirstInstallMessage
 }
 
 internal static partial class ModLocalization
@@ -1635,6 +1639,86 @@ internal static partial class ModLocalization
             ["tur"] = "Şimdi değil"
         };
 
+    private static readonly IReadOnlyDictionary<string, string> LoadOrderRiskMessageTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "The following skin mods loaded before Skin Changer and may cause conflicts:\n{0}\n\nThis can cause missing hands or cards stuck in the top-left corner during multiplayer, or show modded card art even when Game Default is selected.\n\nMove Skin Changer before these skin mods and restart the game.",
+            ["zhs"] = "以下皮肤 Mod 排在本 Mod 前面并已提前加载，存在兼容风险：\n{0}\n\n这可能导致联机时出现手牌消失、出牌卡在屏幕左上角，或者选「游戏默认」也显示这些包的卡图。\n\n请将皮肤切换器-Skin Changer 移到这些皮肤包前面后重启游戏。",
+            ["zht"] = "以下外觀 Mod 排在 Skin Changer 前面並已提前載入，存在相容風險：\n{0}\n\n這可能導致連線時手牌消失、出牌卡在畫面左上角，或選「遊戲預設」時仍顯示這些包的卡圖。\n\n請將外觀切換器-Skin Changer 移到這些外觀包前面後重新啟動遊戲。",
+            ["deu"] = "Die folgenden Skin-Mods wurden vor Skin Changer geladen und können Konflikte verursachen:\n{0}\n\nDies kann im Mehrspieler zu fehlenden Handkarten, oben links hängenbleibenden Karten oder fremden Kartenbildern trotz Spielstandard führen.\n\nVerschiebe Skin Changer vor diese Skin-Mods und starte das Spiel neu.",
+            ["esp"] = "Los siguientes mods de aspecto se cargaron antes que Skin Changer y pueden causar conflictos:\n{0}\n\nEsto puede provocar manos vacías o cartas atascadas en la esquina superior izquierda en multijugador, o mostrar arte de otro mod al elegir el predeterminado.\n\nMueve Skin Changer delante de estos mods y reinicia el juego.",
+            ["spa"] = "Los siguientes mods de aspecto se cargaron antes que Skin Changer y pueden causar conflictos:\n{0}\n\nEsto puede provocar manos vacías o cartas atascadas en la esquina superior izquierda en multijugador, o mostrar arte de otro mod al elegir el predeterminado.\n\nMueve Skin Changer delante de estos mods y reinicia el juego.",
+            ["fra"] = "Les mods d’apparence suivants se sont chargés avant Skin Changer et peuvent provoquer des conflits :\n{0}\n\nCela peut faire disparaître la main ou bloquer les cartes en haut à gauche en multijoueur, ou afficher leurs illustrations même avec l’option par défaut.\n\nDéplacez Skin Changer devant ces mods puis redémarrez le jeu.",
+            ["ita"] = "I seguenti mod di aspetto sono stati caricati prima di Skin Changer e possono causare conflitti:\n{0}\n\nCiò può far scomparire la mano o bloccare le carte in alto a sinistra in multigiocatore, o mostrare illustrazioni modificate anche con Predefinito.\n\nSposta Skin Changer prima di questi mod e riavvia il gioco.",
+            ["jpn"] = "以下のスキン Mod が Skin Changer より先に読み込まれており、競合のおそれがあります：\n{0}\n\nマルチプレイで手札が消える・カードが画面左上に残る、「ゲーム標準」でも別パックの絵が表示されるなどの不具合が起きることがあります。\n\nSkin Changer をこれらのスキン Mod より前に移動してゲームを再起動してください。",
+            ["kor"] = "다음 스킨 모드가 Skin Changer보다 먼저 로드되어 충돌 위험이 있습니다:\n{0}\n\n멀티플레이 중 손패가 사라지거나 카드가 왼쪽 위에 멈추거나, 게임 기본을 선택해도 다른 팩의 카드 일러스트가 표시될 수 있습니다.\n\nSkin Changer를 이 스킨 모드들 앞으로 옮긴 뒤 게임을 재시작하세요.",
+            ["pol"] = "Następujące mody skórek załadowały się przed Skin Changer i mogą powodować konflikty:\n{0}\n\nMoże to powodować znikanie ręki, zacinanie się kart w lewym górnym rogu w trybie wieloosobowym lub wyświetlanie grafik z moda mimo wyboru domyślnej gry.\n\nPrzenieś Skin Changer przed te mody i uruchom grę ponownie.",
+            ["ptb"] = "Os seguintes mods de aparência carregaram antes do Skin Changer e podem causar conflitos:\n{0}\n\nIsso pode fazer a mão sumir ou cartas travarem no canto superior esquerdo no multijogador, ou exibir artes de outro pacote mesmo no Padrão do jogo.\n\nMova o Skin Changer para antes desses mods e reinicie o jogo.",
+            ["rus"] = "Следующие моды скинов загрузились раньше Skin Changer и могут вызывать конфликты:\n{0}\n\nВ мультиплеере могут пропадать карты в руке или зависать в левом верхнем углу, а при выборе стандарта игры — показываться чужие арты.\n\nПереместите Skin Changer перед этими модами и перезапустите игру.",
+            ["tha"] = "Mod สกินต่อไปนี้โหลดก่อน Skin Changer และอาจเกิดความขัดแย้ง:\n{0}\n\nอาจทำให้ไพ่บนมือหาย การ์ดค้างมุมซ้ายบนในโหมดผู้เล่นหลายคน หรือเลือกค่าเริ่มต้นของเกมแล้วก็ยังแสดงรูปการ์ดจากแพ็กอื่น\n\nโปรดย้าย Skin Changer ไปไว้ก่อน Mod สกินเหล่านี้แล้วรีสตาร์ตเกม",
+            ["tur"] = "Şu skin modları Skin Changer'dan önce yüklendi ve çakışmaya yol açabilir:\n{0}\n\nBu durum çok oyunculuda elin kaybolmasına, kartların sol üstte takılı kalmasına veya Oyun Varsayılanı seçiliyken bile başka paket görsellerinin görünmesine neden olabilir.\n\nSkin Changer'ı bu skin modlarının önüne taşıyıp oyunu yeniden başlat."
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> LoadOrderRiskWithManagerMessageTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "The following skin mods loaded before Skin Changer and may cause conflicts:\n{0}\n\nThis can cause missing hands or cards stuck in the top-left corner during multiplayer, or show modded card art even when Game Default is selected.\n\nLoad Order Manager is active. Please drag Skin Changer before these skin mods in Load Order Manager and restart the game.",
+            ["zhs"] = "以下皮肤 Mod 排在本 Mod 前面并已提前加载，存在兼容风险：\n{0}\n\n这可能导致联机时出现手牌消失、出牌卡在屏幕左上角，或者选「游戏默认」也显示这些包的卡图。\n\n检测到已加载 Load Order Manager，请在 Load Order Manager 里把皮肤切换器拖到这些皮肤包前面后重启游戏。",
+            ["zht"] = "以下外觀 Mod 排在 Skin Changer 前面並已提前載入，存在相容風險：\n{0}\n\n這可能導致連線時手牌消失、出牌卡在畫面左上角，或選「遊戲預設」時仍顯示這些包的卡圖。\n\n偵測到已載入 Load Order Manager，請在 Load Order Manager 裡把外觀切換器拖到這些外觀包前面後重新啟動遊戲。",
+            ["deu"] = "Die folgenden Skin-Mods wurden vor Skin Changer geladen und können Konflikte verursachen:\n{0}\n\nDies kann im Mehrspieler zu fehlenden Handkarten, oben links hängenbleibenden Karten oder fremden Kartenbildern trotz Spielstandard führen.\n\nLoad Order Manager ist aktiv. Ziehe Skin Changer in Load Order Manager vor diese Skin-Mods und starte das Spiel neu.",
+            ["esp"] = "Los siguientes mods de aspecto se cargaron antes que Skin Changer y pueden causar conflictos:\n{0}\n\nEsto puede provocar manos vacías o cartas atascadas en la esquina superior izquierda en multijugador, o mostrar arte de otro mod al elegir el predeterminado.\n\nLoad Order Manager está activo. Arrastra Skin Changer delante de estos mods en Load Order Manager y reinicia el juego.",
+            ["spa"] = "Los siguientes mods de aspecto se cargaron antes que Skin Changer y pueden causar conflictos:\n{0}\n\nEsto puede provocar manos vacías o cartas atascadas en la esquina superior izquierda en multijugador, o mostrar arte de otro mod al elegir el predeterminado.\n\nLoad Order Manager está activo. Arrastra Skin Changer delante de estos mods en Load Order Manager y reinicia el juego.",
+            ["fra"] = "Les mods d’apparence suivants se sont chargés avant Skin Changer et peuvent provoquer des conflits :\n{0}\n\nCela peut faire disparaître la main ou bloquer les cartes en haut à gauche en multijoueur, ou afficher leurs illustrations même avec l’option par défaut.\n\nLoad Order Manager est actif. Faites glisser Skin Changer devant ces mods dans Load Order Manager puis redémarrez le jeu.",
+            ["ita"] = "I seguenti mod di aspetto sono stati caricati prima di Skin Changer e possono causare conflitti:\n{0}\n\nCiò può far scomparire la mano o bloccare le carte in alto a sinistra in multigiocatore, o mostrare illustrazioni modificate anche con Predefinito.\n\nLoad Order Manager è attivo. Trascina Skin Changer prima di questi mod in Load Order Manager e riavvia il gioco.",
+            ["jpn"] = "以下のスキン Mod が Skin Changer より先に読み込まれており、競合のおそれがあります：\n{0}\n\nマルチプレイで手札が消える・カードが画面左上に残る、「ゲーム標準」でも別パックの絵が表示されるなどの不具合が起きることがあります。\n\nLoad Order Manager が有効です。Load Order Manager で Skin Changer をこれらのスキン Mod より前にドラッグして再起動してください。",
+            ["kor"] = "다음 스킨 모드가 Skin Changer보다 먼저 로드되어 충돌 위험이 있습니다:\n{0}\n\n멀티플레이 중 손패가 사라지거나 카드가 왼쪽 위에 멈추거나, 게임 기본을 선택해도 다른 팩의 카드 일러스트가 표시될 수 있습니다.\n\nLoad Order Manager가 활성화되어 있습니다. Load Order Manager에서 Skin Changer를 이 스킨 모드들 앞으로 드래그한 뒤 재시작하세요.",
+            ["pol"] = "Następujące mody skórek załadowały się przed Skin Changer i mogą powodować konflikty:\n{0}\n\nMoże to powodować znikanie ręki, zacinanie się kart w lewym górnym rogu w trybie wieloosobowym lub wyświetlanie grafik z moda mimo wyboru domyślnej gry.\n\nWykryto Load Order Manager. Przeciągnij Skin Changer przed te mody w Load Order Manager i uruchom grę ponownie.",
+            ["ptb"] = "Os seguintes mods de aparência carregaram antes do Skin Changer e podem causar conflitos:\n{0}\n\nIsso pode fazer a mão sumir ou cartas travarem no canto superior esquerdo no multijogador, ou exibir artes de outro pacote mesmo no Padrão do jogo.\n\nO Load Order Manager está ativo. Arraste o Skin Changer para antes desses mods no Load Order Manager e reinicie o jogo.",
+            ["rus"] = "Следующие моды скинов загрузились раньше Skin Changer и могут вызывать конфликты:\n{0}\n\nВ мультиплеере могут пропадать карты в руке или зависать в левом верхнем углу, а при выборе стандарта игры — показываться чужие арты.\n\nАктивен Load Order Manager. Перетащите Skin Changer перед этими модами в Load Order Manager и перезапустите игру.",
+            ["tha"] = "Mod สกินต่อไปนี้โหลดก่อน Skin Changer และอาจเกิดความขัดแย้ง:\n{0}\n\nอาจทำให้ไพ่บนมือหาย การ์ดค้างมุมซ้ายบนในโหมดผู้เล่นหลายคน หรือเลือกค่าเริ่มต้นของเกมแล้วก็ยังแสดงรูปการ์ดจากแพ็กอื่น\n\nตรวจพบ Load Order Manager โปรดลาก Skin Changer ไปไว้ก่อน Mod สกินเหล่านี้ใน Load Order Manager แล้วรีสตาร์ตเกม",
+            ["tur"] = "Şu skin modları Skin Changer'dan önce yüklendi ve çakışmaya yol açabilir:\n{0}\n\nBu durum çok oyunculuda elin kaybolmasına, kartların sol üstte takılı kalmasına veya Oyun Varsayılanı seçiliyken bile başka paket görsellerinin görünmesine neden olabilir.\n\nLoad Order Manager etkin. Lütfen Load Order Manager içinde Skin Changer'ı bu skin modlarının önüne sürükleyip oyunu yeniden başlat."
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> LoadOrderWithManagerMessageTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "The following skin mods currently load before Skin Changer:\n{0}\n\nLoad Order Manager is active. Please drag Skin Changer before these skin mods in Load Order Manager and restart the game.",
+            ["zhs"] = "检测到以下皮肤 Mod 排在本 Mod 前面：\n{0}\n\n检测到已加载 Load Order Manager，请在 Load Order Manager 里把皮肤切换器拖到这些皮肤包前面后重启游戏。",
+            ["zht"] = "偵測到以下外觀 Mod 排在 Skin Changer 前面：\n{0}\n\n偵測到已載入 Load Order Manager，請在 Load Order Manager 裡把外觀切換器拖到這些外觀包前面後重新啟動遊戲。",
+            ["deu"] = "Die folgenden Skin-Mods laden derzeit vor Skin Changer:\n{0}\n\nLoad Order Manager ist aktiv. Ziehe Skin Changer in Load Order Manager vor diese Skin-Mods und starte das Spiel neu.",
+            ["esp"] = "Los siguientes mods de aspecto se cargan actualmente antes que Skin Changer:\n{0}\n\nLoad Order Manager está activo. Arrastra Skin Changer delante de estos mods en Load Order Manager y reinicia el juego.",
+            ["spa"] = "Los siguientes mods de aspecto se cargan actualmente antes que Skin Changer:\n{0}\n\nLoad Order Manager está activo. Arrastra Skin Changer delante de estos mods en Load Order Manager y reinicia el juego.",
+            ["fra"] = "Les mods d’apparence suivants se chargent actuellement avant Skin Changer :\n{0}\n\nLoad Order Manager est actif. Faites glisser Skin Changer devant ces mods dans Load Order Manager puis redémarrez le jeu.",
+            ["ita"] = "I seguenti mod di aspetto si caricano attualmente prima di Skin Changer:\n{0}\n\nLoad Order Manager è attivo. Trascina Skin Changer prima di questi mod in Load Order Manager e riavvia il gioco.",
+            ["jpn"] = "以下のスキン Mod が Skin Changer より前に読み込まれています：\n{0}\n\nLoad Order Manager が有効です。Load Order Manager で Skin Changer をこれらのスキン Mod より前にドラッグして再起動してください。",
+            ["kor"] = "다음 스킨 모드가 현재 Skin Changer보다 먼저 로드됩니다:\n{0}\n\nLoad Order Manager가 활성화되어 있습니다. Load Order Manager에서 Skin Changer를 이 스킨 모드들 앞으로 드래그한 뒤 재시작하세요.",
+            ["pol"] = "Następujące mody skórek ładują się obecnie przed Skin Changer:\n{0}\n\nWykryto Load Order Manager. Przeciągnij Skin Changer przed te mody w Load Order Manager i uruchom grę ponownie.",
+            ["ptb"] = "Os seguintes mods de aparência carregam atualmente antes do Skin Changer:\n{0}\n\nO Load Order Manager está ativo. Arraste o Skin Changer para antes desses mods no Load Order Manager e reinicie o jogo.",
+            ["rus"] = "Следующие моды скинов сейчас загружаются перед Skin Changer:\n{0}\n\nАктивен Load Order Manager. Перетащите Skin Changer перед этими модами в Load Order Manager и перезапустите игру.",
+            ["tha"] = "Mod สกินต่อไปนี้กำลังโหลดก่อน Skin Changer:\n{0}\n\nตรวจพบ Load Order Manager โปรดลาก Skin Changer ไปไว้ก่อน Mod สกินเหล่านี้ใน Load Order Manager แล้วรีสตาร์ตเกม",
+            ["tur"] = "Şu skin modları şu anda Skin Changer'dan önce yükleniyor:\n{0}\n\nLoad Order Manager etkin. Lütfen Load Order Manager içinde Skin Changer'ı bu skin modlarının önüne sürükleyip oyunu yeniden başlat."
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> LoadOrderRiskFirstInstallMessageTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "The following skin mods loaded before Skin Changer in this session and may cause conflicts:\n{0}\n\nThis can cause missing hands or cards stuck in the top-left corner during multiplayer, or show modded card art even when Game Default is selected.\n\nSkin Changer has been moved before them automatically. [color=#F0C951][b]Restart the game for skin management to take effect.[/b][/color]",
+            ["zhs"] = "以下皮肤 Mod 本次已提前加载，存在兼容风险：\n{0}\n\n这可能导致联机时出现手牌消失、出牌卡在屏幕左上角，或者选「游戏默认」也显示这些包的卡图。\n\n本 Mod 已自动移到它们前面，[color=#F0C951][b]请重启游戏，使皮肤接管生效。[/b][/color]",
+            ["zht"] = "以下外觀 Mod 本次已提前載入，存在相容風險：\n{0}\n\n這可能導致連線時手牌消失、出牌卡在畫面左上角，或選「遊戲預設」時仍顯示這些包的卡圖。\n\n本 Mod 已自動移到它們前面，[color=#F0C951][b]請重新啟動遊戲，讓外觀管理生效。[/b][/color]",
+            ["deu"] = "Die folgenden Skin-Mods wurden in dieser Sitzung vor Skin Changer geladen und können Konflikte verursachen:\n{0}\n\nDies kann im Mehrspieler zu fehlenden Handkarten, oben links hängenbleibenden Karten oder fremden Kartenbildern trotz Spielstandard führen.\n\nSkin Changer wurde automatisch davor verschoben. [color=#F0C951][b]Starte das Spiel neu, damit die Skin-Verwaltung wirksam wird.[/b][/color]",
+            ["esp"] = "Los siguientes mods de aspecto se cargaron antes que Skin Changer en esta sesión y pueden causar conflictos:\n{0}\n\nEsto puede provocar manos vacías o cartas atascadas en la esquina superior izquierda en multijugador, o mostrar arte de otro mod al elegir el predeterminado.\n\nSkin Changer se ha movido automáticamente delante de ellos. [color=#F0C951][b]Reinicia el juego para que surta efecto.[/b][/color]",
+            ["spa"] = "Los siguientes mods de aspecto se cargaron antes que Skin Changer en esta sesión y pueden causar conflictos:\n{0}\n\nEsto puede provocar manos vacías o cartas atascadas en la esquina superior izquierda en multijugador, o mostrar arte de otro mod al elegir el predeterminado.\n\nSkin Changer se ha movido automáticamente delante de ellos. [color=#F0C951][b]Reinicia el juego para que surta efecto.[/b][/color]",
+            ["fra"] = "Les mods d’apparence suivants se sont chargés avant Skin Changer lors de cette session et peuvent provoquer des conflits :\n{0}\n\nCela peut faire disparaître la main ou bloquer les cartes en haut à gauche en multijoueur, ou afficher leurs illustrations même avec l’option par défaut.\n\nSkin Changer a été déplacé automatiquement devant eux. [color=#F0C951][b]Redémarrez le jeu pour appliquer la gestion des skins.[/b][/color]",
+            ["ita"] = "I seguenti mod di aspetto sono stati caricati prima di Skin Changer in questa sessione e possono causare conflitti:\n{0}\n\nCiò può far scomparire la mano o bloccare le carte in alto a sinistra in multigiocatore, o mostrare illustrazioni modificate anche con Predefinito.\n\nSkin Changer è stato spostato automaticamente prima di loro. [color=#F0C951][b]Riavvia il gioco per rendere effettiva la gestione.[/b][/color]",
+            ["jpn"] = "以下のスキン Mod が今回 Skin Changer より先に読み込まれており、競合のおそれがあります：\n{0}\n\nマルチプレイで手札が消える・カードが画面左上に残る、「ゲーム標準」でも別パックの絵が表示されるなどの不具合が起きることがあります。\n\nSkin Changer は自動的に前へ移動しました。[color=#F0C951][b]スキン管理を有効にするためゲームを再起動してください。[/b][/color]",
+            ["kor"] = "다음 스킨 모드가 이번 실행에서 Skin Changer보다 먼저 로드되어 충돌 위험이 있습니다:\n{0}\n\n멀티플레이 중 손패가 사라지거나 카드가 왼쪽 위에 멈추거나, 게임 기본을 선택해도 다른 팩의 카드 일러스트가 표시될 수 있습니다.\n\nSkin Changer를 자동으로 앞으로 옮겼습니다. [color=#F0C951][b]스킨 관리를 적용하려면 게임을 재시작하세요.[/b][/color]",
+            ["pol"] = "Następujące mody skórek załadowały się w tej sesji przed Skin Changer i mogą powodować konflikty:\n{0}\n\nMoże to powodować znikanie ręki, zacinanie się kart w lewym górnym rogu w trybie wieloosobowym lub wyświetlanie grafik z moda mimo wyboru domyślnej gry.\n\nSkin Changer został automatycznie przeniesiony przed nie. [color=#F0C951][b]Uruchom grę ponownie, aby zarządzanie skórkami zadziałało.[/b][/color]",
+            ["ptb"] = "Os seguintes mods de aparência carregaram antes do Skin Changer nesta sessão e podem causar conflitos:\n{0}\n\nIsso pode fazer a mão sumir ou cartas travarem no canto superior esquerdo no multijogador, ou exibir artes de outro pacote mesmo no Padrão do jogo.\n\nO Skin Changer foi movido automaticamente para antes deles. [color=#F0C951][b]Reinicie o jogo para ativar o gerenciamento de visuais.[/b][/color]",
+            ["rus"] = "Следующие моды скинов загрузились в этой сессии раньше Skin Changer и могут вызывать конфликты:\n{0}\n\nВ мультиплеере могут пропадать карты в руке или зависать в левом верхнем углу, а при выборе стандарта игры — показываться чужие арты.\n\nSkin Changer автоматически перемещён перед ними. [color=#F0C951][b]Перезапустите игру, чтобы управление скинами вступило в силу.[/b][/color]",
+            ["tha"] = "Mod สกินต่อไปนี้โหลดก่อน Skin Changer ในรอบนี้และอาจเกิดความขัดแย้ง:\n{0}\n\nอาจทำให้ไพ่บนมือหาย การ์ดค้างมุมซ้ายบนในโหมดผู้เล่นหลายคน หรือเลือกค่าเริ่มต้นของเกมแล้วก็ยังแสดงรูปการ์ดจากแพ็กอื่น\n\nย้าย Skin Changer ไปไว้ด้านหน้าให้อัตโนมัติแล้ว [color=#F0C951][b]โปรดรีสตาร์ตเกมเพื่อให้การจัดการสกินมีผล[/b][/color]",
+            ["tur"] = "Şu skin modları bu oturumda Skin Changer'dan önce yüklendi ve çakışmaya yol açabilir:\n{0}\n\nBu durum çok oyunculuda elin kaybolmasına, kartların sol üstte takılı kalmasına veya Oyun Varsayılanı seçiliyken bile başka paket görsellerinin görünmesine neden olabilir.\n\nSkin Changer otomatik olarak bunların önüne taşındı. [color=#F0C951][b]Skin yönetiminin etkinleşmesi için oyunu yeniden başlat.[/b][/color]"
+        };
+
     public static string Get(ModText text) =>
         text is ModText.CacheBudgetRejected or ModText.CacheDiskSpaceRejected or ModText.CacheWriteBlocked
             ? CacheWriteMessage(text, CurrentLanguage)
@@ -1643,6 +1727,14 @@ internal static partial class ModLocalization
             ? LoadOrderChoiceMessageTexts.GetValueOrDefault(CurrentLanguage, LoadOrderChoiceMessageTexts["eng"])
         : text == ModText.LoadOrderDecline
             ? LoadOrderDeclineTexts.GetValueOrDefault(CurrentLanguage, LoadOrderDeclineTexts["eng"])
+        : text == ModText.LoadOrderRiskMessage
+            ? LoadOrderRiskMessageTexts.GetValueOrDefault(CurrentLanguage, LoadOrderRiskMessageTexts["eng"])
+        : text == ModText.LoadOrderRiskWithManagerMessage
+            ? LoadOrderRiskWithManagerMessageTexts.GetValueOrDefault(CurrentLanguage, LoadOrderRiskWithManagerMessageTexts["eng"])
+        : text == ModText.LoadOrderWithManagerMessage
+            ? LoadOrderWithManagerMessageTexts.GetValueOrDefault(CurrentLanguage, LoadOrderWithManagerMessageTexts["eng"])
+        : text == ModText.LoadOrderRiskFirstInstallMessage
+            ? LoadOrderRiskFirstInstallMessageTexts.GetValueOrDefault(CurrentLanguage, LoadOrderRiskFirstInstallMessageTexts["eng"])
         : text == ModText.RandomCharacterSkin ? "⁇" + RandomCharacterSkinTexts[CurrentLanguage] :
         text == ModText.GameDefault ? "◈" + Packs[CurrentLanguage].Get(ModText.GameDefault) :
         text == ModText.OtherCategoryEvents ? EventCategoryTexts[CurrentLanguage] :
