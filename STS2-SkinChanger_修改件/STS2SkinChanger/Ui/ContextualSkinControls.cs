@@ -2097,31 +2097,40 @@ internal static partial class ContextualSkinControls
             resourcePaths,
             resources =>
             {
-                var scene = resources[characterSelectPath] as PackedScene;
-                if (scene == null && ProviderShipsCanonicalBackground(groupId, characterId))
+                if (TryResolveProviderDeclaredBackground(
+                        character,
+                        characterSelectPath,
+                        out var declaredPath,
+                        out var declaredScene))
                 {
-                    throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
-                }
-
-                if (scene == null)
-                {
-                    // 这个包没有规范背景场景（例如 DefectSkinMod 用自己的 DefectAnimatedBg，魅魔战士只有
-                    // char_select_ironclad.png）。资源解析这时会退回游戏原版场景，拿它替换只会把包自己
-                    // 画的那套背景冲掉，所以规范路径上什么都不换。
-                    //
-                    // 但有一类提供者不覆盖规范路径，而是给 CharacterModel.CharacterSelectBg 打补丁，返回
-                    // 自己命名空间下的选角背景场景（RedHood 系列 = res://RedHood*/portraits/selection.tscn）。
-                    // 游戏只在进入选人界面时按这个 getter 实例化一次背景，换皮肤不会重跑，于是界面一直挂着
-                    // 上一个皮肤或原版背景。按提供者当前的 getter 结果补做一次替换。
-                    ReplaceProviderDeclaredBackground(screen, character, characterSelectPath);
+                    // 提供者不占用规范路径，而是给 CharacterModel.CharacterSelectBg 打补丁返回自己命名
+                    // 空间下的场景（RedHood 系列 = res://RedHood*/portraits/selection.tscn）。这种包里
+                    // resources[规范路径] 照样解析出游戏原版场景，「scene != null」不能说明包提供了背景，
+                    // 所以必须先按 getter 的当前值判断，再考虑规范路径替换。
+                    TakeOverCharacterSelectSceneCache(declaredPath, declaredScene);
+                    // 提供者场景的贴图、骨骼都在它自己的命名空间下，不能按规范路径的隔离资源去重绑。
+                    ReplaceCharacterBackground(screen, character, declaredScene);
+                    ModLog.Info($"已按提供者声明的背景场景替换选角背景：{declaredPath}");
                 }
                 else
                 {
-                    TakeOverCharacterSelectSceneCache(characterSelectPath, scene);
-                    // The scene must be instantiated before WithRuntimeResources restores canonical
-                    // dependency paths; otherwise a skeleton/animation resource can come from the
-                    // previous character skin even though the PackedScene itself loaded correctly.
-                    ReplaceCharacterBackground(screen, character, scene, resources);
+                    var scene = resources[characterSelectPath] as PackedScene;
+                    if (scene == null && ProviderShipsCanonicalBackground(groupId, characterId))
+                    {
+                        throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
+                    }
+
+                    if (scene != null)
+                    {
+                        // 包没有自己的规范背景（DefectSkinMod 用 DefectAnimatedBg、魅魔战士只有
+                        // char_select_ironclad.png）时资源解析会退回游戏原版场景，拿它替换只会冲掉
+                        // 包自己画的那套，所以只在真的取到场景时才替换。
+                        TakeOverCharacterSelectSceneCache(characterSelectPath, scene);
+                        // The scene must be instantiated before WithRuntimeResources restores canonical
+                        // dependency paths; otherwise a skeleton/animation resource can come from the
+                        // previous character skin even though the PackedScene itself loaded correctly.
+                        ReplaceCharacterBackground(screen, character, scene, resources);
+                    }
                 }
                 RefreshCharacterButtonIcon(screen, character);
                 RefreshAllCharacterButtonIcons(screen);
@@ -2207,6 +2216,9 @@ internal static partial class ContextualSkinControls
         try
         {
             var declared = character.CharacterSelectBg;
+            ModLog.Info(
+                $"[DEBUG-rh1] 选角背景来源：角色={character.Id.Entry} 声明={declared} " +
+                $"规范={canonicalScenePath} 相同={string.Equals(declared, canonicalScenePath, StringComparison.OrdinalIgnoreCase)}");
             if (string.IsNullOrEmpty(declared) ||
                 string.Equals(declared, canonicalScenePath, StringComparison.OrdinalIgnoreCase))
             {

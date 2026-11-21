@@ -1,3 +1,9 @@
+## 1.0.38.5（2026-11-22，内测）
+1.0.38.4 仍然没换背景，日志给了答案：整包分支也没进去，真正跑的是通用资源分支，而那里 `resources[规范路径]` **永远能解析出游戏原版场景**（`scene != null`），所以「scene == null 才补」的判断从根上就不会成立，背景每次都被原版场景替换回去。
+- 改法（`Ui/ContextualSkinControls.cs` 通用分支）：先调 `TryResolveProviderDeclaredBackground`（读活的 `character.CharacterSelectBg`，不是规范路径且能加载就用提供者的场景），命中就替换并打 `已按提供者声明的背景场景替换选角背景：<路径>`；不命中才走原来的规范路径替换，并且把「规范路径取不到场景就什么都不换」的语义保留在取到场景的分支里。
+- 诊断：临时加了 `[DEBUG-rh1] 选角背景来源：角色=… 声明=… 规范=… 相同=…`，用来确认提供者 getter 到底返回什么（下一个版本删除）。
+- 门禁：Release 3,751,424 B / `AB535F6C20424ED8`，0 警告 0 错误；LogicTests 通过；完整 RuntimeTests 116 行 `EXIT=0`；受保护四项全 `EXIT=0`。
+- 部署：两处 mod 目录（旧文件 `*.disabled_20261122h`），回读 3,751,424 B / `AB535F6C20424ED8` / 内测 1.0.38.5。
 ## 1.0.38.4（2026-11-22，内测）
 修「1.0.38.3 说修好但背景其实没变」：上一版把修法接在了通用资源分支的空分支上，而这两个整包实际走的是 `GetSelectedFullRuntimeProvider(...) != null` 的整包运行时分支，`RebuildMountedFullRuntimeCharacterDisplay` 跑完就 `return`，永远到不了那段代码（日志里「已按提供者声明的背景场景替换」一次都没打出来，就是证据）。
 - 改法（`Ui/ContextualSkinControls.cs`）：整包分支里 `ReplaceCharacterBackground(screen, character, scene, resources)` 之前先试 `TryResolveProviderDeclaredBackground(character, scenePath, ...)` —— 读活的 `character.CharacterSelectBg`，若它不是规范路径且能加载成场景，就用提供者自己的场景（`TakeOverCharacterSelectSceneCache` + 无隔离资源的 `ReplaceCharacterBackground`），日志 `已按提供者声明的背景场景替换选角背景：<路径>`；否则保持原来的规范路径替换。同一判断也接进了 `ReapplySelectedBackground`（Blitz/Dread 界面重写背景容器时用），原来是「规范路径取不到就 return」。加载/兜底逻辑抽成 `TryResolveProviderDeclaredBackground`，三条路径共用一份。
