@@ -1,6 +1,6 @@
 # 皮肤切换器 · 协作维护规矩
 
-来源：维护者（yuinn 一方）《给 AI 的维护规矩》，2026-11-21 更新到 1.0.36.105；本文件为项目内正式副本。配套流程见 [maintenance-workflow.md](maintenance-workflow.md)（每一步怎么做、做到什么程度算完）。
+来源：维护者（yuinn 一方）《给 AI 的维护规矩》，2026-11-21 更新到 1.0.36.106；本文件为项目内正式副本。配套流程见 [maintenance-workflow.md](maintenance-workflow.md)（每一步怎么做、做到什么程度算完）。
 接手或继续开发前，先读本文件，再读下列既有记录：
 
 - [docs/refactor/fix-upstream-1.0.35-gpt.md](../refactor/fix-upstream-1.0.35-gpt.md)
@@ -48,6 +48,11 @@
 - 独立愚者皮肤合同表（`IndependentFoolSkinContract`）新增 NonoFoolSkin；预览走 `IndependentFoolSkinCompat.ApplyPreview` 的按包分支。测试：`IndependentFoolSkinTests`、`NonoFoolPreviewTests`。
 - 提供者补丁接管：`CardModel.PortraitPath` 一类卡图 getter 归切换器接管（日奈）；**只拦卡图路径，不拦 `CharacterModel.IconTexture` 等头像补丁**。测试：`HinaUiOstyRegressionTests`。
 - UI 注入：Godot 控件**先入树、再调用依赖 `_Ready` 的方法**（`NLibraryStatTickbox.SetLabel` 在入树前调用会空引用，打断同一 `_Ready` 后置链上其他 Mod 的回调，例如 RitsuLib 同步图鉴头像）。
+
+1.0.36.106 新增（2026-11-21）：
+- **对局清理不得让别人手里的卡图失效**：`CardPortraitSessionCache.Clear()` 只放掉自己的引用；贴图确实不可达后才在游戏线程 `Dispose`（`TrackForGameThreadRelease` / `DrainRetiredTextures`）。**不要改回清理时直接 `Dispose` 所有发出去的贴图**，否则第三方跨局缓存（AI_silent）会拿到已释放对象，联机断线重进后手牌消失、出牌卡在左上角。防终结器线程崩溃的保护仍然有效。测试：`CardPortraitSessionTests`。
+- **卡牌管线异常隔离**（`CardPipelineExceptionBoundary`）：`NCard._EnterTree / _Ready / UpdateVisuals / Reload` 上的 finalizer，抛出点在第三方 Mod 时让调用方继续，同一程序集 + 方法只记一条 `[卡牌管线]` 日志；游戏本体和切换器自己的异常原样抛出。测试：`CardPipelineExceptionTests`。
+- **加载顺序风险提醒**（`LoadOrderRiskDetector`）：排在切换器前面的皮肤包，如果给卡面挂了全局补丁、或带和游戏本体同名的共享图集文件，每次启动都提醒；检测到 Load Order Manager 时只提示，不自动移动。测试：`LoadOrderRiskNoticeTests`。
 
 ## 改完必须做
 
