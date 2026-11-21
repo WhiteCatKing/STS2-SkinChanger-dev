@@ -1,3 +1,9 @@
+## 1.0.37.4（2026-11-22，内测）
+- 修正式版 v0.111.1「怪物图鉴右上角的『切换 / 其他图鉴』入口消失」：`Core/VakuuVanillaArt.cs` 的 `VakuuVanillaArtPatch` 只在测试版存在目标方法 `Vakuu.ConfigureBackgroundScene`，正式版没有。原先靠 `TargetMethods()` 一个都不产出来「和平跳过」，但 Harmony 在补丁类最终 0 个目标时抛 `ArgumentException / Undefined target method for patch method`，于是 `FeatureRegistry` 按「整套要么全装」把 `ancient` 模块 15 个补丁类整体回滚，`BestiaryEntranceSwitcher` 提供的入口随之消失。
+- 修法：补上 `private static bool Prepare() => FindTarget() is not null;`，让 Harmony 在目标缺失时整类跳过（同仓库 `SkinWorkshopService`、`ManagedSkinModLoader` 已有的写法），其余 14 个 ancient 补丁照常安装。
+- 取证：用 Harmony 2.4.2 写最小复现，确认「空 TargetMethods + 无 Prepare」必抛该异常、「空 TargetMethods + Prepare=false」不抛且整类跳过；用 PE 元数据检查器核对 v0.111.1 与 v0.107.1 的 `sts2.dll`，ancient 的 15 个目标里只有 `Vakuu::ConfigureBackgroundScene` 缺失。
+- 验证：双引用 0 警告 0 错误；LogicTests 与完整无参数 RuntimeTests 全绿（末行 `Workshop policy tests passed.`）；已部署两处测试版安装包（3,901,440 B，FileVersion 1.0.37.4）。未实机验证、未发工坊、未 push。
+
 ## 1.0.37.3（2026-11-21，内测）
 - 合并维护者分支 `merge/1.0.37-fixes-20261121`（`450b92a`，对应 `fix/1.0.36-stability` 的 `6a8a9f6` / 1.0.36.105），四处版本号随之升到 `1.0.37.3`。
 - 卡图：卡图运行包只用私有路径、不再写原版路径，原版缺图时回退同卡的 Beta 图（修 RTR 系列「回弹」被全局换图、选「游戏默认」换不回）；先古卡的说明底图与边框按实际游戏包找新旧位置，找不到就不画（修半透明 NOPE 占位）；带 `.cardartpack.json` 的素材包也隔离原 PCK，皮肤包里与本体共享图集同名的文件一律不进全局（修愚者卡面美化 v5.01、CuteFool-Cards 选「游戏默认」仍显示）。

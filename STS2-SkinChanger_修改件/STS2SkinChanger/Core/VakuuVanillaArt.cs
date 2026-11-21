@@ -41,11 +41,19 @@ internal static partial class SkinService
 [HarmonyPatch]
 internal static class VakuuVanillaArtPatch
 {
+    // The normal/egg callback was introduced on beta; stable has neither the callback nor
+    // the egg option. Keep one binary loadable and leave stable's native behavior intact.
+    // Prepare 必须存在：TargetMethods 一个都不产出时 Harmony 会抛
+    // "Undefined target method for patch method"，让整个 ancient 模块回滚
+    // （1.0.37.3 在正式版 v0.111.1 上就是这样丢掉了图鉴右上角的「切换」入口）。
+    private static bool Prepare() => FindTarget() is not null;
+
+    private static System.Reflection.MethodBase? FindTarget() =>
+        AccessTools.Method(typeof(Vakuu), "ConfigureBackgroundScene");
+
     private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
     {
-        // The normal/egg callback was introduced on beta; stable has neither the callback nor
-        // the egg option. Keep one binary loadable and leave stable's native behavior intact.
-        if (AccessTools.Method(typeof(Vakuu), "ConfigureBackgroundScene") is { } method) yield return method;
+        if (FindTarget() is { } method) yield return method;
     }
 
     private static void Postfix(Control backgroundScene)
