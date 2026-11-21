@@ -2181,35 +2181,57 @@ internal static partial class ContextualSkinControls
         CharacterModel character,
         string canonicalScenePath)
     {
+        if (!TryResolveProviderDeclaredBackground(character, canonicalScenePath, out var scenePath, out var scene))
+        {
+            return;
+        }
+
+        TakeOverCharacterSelectSceneCache(scenePath, scene);
+        // 提供者场景的贴图、骨骼都在它自己的命名空间下，不能按规范路径的隔离资源去重绑。
+        ReplaceCharacterBackground(screen, character, scene);
+        ModLog.Info($"已按提供者声明的背景场景替换选角背景：{scenePath}");
+    }
+
+    /// <summary>
+    /// 读出提供者当前声明的选角背景场景。只有当 <c>CharacterModel.CharacterSelectBg</c> 给出的路径
+    /// 不是游戏规范路径、并且确实能加载成场景时才算命中；其余情况一律返回 false，调用方保持原行为。
+    /// </summary>
+    private static bool TryResolveProviderDeclaredBackground(
+        CharacterModel character,
+        string canonicalScenePath,
+        out string scenePath,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out PackedScene? scene)
+    {
+        scenePath = string.Empty;
+        scene = null;
         try
         {
-            var scenePath = character.CharacterSelectBg;
-            if (string.IsNullOrEmpty(scenePath) ||
-                string.Equals(scenePath, canonicalScenePath, StringComparison.OrdinalIgnoreCase))
+            var declared = character.CharacterSelectBg;
+            if (string.IsNullOrEmpty(declared) ||
+                string.Equals(declared, canonicalScenePath, StringComparison.OrdinalIgnoreCase))
             {
-                return;
+                return false;
             }
 
             // 提供者 PCK 不在规范路径上，游戏的 AssetCache 可能留着加载失败条目，绕过它再写回缓存。
-            var scene = ResourceLoader.Load<PackedScene>(
-                            scenePath,
-                            null,
-                            ResourceLoader.CacheMode.IgnoreDeep) ??
-                        PreloadManager.Cache.GetScene(scenePath);
+            scene = ResourceLoader.Load<PackedScene>(
+                        declared,
+                        null,
+                        ResourceLoader.CacheMode.IgnoreDeep) ??
+                    PreloadManager.Cache.GetScene(declared);
             if (scene == null)
             {
-                ModLog.Warn($"提供者声明的选角背景场景加载失败：{scenePath}");
-                return;
+                ModLog.Warn($"提供者声明的选角背景场景加载失败：{declared}");
+                return false;
             }
 
-            TakeOverCharacterSelectSceneCache(scenePath, scene);
-            // 提供者场景的贴图、骨骼都在它自己的命名空间下，不能按规范路径的隔离资源去重绑。
-            ReplaceCharacterBackground(screen, character, scene);
-            ModLog.Info($"已按提供者声明的背景场景替换选角背景：{scenePath}");
+            scenePath = declared;
+            return true;
         }
         catch (Exception exception)
         {
             ModLog.Warn($"替换提供者选角背景失败：{exception.GetBaseException().Message}");
+            return false;
         }
     }
 
@@ -2276,10 +2298,23 @@ internal static partial class ContextualSkinControls
                 // Make the coherently isolated scene own the canonical path so both this rebuild
                 // and later provider-owned variant switches resolve to the selected skin.
                 TakeOverCharacterSelectSceneCache(scenePath, scene);
-                // Instantiate while the alias pack is mounted. PackedScene external resources
-                // are often resolved at Instantiate(), not at Load(), so loading only the scene
-                // object is insufficient to prevent a previous skin's skeleton/atlas binding.
-                ReplaceCharacterBackground(screen, character, scene, resources);
+                // 提供者可能根本不占用规范路径，而是给 CharacterModel.CharacterSelectBg 打补丁返回自己
+                // 命名空间下的背景场景（RedHood 系列 = res://RedHood*/portraits/selection.tscn）。那种
+                // 情况下 resources[规范路径] 解析出来的是游戏原版场景，拿它替换等于把背景换回原版。
+                if (TryResolveProviderDeclaredBackground(character, scenePath, out var declaredPath, out var declaredScene))
+                {
+                    TakeOverCharacterSelectSceneCache(declaredPath, declaredScene);
+                    ReplaceCharacterBackground(screen, character, declaredScene);
+                    ModLog.Info($"已按提供者声明的背景场景替换选角背景：{declaredPath}");
+                }
+                else
+                {
+                    // Instantiate while the alias pack is mounted. PackedScene external resources
+                    // are often resolved at Instantiate(), not at Load(), so loading only the scene
+                    // object is insufficient to prevent a previous skin's skeleton/atlas binding.
+                    ReplaceCharacterBackground(screen, character, scene, resources);
+                }
+
                 RefreshCharacterButtonIcon(screen, character);
                 RefreshAllCharacterButtonIcons(screen);
                 // Replay provider-owned character-select presentation before WithRuntimeResources
@@ -2324,8 +2359,19 @@ internal static partial class ContextualSkinControls
                 var scene = resources[scenePath] as PackedScene;
                 if (scene == null)
                 {
-                    // The package has no canonical background scene of its own (it draws its own
-                    // layer instead); replacing nothing keeps that provider picture intact.
+                    // 这个包没有规范背景场景（它自己画一层），但可能通过 CharacterSelectBg 声明了自己的场景。
+                    if (TryResolveProviderDeclaredBackground(
+                            character,
+                            scenePath,
+                            out var declaredPath,
+                            out var declaredScene))
+                    {
+                        TakeOverCharacterSelectSceneCache(declaredPath, declaredScene);
+                        ReplaceCharacterBackground(screen, character, declaredScene);
+                        ModLog.Info($"已按提供者声明的背景场景替换选角背景：{declaredPath}");
+                        return true;
+                    }
+
                     return false;
                 }
 

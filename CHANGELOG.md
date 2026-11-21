@@ -1,3 +1,9 @@
+## 1.0.38.4（2026-11-22，内测）
+修「1.0.38.3 说修好但背景其实没变」：上一版把修法接在了通用资源分支的空分支上，而这两个整包实际走的是 `GetSelectedFullRuntimeProvider(...) != null` 的整包运行时分支，`RebuildMountedFullRuntimeCharacterDisplay` 跑完就 `return`，永远到不了那段代码（日志里「已按提供者声明的背景场景替换」一次都没打出来，就是证据）。
+- 改法（`Ui/ContextualSkinControls.cs`）：整包分支里 `ReplaceCharacterBackground(screen, character, scene, resources)` 之前先试 `TryResolveProviderDeclaredBackground(character, scenePath, ...)` —— 读活的 `character.CharacterSelectBg`，若它不是规范路径且能加载成场景，就用提供者自己的场景（`TakeOverCharacterSelectSceneCache` + 无隔离资源的 `ReplaceCharacterBackground`），日志 `已按提供者声明的背景场景替换选角背景：<路径>`；否则保持原来的规范路径替换。同一判断也接进了 `ReapplySelectedBackground`（Blitz/Dread 界面重写背景容器时用），原来是「规范路径取不到就 return」。加载/兜底逻辑抽成 `TryResolveProviderDeclaredBackground`，三条路径共用一份。
+- 门禁：`Release` 3,750,912 B / `15FF8FE05B53C489`、`ReleaseBeta` 3,955,200 B / `E6057BC2B34BE4C8`，双引用 0 警告 0 错误；LogicTests `Skin Changer logic policy tests passed.`；完整 RuntimeTests 116 行 `EXIT=0` / `Workshop policy tests passed.`；受保护四项全部 `EXIT=0`。
+- 部署：两处 mod 目录同步 dll 与 `SkinChanger.json`（旧文件 `*.disabled_20261122g`），回读 3,750,912 B / `15FF8FE05B53C489` / 内测版本 1.0.38.4。
+- 未实机、未发工坊、未 push。
 ## 1.0.38.3（2026-11-22，内测）
 修两处「小红帽」两个整包外观 Mod（`RedHoodIronclad` / `RedHoodNecrobinder`）的联动问题：选人界面背景不跟着换、奥斯提预览框画不出他们的魄罗。
 - 背景：他们的背景不是规范资源，而是 DLL 补丁 `CharacterModel.CharacterSelectBg` getter 返回自己命名空间的 `res://<包名>/portraits/selection.tscn`。游戏只在进入选人界面时按 getter 实例化一次背景，之后换皮肤不会重跑；而我们的选角重建走的是通用分支，只读规范路径 `screens/char_select/char_select_bg_<角色>.tscn`，`scene == null` 时落进原来的空分支 **什么都不做**，界面就一直挂着游戏原版背景（日志 12 行 `[选角背景]` 全是 `IRONCLAD_bg 可见=True`，对方的 `selection.tscn` 全程只出现一次 `Asset not cached`）。
