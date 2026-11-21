@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Nodes.Audio;
+using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
@@ -1360,7 +1361,10 @@ internal static class ManagedSkinModLoader
                 .ToArray();
             var providerOwnsOstyPet = ProviderOwnsOstyPet(providerId);
             var providerIsMerchantOnly = IsMerchantOnlyProvider(providerId);
+            var providerProbe = ProvidersByIdentity.Values.FirstOrDefault(probe =>
+                probe.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase));
             bool IsManaged(ProviderPatch patch) =>
+                IsManagedCardTexturePatch(patch, providerProbe) ||
                 IsManagedResourceOwnershipPatch(patch) ||
                 IsManagedCharacterPresentationPatch(patch) ||
                 IsManagedNodeReadyPresentationPatch(patch) ||
@@ -1831,6 +1835,24 @@ internal static class ManagedSkinModLoader
         {
             "Visual", "Scene", "Portrait", "Icon", "Texture", "Background", "MapMarker", "Path"
         }.Any(token => propertyName.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // This provider's two global postfixes both restore or replace NCard portrait textures.
+    // Only strip that known behavior after its own artwork was discovered by the catalog probe.
+    private static bool IsManagedCardTexturePatch(ProviderPatch patch, SkinProviderProbe? provider)
+    {
+        if (provider is not { CardAssetCount: > 0, HasResourceBackedCosmetics: true } ||
+            !provider.ResourceNamespaceId.Equals("AI_silent_NSFW_MOD", StringComparison.OrdinalIgnoreCase) ||
+            patch.Kind != ProviderPatchKind.Postfix ||
+            patch.Target.DeclaringType != typeof(NCard) ||
+            patch.Callback.DeclaringType?.FullName != "project_export_mod.PortraitPatch")
+        {
+            return false;
+        }
+
+        return (patch.Target.Name, patch.Callback.Name) is
+            (nameof(NCard._EnterTree), "EnterTreePostfix") or
+            (nameof(NCard.UpdateVisuals), "UpdateVisualsPostfix");
     }
 
     // Skin Changer owns the character-select baseline.  Every callback kind on these targets

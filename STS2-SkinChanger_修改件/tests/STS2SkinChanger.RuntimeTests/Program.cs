@@ -97,6 +97,12 @@ if (args.Length == 1 && args[0] == "--test-hina-ui-osty")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-load-order-risk-notice")
+{
+    LoadOrderRiskNoticeTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-character-select-modes")
 {
     CharacterSelectModeTests.Run();
@@ -147,6 +153,12 @@ if (args.Length == 1 && args[0] == "--test-cache-write-notice")
 if (args.Length == 1 && args[0] == "--test-large-provider-overlay")
 {
     LargeProviderOverlayTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-card-pipeline-exception")
+{
+    CardPipelineExceptionTests.Run();
     return;
 }
 
@@ -819,6 +831,7 @@ BaselinePartTakeoverTests.Run();
 CacheWriteNoticeTests.Run();
 LargeProviderOverlayTests.Run();
 CardPortraitSessionTests.Run();
+CardPipelineExceptionTests.Run();
 ProviderAssemblyReuseTests.Run();
 MerchantFigureScopeTests.Run();
 MerchantLifecycleTests.RunInputIsolation();
@@ -895,6 +908,7 @@ HinaUiOstyRegressionTests.Run();
 RelicOwnershipTests.Run();
 AncientWaifusSupportTests.Run();
 LoadOrderSafetyTests.Run();
+LoadOrderRiskNoticeTests.Run();
 EntryPatchIsolationTests.Run();
 var declaredVersion = Version.Parse(Entry.InternalTestVersion);
 var expectedAssemblyVersion = new Version(

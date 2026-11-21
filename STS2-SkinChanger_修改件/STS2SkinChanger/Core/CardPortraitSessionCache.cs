@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Runs;
@@ -38,6 +40,7 @@ internal sealed class CardPortraitSessionCache
         if (TryGet(path, wrapAtlas, out var cached)) return cached;
 
         RuntimeLoadSafety.RequireHeadroom(0);
+        EnsureReleasePump();
         var source = load();
         if (source == null)
         {
@@ -100,6 +103,7 @@ internal sealed class CardPortraitSessionCache
             var lruNode = _lruOrder.AddLast(path);
             var entry = new Entry(source, textureId, backingBytes, lruNode);
             _entries[path] = entry;
+            TrackForGameThreadRelease(source);
             if (_backingTextureRefCounts.TryGetValue(textureId, out var count))
             {
                 _backingTextureRefCounts[textureId] = count + 1;
@@ -120,16 +124,14 @@ internal sealed class CardPortraitSessionCache
 
     internal void Clear()
     {
-        foreach (var entry in _entries.Values)
-        {
-            DisposeTexture(entry.View);
-            DisposeTexture(entry.Source);
-        }
+        // Nodes and provider dictionaries can hold the exact same managed wrappers across runs.
+        // Drop our references even when the game has already freed the old card nodes.
         _entries.Clear();
         _lruOrder.Clear();
         _failedPaths.Clear();
         _backingTextureRefCounts.Clear();
         _estimatedBytes = 0;
+        DrainRetiredTextures();
     }
 
     private void Touch(Entry entry)
@@ -165,6 +167,41 @@ internal sealed class CardPortraitSessionCache
             _failedPaths.Add(path);
     }
 
+    private static readonly ConditionalWeakTable<Texture2D, TextureRetirement> TrackedTextures = new();
+    private static readonly ConcurrentQueue<Texture2D> RetiredTextures = new();
+    private static SceneTree? _releaseTree;
+
+    private static void EnsureReleasePump()
+    {
+        if (_releaseTree != null) return;
+        if (Engine.GetMainLoop() is not SceneTree tree)
+            throw new AppearanceResourceUnavailableException("卡图释放队列需要在游戏场景树中运行。");
+
+        tree.ProcessFrame += DrainRetiredTextures;
+        _releaseTree = tree;
+    }
+
+    private static void TrackForGameThreadRelease(Texture2D texture)
+    {
+        // A dependent value may reference its weak key. The CLR only finalizes this value after
+        // the wrapper is unreachable by the cache, the engine and other mods. Our finalizer
+        // transports the wrapper without touching Godot; only the game thread calls Dispose.
+        TrackedTextures.GetValue(texture, static value => new TextureRetirement(value));
+        GC.SuppressFinalize(texture);
+    }
+
+    private static void DrainRetiredTextures()
+    {
+        // Bound the release work for any one frame after a large gallery is collected.
+        for (var released = 0; released < 32 && RetiredTextures.TryDequeue(out var texture); released++)
+            DisposeTexture(texture);
+    }
+
+    private sealed class TextureRetirement(Texture2D texture)
+    {
+        ~TextureRetirement() => RetiredTextures.Enqueue(texture);
+    }
+
     private static void DisposeTexture(Texture2D? texture)
     {
         try { texture?.Dispose(); }
@@ -188,11 +225,13 @@ internal sealed class CardPortraitSessionCache
             // used by NCard. Imported plain textures need a persistent atlas view.
             if (!wrapAtlas || Source is AtlasTexture or ImageTexture) return Source;
             if (View != null) return GodotObject.IsInstanceValid(View) ? View : null;
-            return View = new AtlasTexture
+            var view = new AtlasTexture
             {
                 Atlas = Source,
                 Region = new Rect2(0, 0, Source.GetWidth(), Source.GetHeight())
             };
+            TrackForGameThreadRelease(view);
+            return View = view;
         }
     }
 }
