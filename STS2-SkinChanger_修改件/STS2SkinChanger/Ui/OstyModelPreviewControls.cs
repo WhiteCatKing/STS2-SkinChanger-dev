@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Linq;
 using Godot;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
@@ -81,6 +83,12 @@ internal static class OstyModelPreviewControls
     internal static Resource? LoadSkeletonForCurrentSelection(string groupId, out string path)
     {
         path = OstySkeletonPath;
+        if (TryCreateProviderCompanionSkeleton(groupId, out var providerSkeleton, out var providerSkeletonPath))
+        {
+            path = providerSkeletonPath;
+            return providerSkeleton;
+        }
+
         if (!string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId))
         {
             path = ImpostorDisplayPath;
@@ -219,6 +227,115 @@ internal static class OstyModelPreviewControls
             return true;
         }
     }
+
+    /// <summary>
+    /// 提供者自绘的随从骨架。
+    ///
+    /// 有些整包 DLL 皮肤不把随从做成"皮肤资源"：包里没有任何 <c>osty</c> 规范资源，而是自带
+    /// <c>scripts/spine_factory.gd</c>，在 <c>Creature.CreateVisuals</c> 里现场拼出 Spine 4.2
+    /// 骨架（小红帽与魄罗就是这样：<c>data_for("redhood_bot01")</c>）。这类包因此不会在随从分组里
+    /// 出现选项，预览框只能画回原版奥斯提，和战斗里看到的不是同一只。
+    ///
+    /// 这里按"当前主人分组选中的包自带 <c>scripts/spine_factory.gd</c>"认它，调用同一个
+    /// <c>data_for</c> 拿骨架交给预览复用；任何一步不成立就返回 false，预览仍走原版骨架。
+    /// 只影响预览显示，不参与战斗内换装（那一步仍由提供者自己的补丁负责）。
+    /// </summary>
+    private static bool TryCreateProviderCompanionSkeleton(
+        string groupId,
+        out Resource? skeleton,
+        out string path)
+    {
+        skeleton = null;
+        path = string.Empty;
+        if (string.IsNullOrEmpty(groupId))
+        {
+            return false;
+        }
+
+        try
+        {
+            var catalog = SkinService.Catalog;
+            var ownerGroupId = catalog?.CompanionOwnerGroup(groupId);
+            if (string.IsNullOrEmpty(ownerGroupId))
+            {
+                return false;
+            }
+
+            var ownerGroup = catalog!.Groups.FirstOrDefault(group =>
+                group.Id.Equals(ownerGroupId, StringComparison.OrdinalIgnoreCase));
+            var selection = SkinService.Config.GetSelection(ownerGroupId);
+            var option = ownerGroup?.Options.FirstOrDefault(candidate =>
+                !candidate.IsComposition &&
+                candidate.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+            if (option == null ||
+                !catalog.ProviderShipsFile(ownerGroupId!, option.Id, "scripts/spine_factory.gd"))
+            {
+                return false;
+            }
+
+            var root = option.ProviderRootPath;
+            var spineRoot = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, "spine42");
+            if (spineRoot == null || !Directory.Exists(spineRoot))
+            {
+                return false;
+            }
+
+            // 随从骨骼按"名字里带 bot / pet / poro / 自身分组 id"认，再按名字长度优先取基础版
+            // （女仆版由提供者自己的菜单切换，预览按基础版镜像）。逐个试加载，第一个能解析出
+            // 骨架的就是它——拿不到就当这个包没有随从，交回原版骨架。
+            var candidates = Directory.GetDirectories(spineRoot)
+                .Select(directory => Path.GetFileName(directory) ?? string.Empty)
+                .Where(name => name.Length > 0 && LooksLikeProviderCompanion(name, groupId))
+                .OrderBy(name => name.Length)
+                .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (candidates.Length == 0)
+            {
+                return false;
+            }
+
+            var scriptPath = "res://" + option.Id + "/scripts/spine_factory.gd";
+            var script = ResourceLoader.Load<GDScript>(scriptPath, null, ResourceLoader.CacheMode.IgnoreDeep);
+            if (script == null)
+            {
+                ModLog.Warn($"奥斯提预览：提供者 {option.Id} 的 spine 工厂脚本加载失败：{scriptPath}");
+                return false;
+            }
+
+            var factory = script.New().AsGodotObject();
+            if (factory == null)
+            {
+                return false;
+            }
+
+            foreach (var candidate in candidates)
+            {
+                using var result = factory.Call("data_for", candidate);
+                if (result.AsGodotObject() is not Resource data || !IsSkeletonDataLoaded(data))
+                {
+                    continue;
+                }
+
+                skeleton = data;
+                path = scriptPath + "#" + candidate;
+                ModLog.Info($"奥斯提预览：改用提供者 {option.Id} 自绘的随从骨架 {candidate}。");
+                return true;
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"奥斯提预览：读取提供者自绘随从失败：{exception.GetBaseException().Message}");
+        }
+
+        return false;
+    }
+
+    /// <summary>目录名是否像"提供者的随从"：含 bot/pet/poro，或含随从分组 id（如 osty）。</summary>
+    private static bool LooksLikeProviderCompanion(string name, string companionGroupId) =>
+        name.Contains("bot", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("pet", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("poro", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains(companionGroupId, StringComparison.OrdinalIgnoreCase);
 }
 
 internal partial class OstyModelPreviewPanel : Control

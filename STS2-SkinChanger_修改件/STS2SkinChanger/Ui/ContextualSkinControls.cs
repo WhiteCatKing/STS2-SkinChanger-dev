@@ -2107,7 +2107,13 @@ internal static partial class ContextualSkinControls
                 {
                     // 这个包没有规范背景场景（例如 DefectSkinMod 用自己的 DefectAnimatedBg，魅魔战士只有
                     // char_select_ironclad.png）。资源解析这时会退回游戏原版场景，拿它替换只会把包自己
-                    // 画的那套背景冲掉，所以什么都不换。
+                    // 画的那套背景冲掉，所以规范路径上什么都不换。
+                    //
+                    // 但有一类提供者不覆盖规范路径，而是给 CharacterModel.CharacterSelectBg 打补丁，返回
+                    // 自己命名空间下的选角背景场景（RedHood 系列 = res://RedHood*/portraits/selection.tscn）。
+                    // 游戏只在进入选人界面时按这个 getter 实例化一次背景，换皮肤不会重跑，于是界面一直挂着
+                    // 上一个皮肤或原版背景。按提供者当前的 getter 结果补做一次替换。
+                    ReplaceProviderDeclaredBackground(screen, character, characterSelectPath);
                 }
                 else
                 {
@@ -2162,6 +2168,48 @@ internal static partial class ContextualSkinControls
         catch (Exception)
         {
             return true;
+        }
+    }
+
+    /// <summary>
+    /// 提供者用 <see cref="CharacterModel.CharacterSelectBg"/> 的 getter 补丁声明自己的选人背景场景时，
+    /// 按 getter 当前返回值补做一次背景替换。游戏只在进入选人界面时按该 getter 实例化一次背景，
+    /// 换皮肤不会重跑，所以不做这一步就会一直显示上一个皮肤或原版的背景。
+    /// </summary>
+    private static void ReplaceProviderDeclaredBackground(
+        Control screen,
+        CharacterModel character,
+        string canonicalScenePath)
+    {
+        try
+        {
+            var scenePath = character.CharacterSelectBg;
+            if (string.IsNullOrEmpty(scenePath) ||
+                string.Equals(scenePath, canonicalScenePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            // 提供者 PCK 不在规范路径上，游戏的 AssetCache 可能留着加载失败条目，绕过它再写回缓存。
+            var scene = ResourceLoader.Load<PackedScene>(
+                            scenePath,
+                            null,
+                            ResourceLoader.CacheMode.IgnoreDeep) ??
+                        PreloadManager.Cache.GetScene(scenePath);
+            if (scene == null)
+            {
+                ModLog.Warn($"提供者声明的选角背景场景加载失败：{scenePath}");
+                return;
+            }
+
+            TakeOverCharacterSelectSceneCache(scenePath, scene);
+            // 提供者场景的贴图、骨骼都在它自己的命名空间下，不能按规范路径的隔离资源去重绑。
+            ReplaceCharacterBackground(screen, character, scene);
+            ModLog.Info($"已按提供者声明的背景场景替换选角背景：{scenePath}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"替换提供者选角背景失败：{exception.GetBaseException().Message}");
         }
     }
 
