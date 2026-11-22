@@ -1,3 +1,9 @@
+## 1.0.38.9（2026-11-22，内测）
+局内面板也跟上变体措辞：以前只有选人界面显示「原皮 / 女仆」，局内皮肤下拉仍是「· 1 / · 2」。
+- 做法：`Ui/ContextualSkinControls.cs` 的 `ApplyProviderVariantLabels` 改为 `internal`，由 `Ui/CharacterAppearanceScreen.cs:794 PopulateSkinDropdown()` 在填完选项后调用（`this as Control`）——两条面板共用同一份取词与缓存逻辑，不再各写一套。
+- 局内没有作者的菜单，所以直接吃 `user://skin_changer_variant_labels.txt` 里记下的词；缓存里没有时仍按编号并挂一帧重试。
+- 门禁：Release 3,760,128 B / `C01D5E65B5FD2B0D`，0 警告 0 错误；LogicTests `Skin Changer logic policy tests passed.`；完整 RuntimeTests 116 行 `EXIT=0`。
+- 部署：两处 mod 目录同步 dll 与 `SkinChanger.json`（旧文件 `*.disabled_20261122l`）。
 ## 1.0.38.8（2026-11-22，内测）
 变体标签又修两处：不再出现「小红帽 · 战士外观 · 小红帽 · 原皮」的重复前缀，换到别的皮肤后也不会退回「· 1 / · 2」。
 - 取词：作者菜单每项写的是完整皮肤名（「小红帽 · 原皮」），我们只要最后一个词，拼成「小红帽 · 战士外观 · 原皮」（`VariantWord`）。

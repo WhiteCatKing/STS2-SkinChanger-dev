@@ -837,6 +837,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             _skinDropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
             _skinDropdown.SetItemMetadata(index, option.Id);
         }
+        ContextualSkinControls.ApplyProviderVariantLabels(_skinDropdown, _group, this as Control);
 
         // A companion list must offer the independent Osty mod's own skins. The "random" entry is
         // deliberately not offered here: it only exists on the character-select screen.

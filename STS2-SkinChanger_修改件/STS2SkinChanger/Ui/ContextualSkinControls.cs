@@ -864,7 +864,7 @@ internal static partial class ContextualSkinControls
     // A provider that switches appearance through its own argument-taking entry point lists the two
     // choices in a menu of its own; reuse those words so both menus read the same. The provider menu
     // only exists while its own skin is active, so the words are remembered per language.
-    private static void ApplyProviderVariantLabels(OptionButton dropdown, SkinGroup group, Control? screen)
+    internal static void ApplyProviderVariantLabels(OptionButton dropdown, SkinGroup group, Control? screen)
     {
         if (screen == null || !GodotObject.IsInstanceValid(dropdown)) return;
         var variants = group.Options
