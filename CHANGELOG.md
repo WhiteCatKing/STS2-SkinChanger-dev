@@ -1,3 +1,11 @@
+## 1.0.38.10（2026-11-22，内测）
+魄罗（奥斯提）可以单独换形态了：随从下拉里多出「魄罗 · 原皮 / 魄罗 · 女仆」两项，与角色的原皮/女仆互不影响。
+- 背景：作者的随从形态是绑在角色变体上的（`CharacterId(pet)` 直接读同一个 bool），玩家没法单挑魄罗形态。
+- 做法：`Core/PoroVariantBridge.cs` 按能力形状认提供者（程序集里有 `static Resource Data(string)` + `static bool IsCompanion(Creature)`），把随从形态单独存进 `CompanionProviderVariantId`；`Creature.CreateVisuals` 收尾时按选择重设随从那套骨骼数据（走作者自己的工厂），换完从头播 `idle_loop`。
+- 只有主人分组当前挂着这类提供者时才出现这两项；选「游戏默认」或改选别的随从皮肤会把单独形态清掉，交回给提供者按角色变体决定。
+- 改动点：`Core/SkinConfig.cs`、`Core/SkinService.cs`（`ApplyCompanionSelection` 增分支与复位）、`Ui/OstySkinChoices.cs`、`Ui/ContextualSkinControls.cs`、`Ui/CharacterAppearanceScreen.cs`、`Core/PoroVariantBridge.cs`（新）。
+- 门禁：Release 3,767,296 B / `F08996E6BC34FCCE`，0 警告 0 错误；LogicTests `Skin Changer logic policy tests passed.`；完整 RuntimeTests 116 行 `EXIT=0`。
+- 部署：两处 mod 目录同步 dll 与 `SkinChanger.json`（旧文件 `*.disabled_20261122m`）。
 ## 1.0.38.9（2026-11-22，内测）
 局内面板也跟上变体措辞：以前只有选人界面显示「原皮 / 女仆」，局内皮肤下拉仍是「· 1 / · 2」。
 - 做法：`Ui/ContextualSkinControls.cs` 的 `ApplyProviderVariantLabels` 改为 `internal`，由 `Ui/CharacterAppearanceScreen.cs:794 PopulateSkinDropdown()` 在填完选项后调用（`this as Control`）——两条面板共用同一份取词与缓存逻辑，不再各写一套。

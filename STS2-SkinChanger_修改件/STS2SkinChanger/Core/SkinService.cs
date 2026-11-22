@@ -9182,6 +9182,17 @@ internal static partial class SkinService
         OstyImpostorCompat.Decoupled = true;
 
         string targetOptionId;
+        if (PoroVariantBridge.TryParseOption(optionId, out var poroOption))
+        {
+            // 提供者自己画的随从：只换随从那套骨骼，osty 组本身不动，也不挂别的 Mod。
+            Config.CompanionImpostorSkinId = null;
+            OstyImpostorBridge.ApplyQuiet(null);
+            PoroVariantBridge.ApplyQuiet(poroOption.SkinId);
+            Config.Save(ConfigPath);
+            CompanionSelectionChanged?.Invoke();
+            return true;
+        }
+
         if (OstyImpostorBridge.TryParseOption(optionId, out var impostorSkinId))
         {
             // 独立奥斯提 Mod 接管：osty 组回到原版，避免两边同时挂资源。
@@ -9193,6 +9204,8 @@ internal static partial class SkinService
         {
             Config.CompanionImpostorSkinId = null;
             OstyImpostorBridge.ApplyQuiet(null);
+            // 玩家改选了别的随从皮肤：提供者自己那套形态不再单独生效，交回给提供者按角色变体决定。
+            PoroVariantBridge.ApplyQuiet(null);
             targetOptionId = optionId;
         }
 

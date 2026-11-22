@@ -105,6 +105,12 @@ internal sealed class SkinConfig
     /// </summary>
     public string? CompanionImpostorSkinId { get; set; }
 
+    /// <summary>
+    /// 提供者自己画的随从（魄罗）单独选中的形态 id（例如 <c>redhood_maid_bot01</c>）；
+    /// 为空表示跟随提供者按角色变体自动决定。与角色变体互不影响。
+    /// </summary>
+    public string? CompanionProviderVariantId { get; set; }
+
     /// <summary>随从外观是否处于“随机皮肤”状态（与角色下拉的随机语义一致）。</summary>
     public bool CompanionRandomEnabled { get; set; }
 

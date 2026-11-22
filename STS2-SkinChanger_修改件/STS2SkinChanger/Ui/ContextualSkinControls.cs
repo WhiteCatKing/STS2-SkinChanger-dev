@@ -1138,6 +1138,7 @@ internal static partial class ContextualSkinControls
         var impostorOptions = OstyImpostorBridge.Options;
         if (group == null &&
             impostorOptions.Count == 0 &&
+            !PoroVariantBridge.AvailableFor("osty") &&
             string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId))
         {
             osty.Visible = false;

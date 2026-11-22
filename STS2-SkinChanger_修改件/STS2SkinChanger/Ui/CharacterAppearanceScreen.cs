@@ -850,6 +850,15 @@ internal partial class CharacterAppearanceScreen : NSubmenu
                 _skinDropdown.AddItem(impostor.Name);
                 _skinDropdown.SetItemMetadata(index, OstyImpostorBridge.CreateOptionId(impostor.Id));
             }
+            if (PoroVariantBridge.AvailableFor(_group.Id))
+            {
+                foreach (var poro in PoroVariantBridge.Options)
+                {
+                    var index = _skinDropdown.ItemCount;
+                    _skinDropdown.AddItem(poro.Name);
+                    _skinDropdown.SetItemMetadata(index, poro.OptionId);
+                }
+            }
         }
 
         SkinWorkshopEntry.Append(_skinDropdown);
@@ -917,6 +926,11 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         if (SkinService.GetCompanionRandomEnabled(groupId))
         {
             return RandomCharacterSkinPolicy.OptionId;
+        }
+
+        if (PoroVariantBridge.CurrentOptionId is { Length: > 0 } poro)
+        {
+            return poro;
         }
 
         var impostorSkinId = SkinService.Config.CompanionImpostorSkinId;

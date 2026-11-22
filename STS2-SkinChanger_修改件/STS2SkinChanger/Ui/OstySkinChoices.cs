@@ -10,9 +10,11 @@ internal static class OstySkinChoices
     internal static string GroupId => SkinService.CompanionGroupIds.FirstOrDefault() ?? "osty";
     internal static string Current(string groupId) => SkinService.GetCompanionRandomEnabled(groupId)
         ? RandomCharacterSkinPolicy.OptionId
-        : string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId)
-            ? SkinService.GetCompanionSelection(groupId)
-            : OstyImpostorBridge.CreateOptionId(SkinService.Config.CompanionImpostorSkinId!);
+        : PoroVariantBridge.CurrentOptionId is { Length: > 0 } poro
+            ? poro
+            : string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId)
+                ? SkinService.GetCompanionSelection(groupId)
+                : OstyImpostorBridge.CreateOptionId(SkinService.Config.CompanionImpostorSkinId!);
 
     internal static void Populate(OptionButton dropdown, string groupId)
     {
@@ -33,6 +35,15 @@ internal static class OstySkinChoices
             var i = dropdown.ItemCount;
             dropdown.AddItem(option.Name);
             dropdown.SetItemMetadata(i, OstyImpostorBridge.CreateOptionId(option.Id));
+        }
+        if (PoroVariantBridge.AvailableFor(groupId))
+        {
+            foreach (var option in PoroVariantBridge.Options)
+            {
+                var i = dropdown.ItemCount;
+                dropdown.AddItem(option.Name);
+                dropdown.SetItemMetadata(i, option.OptionId);
+            }
         }
         if (dropdown.ItemCount > 1)
         {
