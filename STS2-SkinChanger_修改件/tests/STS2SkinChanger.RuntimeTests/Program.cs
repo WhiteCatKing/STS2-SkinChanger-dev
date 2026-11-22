@@ -121,6 +121,12 @@ if (args.Length == 1 && args[0] == "--test-ui-injection-guard")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-vanilla-integrity")
+{
+    VanillaIntegritySelfCheckTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-character-select-modes")
 {
     CharacterSelectModeTests.Run();
@@ -183,6 +189,12 @@ if (args.Length == 1 && args[0] == "--test-large-provider-overlay")
 if (args.Length == 1 && args[0] == "--test-card-pipeline-exception")
 {
     CardPipelineExceptionTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-card-portrait-performance")
+{
+    CardPortraitPerformanceTests.Run();
     return;
 }
 
@@ -853,6 +865,7 @@ try
 {
 Gate.Run("RequiredFixesManifestTests", () => RequiredFixesManifestTests.Run());
 Gate.Run("UiInjectionGuardTests", () => UiInjectionGuardTests.Run());
+Gate.Run("VanillaIntegritySelfCheckTests", () => VanillaIntegritySelfCheckTests.Run());
 Gate.Run("FoolWaifuIdentityTests", () => FoolWaifuIdentityTests.Run());
 Gate.Run("LateTakeoverGuardTests", () => LateTakeoverGuardTests.Run());
 Gate.Run("OrchisRoomCallbackTests", () => OrchisRoomCallbackTests.Run());
@@ -861,6 +874,7 @@ Gate.Run("BaselinePartTakeoverTests", () => BaselinePartTakeoverTests.Run());
 Gate.Run("CacheWriteNoticeTests", () => CacheWriteNoticeTests.Run());
 Gate.Run("LargeProviderOverlayTests", () => LargeProviderOverlayTests.Run());
 Gate.Run("CardPortraitSessionTests", () => CardPortraitSessionTests.Run());
+Gate.Run("CardPortraitPerformanceTests", () => CardPortraitPerformanceTests.Run());
 Gate.Run("CardPipelineExceptionTests", () => CardPipelineExceptionTests.Run());
 Gate.Run("ProviderAssemblyReuseTests", () => ProviderAssemblyReuseTests.Run());
 Gate.Run("MerchantFigureScopeTests", () => MerchantFigureScopeTests.Run());

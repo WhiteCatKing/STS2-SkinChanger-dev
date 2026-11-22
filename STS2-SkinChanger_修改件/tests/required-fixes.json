@@ -397,5 +397,18 @@
     "tests": [
       { "suite": "Runtime", "name": "UiInjectionGuardTests", "args": "" }
     ]
+  },
+  {
+    "id": "vanilla-integrity-self-check",
+    "title": "启动后只读抽查共享图集、选角头像与先古模板的原版完整性，点名嫌疑/确认的原生加载冲突包并忽略切换器托管包",
+    "since": "phase2",
+    "symbols": [
+      "VanillaIntegritySelfCheck.Evaluate",
+      "VanillaIntegritySelfCheck.ScanArchives",
+      "VanillaIntegrityMainMenuReadyPatch"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "VanillaIntegritySelfCheckTests", "args": "" }
+    ]
   }
 ]

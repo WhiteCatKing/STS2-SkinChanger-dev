@@ -35,7 +35,8 @@ internal sealed class CardPortraitSessionCache
         return false;
     }
 
-    internal Texture2D? GetOrLoad(string path, bool wrapAtlas, Func<Texture2D?> load)
+    internal Texture2D? GetOrLoad(
+        string path, bool wrapAtlas, Func<Texture2D?> load, CardPortraitPerformance? performance = null)
     {
         if (TryGet(path, wrapAtlas, out var cached)) return cached;
 
@@ -59,6 +60,17 @@ internal sealed class CardPortraitSessionCache
                 backing = inner;
             }
             var textureId = backing.GetInstanceId();
+            if (performance != null)
+            {
+                var isAtlasPage = !ReferenceEquals(source, backing);
+                string? pagePath = null;
+                if (isAtlasPage && performance.NeedsAtlasPath(textureId))
+                {
+                    try { pagePath = backing.ResourcePath; }
+                    catch (Exception) { /* The measurement must not reject an otherwise usable texture. */ }
+                }
+                performance.ObserveNativeTexture(pagePath, textureId, isAtlasPage);
+            }
             // Ignore can share an external atlas. Charge it once and use the full atlas size,
             // since a small portrait region can keep a much larger texture alive.
             var backingBytes = checked((long)backing.GetWidth() * backing.GetHeight() * 8);

@@ -48,6 +48,7 @@ internal static partial class SkinService
     private static readonly BoundedLruCache<string, Texture2D> CardPortraitCache =
         new(MaxCardPortraitCacheEntries, StringComparer.OrdinalIgnoreCase);
     private static readonly CardPortraitSessionCache SessionCardPortraits = new();
+    private static readonly CardPortraitPerformance CardPortraitMetrics = new();
     private static readonly Dictionary<string, string> ExternalCardProviderIdentityPaths =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> BaselineRelicAtlasCache =
@@ -2337,6 +2338,7 @@ internal static partial class SkinService
                 MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
                 Config.Save(ConfigPath);
                 LastError = null;
+                Features.Card.CardPortraitPerformanceView.OnSelectionChanged(group.Id, preset.Name);
                 return true;
             }
             catch (Exception exception)
@@ -2465,6 +2467,7 @@ internal static partial class SkinService
             MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id });
             Config.Save(ConfigPath);
             LastError = null;
+            Features.Card.CardPortraitPerformanceView.OnSelectionChanged(group.Id, Config.Selections[selectionKey]);
             return true;
         }
         catch (Exception exception)
@@ -3432,6 +3435,7 @@ internal static partial class SkinService
                 MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id });
                 Config.Save(ConfigPath);
                 LastError = null;
+                Features.Card.CardPortraitPerformanceView.OnSelectionChanged(group.Id, optionId);
                 return true;
             }
             catch (Exception exception)
@@ -3709,19 +3713,23 @@ internal static partial class SkinService
 
     private static Texture2D? GetOrLoadCardPortrait(CardPortraitRequest request)
     {
+        CardPortraitMetrics.Request();
         if (CardPortraitCache.TryGetValue(request.CacheKey, out var cached) &&
             GodotObject.IsInstanceValid(cached))
         {
+            CardPortraitMetrics.Hit();
             return cached;
         }
 
         if (FailedCardPortraitRequests.Contains(request.CacheKey))
         {
+            CardPortraitMetrics.Fallback();
             return null;
         }
 
         try
         {
+            CardPortraitMetrics.IsolatedLoad();
             var loadStarted = Stopwatch.GetTimestamp();
             var portrait = LoadIsolatedCardPortrait(request);
             var loadElapsed = Stopwatch.GetElapsedTime(loadStarted);
@@ -3760,8 +3768,22 @@ internal static partial class SkinService
             // especially important for Skill Potion/card-choice overlays: an optional skin
             // failure must not abort NCard construction and leave the action queue waiting for a
             // choice that can no longer be shown.
+            CardPortraitMetrics.Fallback();
             return null;
         }
+    }
+
+    internal static void ResetCardPortraitMetricsWindow()
+    {
+        lock (Sync)
+            CardPortraitMetrics.ResetWindow();
+    }
+
+    internal static string TakeCardPortraitMetrics(
+        string scene, string detail, long? textureBytes, long managedBytes)
+    {
+        lock (Sync)
+            return CardPortraitMetrics.TakeSummary(scene, detail, textureBytes, managedBytes);
     }
 
     private static int CardArtSelectionScore(
@@ -4069,7 +4091,7 @@ internal static partial class SkinService
         {
             return SessionCardPortraits.GetOrLoad(rawKey, wrapAtlas, () =>
             {
-                using var image = LoadRasterImageFromBuffer(directBytes, resourcePath);
+                using var image = LoadRasterImageFromBuffer(directBytes, resourcePath, rawKey);
                 return ImageTexture.CreateFromImage(image);
             });
         }
@@ -4084,15 +4106,26 @@ internal static partial class SkinService
             return null;
         }
 
-        return SessionCardPortraits.GetOrLoad(isolatedPath, wrapAtlas, () => ResourceLoader.Load<Texture2D>(
-            isolatedPath,
-            null,
-            overlay.CanReuseExternalDependencies
-                ? ResourceLoader.CacheMode.Ignore
-                : ResourceLoader.CacheMode.IgnoreDeep));
+        return SessionCardPortraits.GetOrLoad(isolatedPath, wrapAtlas, () =>
+        {
+            var started = Stopwatch.GetTimestamp();
+            try
+            {
+                return ResourceLoader.Load<Texture2D>(
+                    isolatedPath,
+                    null,
+                    overlay.CanReuseExternalDependencies
+                        ? ResourceLoader.CacheMode.Ignore
+                        : ResourceLoader.CacheMode.IgnoreDeep);
+            }
+            finally
+            {
+                CardPortraitMetrics.RecordNativeLoad(isolatedPath, Stopwatch.GetTimestamp() - started);
+            }
+        }, CardPortraitMetrics);
     }
 
-    private static Image LoadRasterImageFromBuffer(byte[] bytes, string imagePath)
+    private static Image LoadRasterImageFromBuffer(byte[] bytes, string imagePath, string metricsPath)
     {
         if (bytes.Length == 0)
         {
@@ -4101,24 +4134,35 @@ internal static partial class SkinService
 
         var image = new Image();
         Error error;
-        if (HasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+        var attempted = true;
+        var started = Stopwatch.GetTimestamp();
+        try
         {
-            error = image.LoadPngFromBuffer(bytes);
+            if (HasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+            {
+                error = image.LoadPngFromBuffer(bytes);
+            }
+            else if (HasPrefix(bytes, [0xff, 0xd8, 0xff]))
+            {
+                error = image.LoadJpgFromBuffer(bytes);
+            }
+            else if (bytes.Length >= 12 &&
+                     HasPrefix(bytes, [(byte)'R', (byte)'I', (byte)'F', (byte)'F']) &&
+                     bytes.AsSpan(8, 4).SequenceEqual([(byte)'W', (byte)'E', (byte)'B', (byte)'P']))
+            {
+                error = image.LoadWebpFromBuffer(bytes);
+            }
+            else
+            {
+                attempted = false;
+                image.Dispose();
+                throw new InvalidOperationException($"无法识别独立卡牌图片格式：{imagePath}");
+            }
         }
-        else if (HasPrefix(bytes, [0xff, 0xd8, 0xff]))
+        finally
         {
-            error = image.LoadJpgFromBuffer(bytes);
-        }
-        else if (bytes.Length >= 12 &&
-                 HasPrefix(bytes, [(byte)'R', (byte)'I', (byte)'F', (byte)'F']) &&
-                 bytes.AsSpan(8, 4).SequenceEqual([(byte)'W', (byte)'E', (byte)'B', (byte)'P']))
-        {
-            error = image.LoadWebpFromBuffer(bytes);
-        }
-        else
-        {
-            image.Dispose();
-            throw new InvalidOperationException($"无法识别独立卡牌图片格式：{imagePath}");
+            if (attempted)
+                CardPortraitMetrics.RecordRasterDecode(metricsPath, Stopwatch.GetTimestamp() - started);
         }
 
         if (error != Error.Ok || image.IsEmpty())
