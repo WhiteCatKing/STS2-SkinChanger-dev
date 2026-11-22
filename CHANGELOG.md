@@ -1,3 +1,9 @@
+## 1.0.38.8（2026-11-22，内测）
+变体标签又修两处：不再出现「小红帽 · 战士外观 · 小红帽 · 原皮」的重复前缀，换到别的皮肤后也不会退回「· 1 / · 2」。
+- 取词：作者菜单每项写的是完整皮肤名（「小红帽 · 原皮」），我们只要最后一个词，拼成「小红帽 · 战士外观 · 原皮」（`VariantWord`）。
+- 记住：作者菜单只在自己的皮肤被选中时存在，所以读到的两项文本按「提供者 + 语言」写进 `user://skin_changer_variant_labels.txt`，下次进游戏、或切到别的皮肤再切回来，仍然是「原皮 / 女仆」，不用再等它把菜单建出来。
+- 门禁：Release 3,760,128 B / `1D6EDBC1965FAA52`，0 警告 0 错误；LogicTests `Skin Changer logic policy tests passed.`；完整 RuntimeTests 116 行 `EXIT=0`。
+- 部署：两处 mod 目录同步 dll 与 `SkinChanger.json`（旧文件 `*.disabled_20261122k`）。
 ## 1.0.38.7（2026-11-22，内测）
 变体标签跟随提供者自己的措辞：原来的「小红帽 · 战士外观 · 1 / · 2」是编号占位，现在与作者面板上的「原皮 / 女仆」一字不差（骨妹那边同理）。
 - 做法（`Ui/ContextualSkinControls.cs`）：`Populate` 填完角色下拉后调 `ApplyProviderVariantLabels`，按提供者 id 找到它自己的 `*Options` 面板里的两项 `OptionButton`，把两项文本读出来贴到我们的同名选项上；标签不再硬编码，作者换语言我们跟着变。

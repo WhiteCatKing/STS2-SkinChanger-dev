@@ -41,6 +41,9 @@ internal static partial class ContextualSkinControls
     private const string CharacterBundlePopupListName = "STS2CharacterBundlePopupList";
     private const string GroupMeta = "sts2_skin_group";
     private const string VariantLabelRetryMeta = "sts2_skin_variant_label_retry";
+    private const string VariantLabelCachePath = "user://skin_changer_variant_labels.txt";
+    private static readonly Dictionary<string, string[]> ProviderVariantLabels = new(StringComparer.Ordinal);
+    private static bool variantLabelsLoaded;
     private const string UpdatingMeta = "sts2_skin_updating";
     private const string MonsterScaleGroupMeta = "sts2_skin_monster_scale_group";
     private const string MonsterBaseScaleMeta = "sts2_skin_monster_base_scale";
@@ -859,7 +862,8 @@ internal static partial class ContextualSkinControls
     }
 
     // A provider that switches appearance through its own argument-taking entry point lists the two
-    // choices in a menu of its own; reuse those words so both menus read the same.
+    // choices in a menu of its own; reuse those words so both menus read the same. The provider menu
+    // only exists while its own skin is active, so the words are remembered per language.
     private static void ApplyProviderVariantLabels(OptionButton dropdown, SkinGroup group, Control? screen)
     {
         if (screen == null || !GodotObject.IsInstanceValid(dropdown)) return;
@@ -868,11 +872,27 @@ internal static partial class ContextualSkinControls
             .ToArray();
         if (variants.Length != 2) return;
         var providerId = variants[0].EffectiveProviderId;
+        var cacheKey = providerId + "|" + ModLocalization.CurrentLanguage;
+        LoadProviderVariantLabels();
         var panel = providerId.Length == 0 ? null : screen.FindChild(providerId + "Options", true, false) as Control;
         var source = panel?.FindChildren("*", nameof(OptionButton), true, false)
             .OfType<OptionButton>()
             .FirstOrDefault(candidate => candidate.ItemCount == variants.Length);
-        if (source == null)
+        string[] labels;
+        if (source != null)
+        {
+            labels = Enumerable.Range(0, variants.Length).Select(source.GetItemText).ToArray();
+            if (!ProviderVariantLabels.TryGetValue(cacheKey, out var known) || !known.SequenceEqual(labels))
+            {
+                ProviderVariantLabels[cacheKey] = labels;
+                SaveProviderVariantLabels();
+            }
+        }
+        else if (ProviderVariantLabels.TryGetValue(cacheKey, out var remembered))
+        {
+            labels = remembered;
+        }
+        else
         {
             // The provider builds its menu from its own character-select hook, which may run after this
             // rebuild; retry once at the end of the frame instead of keeping the ordinal labels.
@@ -887,15 +907,58 @@ internal static partial class ContextualSkinControls
             }).CallDeferred();
             return;
         }
-        var labels = Enumerable.Range(0, source.ItemCount).Select(source.GetItemText).ToArray();
         for (var index = 0; index < dropdown.ItemCount; index++)
         {
             var option = variants.FirstOrDefault(variant => variant.Id == dropdown.GetItemMetadata(index).AsString());
             if (option?.ManualCharacterVariant is not { } manual) continue;
-            var label = labels[manual.Value ? 1 : 0];
+            var label = VariantWord(labels[manual.Value ? 1 : 0]);
             if (string.IsNullOrWhiteSpace(label)) continue;
             dropdown.SetItemText(index, StripVariantOrdinal(option.Name) + " · " + label);
         }
+    }
+
+    // The provider menu only exists while its own skin is active, so what it said is remembered on disk;
+    // otherwise the dropdown falls back to ordinals as soon as another skin is selected.
+    private static void LoadProviderVariantLabels()
+    {
+        if (variantLabelsLoaded) return;
+        variantLabelsLoaded = true;
+        try
+        {
+            if (!Godot.FileAccess.FileExists(VariantLabelCachePath)) return;
+            using var file = Godot.FileAccess.Open(VariantLabelCachePath, Godot.FileAccess.ModeFlags.Read);
+            if (file == null) return;
+            foreach (var line in file.GetAsText().Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = line.TrimEnd('\r').Split('\t');
+                if (parts.Length >= 3 && parts[0].Length > 0) ProviderVariantLabels[parts[0]] = [parts[1], parts[2]];
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("读取变体标签缓存失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static void SaveProviderVariantLabels()
+    {
+        try
+        {
+            using var file = Godot.FileAccess.Open(VariantLabelCachePath, Godot.FileAccess.ModeFlags.Write);
+            if (file == null) return;
+            file.StoreString(string.Join('\n', ProviderVariantLabels.Select(pair => pair.Key + "\t" + string.Join('\t', pair.Value))));
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("写入变体标签缓存失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    // The provider menu spells the whole skin name in each item; only its last word is the variant.
+    private static string VariantWord(string label)
+    {
+        var separator = label.LastIndexOf(" · ", StringComparison.Ordinal);
+        return separator >= 0 ? label[(separator + 3)..] : label;
     }
 
     private static string StripVariantOrdinal(string name)
