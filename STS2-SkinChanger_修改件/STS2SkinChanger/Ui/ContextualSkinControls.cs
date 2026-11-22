@@ -40,6 +40,7 @@ internal static partial class ContextualSkinControls
     private const string CharacterLoadingOverlayName = "STS2CharacterSkinLoadingOverlay";
     private const string CharacterBundlePopupListName = "STS2CharacterBundlePopupList";
     private const string GroupMeta = "sts2_skin_group";
+    private const string VariantLabelRetryMeta = "sts2_skin_variant_label_retry";
     private const string UpdatingMeta = "sts2_skin_updating";
     private const string MonsterScaleGroupMeta = "sts2_skin_monster_scale_group";
     private const string MonsterBaseScaleMeta = "sts2_skin_monster_base_scale";
@@ -857,6 +858,52 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    // A provider that switches appearance through its own argument-taking entry point lists the two
+    // choices in a menu of its own; reuse those words so both menus read the same.
+    private static void ApplyProviderVariantLabels(OptionButton dropdown, SkinGroup group, Control? screen)
+    {
+        if (screen == null || !GodotObject.IsInstanceValid(dropdown)) return;
+        var variants = group.Options
+            .Where(option => option.ManualCharacterVariant is { State.AppliesArgument: true })
+            .ToArray();
+        if (variants.Length != 2) return;
+        var providerId = variants[0].EffectiveProviderId;
+        var panel = providerId.Length == 0 ? null : screen.FindChild(providerId + "Options", true, false) as Control;
+        var source = panel?.FindChildren("*", nameof(OptionButton), true, false)
+            .OfType<OptionButton>()
+            .FirstOrDefault(candidate => candidate.ItemCount == variants.Length);
+        if (source == null)
+        {
+            // The provider builds its menu from its own character-select hook, which may run after this
+            // rebuild; retry once at the end of the frame instead of keeping the ordinal labels.
+            var pending = dropdown.HasMeta(VariantLabelRetryMeta);
+            dropdown.SetMeta(VariantLabelRetryMeta, true);
+            if (pending) return;
+            Callable.From(() =>
+            {
+                if (!GodotObject.IsInstanceValid(dropdown) || !GodotObject.IsInstanceValid(screen)) return;
+                dropdown.RemoveMeta(VariantLabelRetryMeta);
+                ApplyProviderVariantLabels(dropdown, group, screen);
+            }).CallDeferred();
+            return;
+        }
+        var labels = Enumerable.Range(0, source.ItemCount).Select(source.GetItemText).ToArray();
+        for (var index = 0; index < dropdown.ItemCount; index++)
+        {
+            var option = variants.FirstOrDefault(variant => variant.Id == dropdown.GetItemMetadata(index).AsString());
+            if (option?.ManualCharacterVariant is not { } manual) continue;
+            var label = labels[manual.Value ? 1 : 0];
+            if (string.IsNullOrWhiteSpace(label)) continue;
+            dropdown.SetItemText(index, StripVariantOrdinal(option.Name) + " · " + label);
+        }
+    }
+
+    private static string StripVariantOrdinal(string name)
+    {
+        var separator = name.LastIndexOf(" · ", StringComparison.Ordinal);
+        return separator > 0 && name[(separator + 3)..].All(char.IsDigit) ? name[..separator] : name;
+    }
+
     private static void Populate(HBoxContainer selector, SkinGroup? group)
     {
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
@@ -941,6 +988,7 @@ internal static partial class ContextualSkinControls
                 ModLocalization.DisplayOptionName));
             dropdown.SetItemMetadata(index, option.Id);
         }
+        ApplyProviderVariantLabels(dropdown, group, characterScreen);
         if (allowRandom)
         {
             var index = dropdown.ItemCount;

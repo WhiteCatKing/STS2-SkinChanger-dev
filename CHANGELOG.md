@@ -1,3 +1,11 @@
+## 1.0.38.7（2026-11-22，内测）
+变体标签跟随提供者自己的措辞：原来的「小红帽 · 战士外观 · 1 / · 2」是编号占位，现在与作者面板上的「原皮 / 女仆」一字不差（骨妹那边同理）。
+- 做法（`Ui/ContextualSkinControls.cs`）：`Populate` 填完角色下拉后调 `ApplyProviderVariantLabels`，按提供者 id 找到它自己的 `*Options` 面板里的两项 `OptionButton`，把两项文本读出来贴到我们的同名选项上；标签不再硬编码，作者换语言我们跟着变。
+- 时序：作者的菜单是它自己的选角钩子建的，可能晚于我们的重建，所以读不到时挂一帧后重试一次（`sts2_skin_variant_label_retry` 防重入），避免冷启动停在编号上。
+- 背景复核（本机日志）：`已按提供者声明的背景场景替换选角背景` 每次都执行，`[选角背景]` 显示 `NECROBINDER_bg[Control] 子=1`，而那唯一的子节点就是它场景里的 `ColorRect`；全文 `Decorate`/`RedHoodPortrait` 命中 0 次 → 它的立绘注入器在我们的挂载模式下没有运行，所以背景只能是一块深色底。
+- 门禁：Release 3,759,104 B / `8863D5DB5B922A4B`，0 警告 0 错误；LogicTests `Skin Changer logic policy tests passed.`；完整 RuntimeTests 116 行 `EXIT=0`。
+- 部署：两处 mod 目录同步 dll 与 `SkinChanger.json`（旧文件 `*.disabled_20261122j`）。
+
 ## 1.0.38.6（2026-11-22，内测）
 小红帽两包把自己的一套外观做成「原皮 / 女仆」两个变体，开关是提供者自己的静态 bool（`RedHoodNecrobinder.Mod.<Maid>`），切换入口是它自己的 `SetAppearance(bool maid, bool effects, bool audio, bool save)`。我们原来识别不了它，所以角色下拉里只有一项。
 - 识别：`Catalog/ManualCharacterVariantScanner.cs` 新增「静态 bool + 带 bool 首参的静态执行器」通道。判定链条是：bool 字段有自己的 `set_*`（字段由 `stsfld` 写入）、某个静态方法首参是 `bool` 且内部以 `ldarg.0; call set_*` 写入该字段、并且这个方法能从提供者自己的 `OptionButton.ItemSelected` 回调（直接或经一层本地函数）到达。`ManualCharacterState` 增加 `AppliesArgument` 标记。IL 取证：`set_Maid` 体只有 `ldarg.0; stsfld <Maid>k__BackingField; ret`；`SetAppearance` 体里紧跟 `ldarg.0` 调 `set_Maid`，并 `call ReleaseCombatEffects/PreloadCombatEffects/UpdatePortrait/RefreshTextures`；其下拉回调是 `<>c__DisplayClass52_0.<AddOptions>g__Apply|0`。

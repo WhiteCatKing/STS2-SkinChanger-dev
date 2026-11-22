@@ -4,7 +4,7 @@
   "title": "Skin Changer",
   "statementHeading": "Statement",
   "version": "1.0.38",
-  "internalTestVersion": "1.0.38.6",
+  "internalTestVersion": "1.0.38.7",
   "featureUpdate": "[h2]1.0.38[/h2]\nThe compendium's switch entry (\"Other Compendium\") is back on the stable build: the Vakuu art patch now skips itself when its target method is missing instead of rolling back the whole ancient module. Card art held by other players is no longer invalidated when a run ends; a third-party pack that throws inside the card pipeline is contained instead of blanking portraits; a load-order risk notice warns about same-name files and duplicate mod assemblies. Carried from 1.0.37: material packs with a .cardartpack.json are isolated from the game PCK, Ancient plates and frames resolve per install, and Hibiki Amane, NonoFoolSkin and Hina are supported.",
   "cardPriorityUpdate": "",
   "multiplayerUpdate": "",
