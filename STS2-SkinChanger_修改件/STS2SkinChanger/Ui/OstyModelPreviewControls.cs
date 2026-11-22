@@ -83,6 +83,14 @@ internal static class OstyModelPreviewControls
     internal static Resource? LoadSkeletonForCurrentSelection(string groupId, out string path)
     {
         path = OstySkeletonPath;
+        // 魄罗这两档是独立选择：不管角色皮肤选了什么，预览都按这一档取提供者的骨架。
+        if (PoroVariantBridge.CurrentOptionId is { Length: > 0 } &&
+            PoroVariantBridge.TryLoadSkeleton(SkinService.Config.CompanionProviderVariantId, out var poroSkeleton, out var poroPath))
+        {
+            path = poroPath;
+            return poroSkeleton;
+        }
+
         if (TryCreateProviderCompanionSkeleton(groupId, out var providerSkeleton, out var providerSkeletonPath))
         {
             path = providerSkeletonPath;
