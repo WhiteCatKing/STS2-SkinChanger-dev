@@ -1330,8 +1330,6 @@ internal static partial class ContextualSkinControls
 
         ModLog.Info($"奥斯提皮肤已切换到 {optionId}；此后与角色皮肤互不影响。");
         PopulateOsty(selector);
-        // 骨妹选人图里奥斯提与本体是同一条骨骼，换完要按当前角色重刷一次预览。
-        RefreshSelectorDisplay(selector);
         if (CharacterSelectScreenAccess.Find(selector) is { } ostyScreen)
         {
             OstyModelPreviewControls.Refresh(ostyScreen);
@@ -2126,6 +2124,9 @@ internal static partial class ContextualSkinControls
     {
         // F29 取证：卡死复现停在选角预览重建时，godot.log 以此行与挂载日志分界。
         ModLog.Info($"开始重建选角预览：{groupId}。");
+        // Set the local choice before any isolated load can save and restore the author flag.
+        // RedHood decorates the background on a deferred callback after those scopes close.
+        ManualCharacterVariantBridge.ApplyLocalChoice(groupId);
         CharacterModelPreviewControls.Refresh(screen, character);
         // A behavior-driven provider can replace the title/description and hide the original
         // background without changing a canonical scene. Always restore the game presentation
@@ -2631,7 +2632,6 @@ internal static partial class ContextualSkinControls
         var button = FindCharacterButton(screen, character);
         if (button != null)
         {
-            ManualCharacterVariantBridge.ApplyLocalChoice(groupId);
             ManagedSkinModLoader.ReplaySelectedCharacterPresentation(
                 providerId,
                 screen,

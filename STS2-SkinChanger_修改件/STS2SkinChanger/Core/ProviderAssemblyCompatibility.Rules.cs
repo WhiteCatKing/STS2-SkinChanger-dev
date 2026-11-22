@@ -122,8 +122,8 @@ internal static partial class ProviderAssemblyCompatibility
                 IEnumerable<MethodBase> candidates = name is ".ctor" or ".cctor"
                     ? type.GetConstructors(flags) : type.GetMethods(flags).Where(method => method.Name == name);
                 found = candidates.Any(method => !method.IsStatic == hasThis && !method.IsGenericMethod &&
-                    RuntimeTypeName(method is MethodInfo info ? info.ReturnType : typeof(void)) == returns &&
-                    method.GetParameters().Select(p => RuntimeTypeName(p.ParameterType)).SequenceEqual(parameters));
+                    (method is MethodInfo info ? RuntimeParameterTypeName(info.ReturnParameter) : RuntimeTypeName(typeof(void))) == returns &&
+                    method.GetParameters().Select(RuntimeParameterTypeName).SequenceEqual(parameters));
             }
             else
             {
@@ -134,6 +134,12 @@ internal static partial class ProviderAssemblyCompatibility
         }
         report.UnresolvedReferences.AddRange(unresolved);
     }
+
+    // Cecil includes modreq in the type name. Reflection exposes it on ParameterInfo,
+    // including IsExternalInit on the return parameter of init-only setters.
+    private static string RuntimeParameterTypeName(ParameterInfo parameter) =>
+        parameter.GetRequiredCustomModifiers().Aggregate(RuntimeTypeName(parameter.ParameterType),
+            (name, modifier) => name + " modreq(" + RuntimeTypeName(modifier) + ")");
 
     private static string RuntimeTypeName(Type type)
     {
@@ -168,7 +174,7 @@ internal static partial class ProviderAssemblyCompatibility
                 "MegaCrit.Sts2.Core.Models.CardModel", "System.Boolean", "System.Boolean" })) return false;
         var current = GameAssembly.GetType(GetTypeFullName(declaring))?.GetMethods(BindingFlags.Public | BindingFlags.Static)
             .SingleOrDefault(method => method.Name == "Exhaust" && !method.IsGenericMethod &&
-                method.GetParameters().Select(p => RuntimeTypeName(p.ParameterType)).SequenceEqual(parameters));
+                method.GetParameters().Select(RuntimeParameterTypeName).SequenceEqual(parameters));
         if (current == null || !current.ReturnType.IsConstructedGenericType ||
             current.ReturnType.GetGenericTypeDefinition() != typeof(Task<>)) return false;
         instruction.GetType().GetProperty("Operand")!.SetValue(instruction, Import(module, current));

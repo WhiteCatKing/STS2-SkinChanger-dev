@@ -1,8 +1,14 @@
+using HarmonyLib;
+using MegaCrit.Sts2.Core.Animation;
+using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using System.IO;
 using Godot;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Pck;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Context;
+using MegaCrit.Sts2.Core.Models.Monsters;
 
 namespace STS2SkinChanger.Core;
 
@@ -13,26 +19,27 @@ namespace STS2SkinChanger.Core;
 ///   * **只碰随从**——本体和它的预览小人绝不能被换成随从骨架（曾经把骨妹换成了魄罗）。
 ///   * **不跟角色皮肤绑定**——骨妹选任何皮肤，魄罗这两档都该在列表里，照样能选。
 ///
-/// 所以这里完全不依赖提供者的程序集有没有被激活：直接在已挂载的包资源里找
-/// <c>scripts/spine_factory.gd</c> 与 <c>spine42/&lt;随从&gt;/</c>，用作者自己的工厂取骨骼，
-/// 再把随从视觉的骨骼数据换过去。判定随从也不看 Mod 名字，只看游戏自己的
-/// 「有主人 + 怪物是 Osty」这条结构。
+/// 从提供者的 PCK 找随从资源，按需挂载随从专用资源包，再实例化作者的骨骼工厂。
+/// 随从判定使用游戏的「有主人 + 怪物是 Osty」结构。
 /// </summary>
 internal static class PoroVariantBridge
 {
     internal const string OptionPrefix = "poro:";
+    internal const string CombatBodyMeta = "sc_poro_combat_body";
 
     private const string CompanionGroupId = "osty";
-    private const string CompanionMonsterName = "Osty";
     private const string FactoryRelativePath = "scripts/spine_factory.gd";
     private const string SpineFolder = "spine42";
 
     internal readonly record struct PoroOption(string OptionId, string SkinId, string Name);
 
     private static Discovery? _discovery;
-    private static bool _discovered;
+    private static SkinCatalog? _catalog;
 
-    private sealed record Discovery(GDScript Factory, IReadOnlyList<PoroOption> Options);
+    private sealed record Discovery(string Pack, string ScriptPath, IReadOnlyList<PoroOption> Options)
+    {
+        internal GodotObject? Factory { get; set; }
+    }
 
     internal static IReadOnlyList<PoroOption> Options => Resolve()?.Options ?? [];
 
@@ -89,56 +96,6 @@ internal static class PoroVariantBridge
     internal static bool AvailableFor(string companionGroupId) =>
         companionGroupId.Equals(CompanionGroupId, StringComparison.OrdinalIgnoreCase) && Available;
 
-    /// <summary>玩家点了"魄罗 · xxx"：写盘并立刻换掉场上已有的魄罗。</summary>
-    internal static bool ApplyQuiet(string? skinId)
-    {
-        SkinService.Config.CompanionProviderVariantId = string.IsNullOrWhiteSpace(skinId) ? null : skinId;
-        RefreshLiveSkins();
-        return true;
-    }
-
-    /// <summary>把场上已经存在的魄罗换成当前选择；返回换成功的数量。只认随从本体。</summary>
-    internal static int RefreshLiveSkins()
-    {
-        var discovery = Resolve();
-        if (discovery == null)
-        {
-            return 0;
-        }
-
-        var skinId = SkinService.Config.CompanionProviderVariantId;
-        if (string.IsNullOrEmpty(skinId))
-        {
-            return 0;
-        }
-
-        if (Engine.GetMainLoop() is not SceneTree tree || tree.Root == null)
-        {
-            return 0;
-        }
-
-        var changed = 0;
-        foreach (var node in tree.Root.FindChildren("*", nameof(NCreature), recursive: true, owned: false))
-        {
-            if (node is not NCreature owner || !IsCompanion(owner.Entity))
-            {
-                continue;
-            }
-
-            if (FindSpine(owner) is not { } spine)
-            {
-                continue;
-            }
-
-            if (ApplyTo(spine, discovery, skinId))
-            {
-                changed++;
-            }
-        }
-
-        return changed;
-    }
-
     /// <summary>随从视觉刚创建完：按当前选择覆盖一次。</summary>
     internal static void ApplyOnCreated(Creature creature, Node? visuals)
     {
@@ -162,8 +119,7 @@ internal static class PoroVariantBridge
 
     /// <summary>游戏自己的随从结构：有主人，且怪物就是奥斯提。跟提供者是谁无关。</summary>
     private static bool IsCompanion(Creature? creature) =>
-        creature?.PetOwner != null &&
-        string.Equals(creature.Monster?.GetType().Name, CompanionMonsterName, StringComparison.OrdinalIgnoreCase);
+        creature?.Monster is Osty && creature.PetOwner is { } owner && LocalContext.IsMe(owner);
 
     /// <summary>随从的骨骼节点：先按作者用的名字找，再按能力找，最后放弃。</summary>
     private static Node2D? FindSpine(Node owner)
@@ -188,13 +144,18 @@ internal static class PoroVariantBridge
     {
         try
         {
-            using var result = discovery.Factory.Call("data_for", skinId);
+            using var result = GetFactory(discovery).Call("data_for", skinId);
             if (result.AsGodotObject() is not Resource data)
             {
                 return false;
             }
 
             spine.Call("set_skeleton_data_res", data);
+            // Match NativeVisuals.Create(pet: true) in the author pack. The parent still
+            // handles the game's health-based scaling and the player's size adjustments.
+            spine.Scale = Vector2.One * 0.45f;
+            spine.GetNodeOrNull<CanvasItem>("Flame")?.Hide();
+            spine.SetMeta(CombatBodyMeta, true);
 
             // 换骨骼后从头播待机，否则会停在旧骨架的最后一帧。
             if (spine.Call("get_animation_state").AsGodotObject() is { } state)
@@ -223,7 +184,7 @@ internal static class PoroVariantBridge
 
         try
         {
-            using var result = discovery.Factory.Call("data_for", skinId);
+            using var result = GetFactory(discovery).Call("data_for", skinId);
             if (result.AsGodotObject() is not Resource data)
             {
                 return false;
@@ -242,102 +203,88 @@ internal static class PoroVariantBridge
 
     private static Discovery? Resolve()
     {
-        if (_discovered)
+        var catalog = SkinService.Catalog;
+        if (catalog == null) return null;
+        if (!ReferenceEquals(catalog, _catalog))
         {
-            return _discovery;
+            _discovery = Discover(catalog);
+            _catalog = catalog;
         }
-
-        _discovered = true;
-        _discovery = Discover();
         return _discovery;
     }
 
-    /// <summary>忘掉探测结果；换皮/换包后重新找一次。</summary>
-    internal static void Reset()
+    private static Discovery? Discover(SkinCatalog catalog)
     {
-        _discovered = false;
-        _discovery = null;
+        var providers = catalog.Groups.SelectMany(group => group.Options)
+            .Where(option => !option.IsComposition)
+            .SelectMany(CandidateProviders).Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var provider in providers)
+        foreach (var pack in catalog.GetProviderResourcePackPaths(provider))
+        {
+            using var archive = PckArchive.Open(pack);
+            var script = $"res://{provider}/{FactoryRelativePath}";
+            if (!archive.Contains(script)) continue;
+
+            var prefix = $"res://{provider}/{SpineFolder}/";
+            var names = archive.Paths.Where(path => path.StartsWith(prefix, StringComparison.Ordinal) &&
+                                                  path.EndsWith(".spine-json", StringComparison.Ordinal))
+                .Select(path => path[prefix.Length..].Split('/')[0])
+                .Where(LooksLikeCompanion).Distinct(StringComparer.Ordinal)
+                .OrderBy(name => name.Length).ThenBy(name => name, StringComparer.Ordinal).ToArray();
+            var original = names.FirstOrDefault(name => !name.Contains("maid", StringComparison.OrdinalIgnoreCase));
+            if (original == null) continue;
+
+            var options = new List<PoroOption> { new(OptionPrefix + "base", original, "魄罗 · 原皮") };
+            var maid = names.FirstOrDefault(name => name.Contains("maid", StringComparison.OrdinalIgnoreCase));
+            if (maid != null) options.Add(new(OptionPrefix + "maid", maid, "魄罗 · 女仆"));
+            ModLog.Info($"魄罗外观：{provider} 提供 {options.Count} 档随从外观（{string.Join("/", options.Select(o => o.SkinId))}）。");
+            return new Discovery(pack, script, options);
+        }
+        return null;
     }
 
-    private static Discovery? Discover()
+    internal static IReadOnlyDictionary<string, (PckArchive Archive, string Path)> CompanionFiles(
+        PckArchive archive, string script, IEnumerable<string> skins)
     {
-        var catalog = SkinService.Catalog;
-        if (catalog == null)
+        var root = script[..^FactoryRelativePath.Length];
+        var folders = skins.Select(skin => $"{root}{SpineFolder}/{skin}/").ToArray();
+        var index = PckResourceIndex.Build(
+            new SkinModDescriptor("poro", "poro", archive.Path, false, null, false),
+            archive, new(StringComparer.OrdinalIgnoreCase), _ => false);
+        var files = new Dictionary<string, (PckArchive, string)>(StringComparer.OrdinalIgnoreCase)
         {
-            return null;
-        }
-
-        try
+            [script] = (archive, script)
+        };
+        foreach (var path in archive.Paths.Where(path => folders.Any(folder => path.StartsWith(folder, StringComparison.Ordinal))))
         {
-            // 资源都在提供者的 PCK 里（游戏启动时已挂载），所以按 res:// 探测；
-            // 不能看磁盘目录——没被选中的包根本没有解包出来。
-            var providers = catalog.Groups
-                .SelectMany(group => group.Options)
-                .Where(option => !option.IsComposition)
-                .SelectMany(CandidateProviders)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-
-            foreach (var provider in providers)
-            {
-                var prefix = "res://" + provider;
-                if (!Godot.FileAccess.FileExists(prefix + "/" + FactoryRelativePath))
-                {
-                    continue;
-                }
-
-                var spineRoot = prefix + "/" + SpineFolder;
-                if (!DirAccess.DirExistsAbsolute(spineRoot))
-                {
-                    continue;
-                }
-
-                using var dir = DirAccess.Open(spineRoot);
-                if (dir == null)
-                {
-                    continue;
-                }
-
-                var names = dir.GetDirectories()
-                    .Where(LooksLikeCompanion)
-                    .OrderBy(name => name.Length)
-                    .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-
-                var base_ = names.FirstOrDefault(name => !name.Contains("maid", StringComparison.OrdinalIgnoreCase));
-                var maid = names.FirstOrDefault(name => name.Contains("maid", StringComparison.OrdinalIgnoreCase));
-                if (base_ == null)
-                {
-                    continue;
-                }
-
-                var script = ResourceLoader.Load<GDScript>(
-                    prefix + "/" + FactoryRelativePath,
-                    null,
-                    ResourceLoader.CacheMode.IgnoreDeep);
-                if (script == null)
-                {
-                    ModLog.Warn($"魄罗外观：{provider} 的骨骼工厂脚本加载失败，跳过随从选项。");
-                    continue;
-                }
-
-                var options = new List<PoroOption> { new(OptionPrefix + "base", base_, "魄罗 · 原皮") };
-                if (maid != null)
-                {
-                    options.Add(new PoroOption(OptionPrefix + "maid", maid, "魄罗 · 女仆"));
-                }
-
-                ModLog.Info($"魄罗外观：{provider} 提供 {options.Count} 档随从外观（{base_}{(maid == null ? string.Empty : "/" + maid)}）。");
-                return new Discovery(script, options);
-            }
+            files[path] = (archive, path);
+            if (!path.EndsWith(".import", StringComparison.Ordinal)) continue;
+            foreach (var file in index.TryBuildAsset(path[..^7])!.Files)
+                files[file.Path] = (archive, file.Path);
         }
-        catch (Exception exception)
-        {
-            ModLog.Warn($"魄罗外观：读取包资源失败：{exception.GetBaseException().Message}");
-        }
+        return files;
+    }
 
-        ModLog.Info("魄罗外观：没有找到自带随从的包，本次不提供魄罗选项。");
-        return null;
+    private static GodotObject GetFactory(Discovery discovery)
+    {
+        if (discovery.Factory != null) return discovery.Factory;
+
+        // The workshop pack is intentionally absent from res:// until the owner skin is selected.
+        // Mount only the companion folders, their imported textures, and the factory script.
+        using var archive = PckArchive.Open(discovery.Pack);
+        var files = CompanionFiles(archive, discovery.ScriptPath, discovery.Options.Select(o => o.SkinId));
+        var info = new FileInfo(discovery.Pack);
+        var stamp = $"{info.FullName}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+        var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(stamp)));
+        var output = Path.Combine(SkinChangerPaths.CacheDirectory, $"poro_{key}.pck");
+        if (!File.Exists(output))
+            SkinChangerPaths.WriteCache(output, () => PckArchive.WriteFromArchives(output, files));
+        if (!SkinChangerPaths.LoadResourcePack(output, replaceFiles: false))
+            throw new IOException("无法挂载魄罗随从资源：" + output);
+
+        var script = ResourceLoader.Load<GDScript>(discovery.ScriptPath);
+        return discovery.Factory = script.New().AsGodotObject();
     }
 
     /// <summary>一个选项可能挂在几种 id 下面：提供者 id、有效提供者 id、选项 id 的前缀。</summary>
@@ -372,4 +319,25 @@ internal static class PoroVariantVisualsPatch
 {
     private static void Postfix(Creature __instance, ref NCreatureVisuals __result) =>
         PoroVariantBridge.ApplyOnCreated(__instance, __result);
+}
+
+[HarmonyPatch(typeof(Osty), nameof(Osty.GenerateAnimator))]
+internal static class PoroDeathAnimationPatch
+{
+    private static readonly System.Reflection.FieldInfo AnyState =
+        AccessTools.Field(typeof(CreatureAnimator), "_anyState");
+
+    private static void Postfix(MegaSprite controller, CreatureAnimator __result)
+    {
+        if (controller.BoundObject.HasMeta(PoroVariantBridge.CombatBodyMeta))
+            StopDeathLoop((AnimState)AnyState.GetValue(__result)!);
+    }
+
+    internal static void StopDeathLoop(AnimState anyState)
+    {
+        // Both authored bot skeletons alias dead_loop to die. Keep the real death action,
+        // and leave its final pose in place until the native Revive trigger arrives.
+        if (anyState.CallTrigger(CreatureAnimator.deathTrigger) is { } death)
+            death.NextState = null;
+    }
 }

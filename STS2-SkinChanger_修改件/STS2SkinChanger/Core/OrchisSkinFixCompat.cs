@@ -237,7 +237,8 @@ internal static class OrchisSkinFixCompat
     internal static string? RestSkeletonGroup(string path) => path switch
     {
         RestBodyPath => Body,
-        RestOstyPath => OstyGroup,
+        // The companion is part of the authored room composition, just like the merchant actor.
+        RestOstyPath => Body,
         _ => null
     };
 

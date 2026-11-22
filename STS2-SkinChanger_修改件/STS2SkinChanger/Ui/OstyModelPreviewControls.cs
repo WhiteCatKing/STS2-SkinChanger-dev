@@ -158,7 +158,8 @@ internal static class OstyModelPreviewControls
     {
         scene = null;
         path = string.Empty;
-        if (string.IsNullOrEmpty(groupId) || !string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId))
+        if (string.IsNullOrEmpty(groupId) || !string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId) ||
+            PoroVariantBridge.CurrentOptionId.Length > 0)
         {
             return false;
         }
@@ -742,7 +743,8 @@ internal partial class OstyModelPreviewPanel : Control
 
         var groupId = SkinService.CompanionGroupIds.FirstOrDefault() ?? string.Empty;
         var impostorSkinId = SkinService.Config.CompanionImpostorSkinId;
-        var key = (impostorSkinId ?? SkinService.GetCompanionSelection(groupId)) + "|" + groupId;
+        var poroOptionId = PoroVariantBridge.CurrentOptionId;
+        var key = (poroOptionId.Length > 0 ? poroOptionId : impostorSkinId ?? SkinService.GetCompanionSelection(groupId)) + "|" + groupId;
         if (key == _loadedKey && _spine != null && GodotObject.IsInstanceValid(_spine))
         {
             return;

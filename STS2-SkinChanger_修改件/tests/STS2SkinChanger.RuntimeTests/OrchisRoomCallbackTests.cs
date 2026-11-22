@@ -92,8 +92,8 @@ internal static class OrchisRoomCallbackTests
             _osty = OrchisSkinFixCompat.ProviderId;
             merchant.Invoke(null, [visuals, players]);
             rest.Invoke(null, [site]);
-            Require(MerchantPatch.LastPlayer == null && !RestPatch.AppliedBody && RestPatch.AppliedOsty,
-                "Osty-only selection must keep the original body in merchant and rest site.");
+            Require(MerchantPatch.LastPlayer == null && !RestPatch.AppliedBody && !RestPatch.AppliedOsty,
+                "Osty-only selection must leave the merchant and both campfire actors at their original visuals.");
             Require(!TextPatch.ShouldReplace(locString) &&
                 !TextPatch.TryGetCharacterText(locString, out var ostyOnlyText) &&
                 ostyOnlyText == string.Empty,
@@ -104,8 +104,8 @@ internal static class OrchisRoomCallbackTests
             merchant.Invoke(null, [visuals, players]);
             rest.Invoke(null, [site]);
             Require(ReferenceEquals(MerchantPatch.LastPlayer, _player) && ReferenceEquals(MerchantPatch.LastVisual, visuals[1]) &&
-                RestPatch.AppliedBody && !RestPatch.AppliedOsty,
-                "Orchis body selection must retain paired merchant visuals and body-only campfire repair.");
+                RestPatch.AppliedBody && RestPatch.AppliedOsty,
+                "Orchis body selection must retain paired merchant and campfire visuals regardless of the independent combat companion.");
             Require(TextPatch.ShouldReplace(locString) &&
                 TextPatch.TryGetCharacterText(locString, out var orchisText) &&
                 orchisText == "奥契丝",

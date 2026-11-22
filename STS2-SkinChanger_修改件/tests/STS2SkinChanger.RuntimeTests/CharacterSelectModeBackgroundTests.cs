@@ -2,6 +2,7 @@ using System.Reflection;
 using Godot;
 using HarmonyLib;
 using STS2SkinChanger.Ui;
+using STS2SkinChanger.Core;
 
 // 极速/恐惧模式的选人背景：这两套界面会在 SelectCharacter 之外自己重写背景容器
 // （Dread 的连胜动画直接调 SetSelectedCharacterVisuals）。这里验证切换器确实给这个入口
@@ -108,6 +109,19 @@ internal static class CharacterSelectModeBackgroundTests
                 !ProviderModeSelectOverlayBridge.IsBlockingVisualOverlayType(typeof(LineEdit)) &&
                 !ProviderModeSelectOverlayBridge.IsBlockingVisualOverlayType(typeof(Node2D)),
             "Interactive controls and non-Control nodes must never be modified.");
+
+        var rebuildCalls = PatchProcessor.GetOriginalInstructions(
+            AccessTools.DeclaredMethod(typeof(ContextualSkinControls), "RebuildCharacterDisplay"))
+            .Select(instruction => (instruction.operand as MethodInfo)?.Name).ToList();
+        var syncVariant = rebuildCalls.IndexOf(nameof(ManualCharacterVariantBridge.ApplyLocalChoice));
+        var backgroundLoad = rebuildCalls.IndexOf("RebuildMountedFullRuntimeCharacterDisplay");
+        Require(syncVariant >= 0 && backgroundLoad > syncVariant,
+            "The saved character variant must apply before the background resource scope captures the provider flag.");
+        Require(!PatchProcessor.GetOriginalInstructions(
+            AccessTools.DeclaredMethod(typeof(ContextualSkinControls), "ApplyOstySelection"))
+            .Any(instruction => instruction.operand is MethodInfo method && method.Name == "RefreshSelectorDisplay"),
+            "An independent Osty choice must not rebuild the character backdrop.");
+
 
         // 4. 验证关键入口均会在完成后同步点击穿透状态（包括切走恢复）。
         RequireCallsMethod(typeof(ProviderModeSelectOverlayBridge), nameof(ProviderModeSelectOverlayBridge.Attach),

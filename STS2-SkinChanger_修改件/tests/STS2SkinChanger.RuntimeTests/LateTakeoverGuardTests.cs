@@ -49,10 +49,10 @@ internal static class LateTakeoverGuardTests
             "Orchis must only apply to the active provider family and yield to the standalone summon.");
         const string rest = "res://OrchisNecrobinderSkinMod/animations/rest_site/necrobinder/";
         Require(OrchisSkinFixCompat.RestSkeletonGroup(rest + "rest_site_necrobinder_skel_data.tres") == "necrobinder" &&
-            OrchisSkinFixCompat.RestSkeletonGroup(rest + "lloyd_relax_skel_data.tres") == "osty" &&
+            OrchisSkinFixCompat.RestSkeletonGroup(rest + "lloyd_relax_skel_data.tres") == "necrobinder" &&
             OrchisSkinFixCompat.RestSkeletonGroup(rest + "other.tres") == null,
-            "The body and summon must be gated independently and unrelated resources stay untouched.");
-        Console.WriteLine("Orchis ownership and late select guard passed: independent room groups, late install, idempotence and echo suppression.");
+            "Both actors in the authored campfire scene must follow Necrobinder; other resources stay untouched.");
+        Console.WriteLine("Orchis ownership and late select guard passed: paired room actors, late install, idempotence and echo suppression.");
     }
 
     private static void Require(bool condition, string message)
