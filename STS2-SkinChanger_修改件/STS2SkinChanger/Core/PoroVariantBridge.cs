@@ -1,6 +1,7 @@
 using System.IO;
 using Godot;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using STS2SkinChanger.Catalog;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 
 namespace STS2SkinChanger.Core;
@@ -268,62 +269,66 @@ internal static class PoroVariantBridge
 
         try
         {
-            foreach (var group in catalog.Groups)
+            // 资源都在提供者的 PCK 里（游戏启动时已挂载），所以按 res:// 探测；
+            // 不能看磁盘目录——没被选中的包根本没有解包出来。
+            var providers = catalog.Groups
+                .SelectMany(group => group.Options)
+                .Where(option => !option.IsComposition)
+                .SelectMany(CandidateProviders)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            foreach (var provider in providers)
             {
-                foreach (var option in group.Options)
+                var prefix = "res://" + provider;
+                if (!Godot.FileAccess.FileExists(prefix + "/" + FactoryRelativePath))
                 {
-                    if (option.IsComposition)
-                    {
-                        continue;
-                    }
-
-                    var root = option.ProviderRootPath;
-                    if (string.IsNullOrWhiteSpace(root) || !File.Exists(Path.Combine(root, "scripts", "spine_factory.gd")))
-                    {
-                        continue;
-                    }
-
-                    var spineRoot = Path.Combine(root, SpineFolder);
-                    if (!Directory.Exists(spineRoot))
-                    {
-                        continue;
-                    }
-
-                    var names = Directory.GetDirectories(spineRoot)
-                        .Select(Path.GetFileName)
-                        .Where(name => !string.IsNullOrEmpty(name))
-                        .Select(name => name!)
-                        .Where(LooksLikeCompanion)
-                        .OrderBy(name => name.Length)
-                        .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
-                        .ToArray();
-
-                    var base_ = names.FirstOrDefault(name => !name.Contains("maid", StringComparison.OrdinalIgnoreCase));
-                    var maid = names.FirstOrDefault(name => name.Contains("maid", StringComparison.OrdinalIgnoreCase));
-                    if (base_ == null)
-                    {
-                        continue;
-                    }
-
-                    var prefix = Path.GetFileName(root);
-                    var script = ResourceLoader.Load<GDScript>(
-                        "res://" + prefix + "/" + FactoryRelativePath,
-                        null,
-                        ResourceLoader.CacheMode.IgnoreDeep);
-                    if (script == null)
-                    {
-                        ModLog.Warn($"魄罗外观：{prefix} 的骨骼工厂脚本加载失败，跳过随从选项。");
-                        continue;
-                    }
-
-                    var options = new List<PoroOption> { new(OptionPrefix + "base", base_, "魄罗 · 原皮") };
-                    if (maid != null)
-                    {
-                        options.Add(new PoroOption(OptionPrefix + "maid", maid, "魄罗 · 女仆"));
-                    }
-
-                    return new Discovery(script, options);
+                    continue;
                 }
+
+                var spineRoot = prefix + "/" + SpineFolder;
+                if (!DirAccess.DirExistsAbsolute(spineRoot))
+                {
+                    continue;
+                }
+
+                using var dir = DirAccess.Open(spineRoot);
+                if (dir == null)
+                {
+                    continue;
+                }
+
+                var names = dir.GetDirectories()
+                    .Where(LooksLikeCompanion)
+                    .OrderBy(name => name.Length)
+                    .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                var base_ = names.FirstOrDefault(name => !name.Contains("maid", StringComparison.OrdinalIgnoreCase));
+                var maid = names.FirstOrDefault(name => name.Contains("maid", StringComparison.OrdinalIgnoreCase));
+                if (base_ == null)
+                {
+                    continue;
+                }
+
+                var script = ResourceLoader.Load<GDScript>(
+                    prefix + "/" + FactoryRelativePath,
+                    null,
+                    ResourceLoader.CacheMode.IgnoreDeep);
+                if (script == null)
+                {
+                    ModLog.Warn($"魄罗外观：{provider} 的骨骼工厂脚本加载失败，跳过随从选项。");
+                    continue;
+                }
+
+                var options = new List<PoroOption> { new(OptionPrefix + "base", base_, "魄罗 · 原皮") };
+                if (maid != null)
+                {
+                    options.Add(new PoroOption(OptionPrefix + "maid", maid, "魄罗 · 女仆"));
+                }
+
+                ModLog.Info($"魄罗外观：{provider} 提供 {options.Count} 档随从外观（{base_}{(maid == null ? string.Empty : "/" + maid)}）。");
+                return new Discovery(script, options);
             }
         }
         catch (Exception exception)
@@ -331,7 +336,25 @@ internal static class PoroVariantBridge
             ModLog.Warn($"魄罗外观：读取包资源失败：{exception.GetBaseException().Message}");
         }
 
+        ModLog.Info("魄罗外观：没有找到自带随从的包，本次不提供魄罗选项。");
         return null;
+    }
+
+    /// <summary>一个选项可能挂在几种 id 下面：提供者 id、有效提供者 id、选项 id 的前缀。</summary>
+    private static IEnumerable<string> CandidateProviders(SkinOption option)
+    {
+        foreach (var candidate in new[]
+                 {
+                     option.ProviderId,
+                     option.EffectiveProviderId,
+                     option.Id.Split(':', 2)[0]
+                 })
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                yield return candidate;
+            }
+        }
     }
 
     /// <summary>目录名像不像"包里的随从"：含 bot/pet/poro，或直接叫 osty。</summary>
