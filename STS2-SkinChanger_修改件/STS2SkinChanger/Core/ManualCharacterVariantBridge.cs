@@ -34,7 +34,15 @@ internal static class ManualCharacterVariantBridge
     private static void ApplyLocalChoiceCore(string groupId)
     {
         var mode = SkinService.GetSelectedManualCharacterVariant(groupId);
-        if (mode?.State.IsStatic != true || GetField(groupId, mode.State) is not { } field) return;
+        if (mode == null) return;
+        if (mode.State.AppliesArgument)
+        {
+            // The provider owns the switch: its entry point also refreshes whatever it renders, so
+            // the variant must be applied through it rather than by writing the flag alone.
+            InvokeApplier(groupId, mode.State, mode.Value);
+            return;
+        }
+        if (mode.State.IsStatic != true || GetField(groupId, mode.State) is not { } field) return;
         if (Equals(field.GetValue(null), mode.Value)) return;
         field.SetValue(null, mode.Value);
         // Persist only a deliberate local/UI selection, never a remote player's render scope.
@@ -42,8 +50,51 @@ internal static class ManualCharacterVariantBridge
             field.DeclaringType!.GetMethod(save, Static, Type.EmptyTypes)?.Invoke(null, null);
     }
 
-    private static FieldInfo? GetField(string groupId, ManualCharacterState state)
+    private static void InvokeApplier(string groupId, ManualCharacterState state, bool value)
     {
+        var method = ResolveMethod(
+            ManagedSkinModLoader.GetActiveProviderAssembly(SkinService.GetSelectedRuntimeProvider(groupId) ?? string.Empty),
+            state);
+        if (method == null) return;
+        var parameters = method.GetParameters();
+        var arguments = new object?[parameters.Length];
+        arguments[0] = value;
+        for (var index = 1; index < parameters.Length; index++)
+            arguments[index] = LiveArgument(method.DeclaringType, parameters[index]);
+        method.Invoke(null, arguments);
+    }
+
+    /// <summary>Keeps the provider's other switches (effects, audio) and never persists a value the
+    /// player picked in our own list; only the provider's own control saves.</summary>
+    private static object? LiveArgument(Type? type, ParameterInfo parameter)
+    {
+        if (parameter.ParameterType != typeof(bool))
+            return parameter.ParameterType.IsValueType ? Activator.CreateInstance(parameter.ParameterType) : null;
+        var name = parameter.Name;
+        if (!string.IsNullOrEmpty(name))
+        {
+            if (type?.GetField(name, Static)?.GetValue(null) is bool stored) return stored;
+            if (type?.GetProperty(name, Static)?.GetValue(null) is bool declared) return declared;
+            var trailing = type?.GetFields(Static)
+                .FirstOrDefault(candidate => candidate.FieldType == typeof(bool) &&
+                    candidate.Name.EndsWith(name, StringComparison.OrdinalIgnoreCase));
+            if (trailing?.GetValue(null) is bool related) return related;
+        }
+        return name?.Contains("save", StringComparison.OrdinalIgnoreCase) != true;
+    }
+
+    private static MethodInfo? ResolveMethod(Assembly? assembly, ManualCharacterState state)
+    {
+        var type = assembly?.GetType(state.ToggleTypeName);
+        if (type == null) return null;
+        if (!state.AppliesArgument)
+            return type.GetMethod(state.ToggleMethod, Static | BindingFlags.Instance, Type.EmptyTypes);
+        return type.GetMethods(Static | BindingFlags.Instance)
+            .FirstOrDefault(candidate => candidate.Name == state.ToggleMethod &&
+                candidate.GetParameters() is [var first, ..] && first.ParameterType == typeof(bool));
+    }
+
+    private static FieldInfo? GetField(string groupId, ManualCharacterState state)    {
         var provider = SkinService.GetSelectedRuntimeProvider(groupId);
         return provider == null ? null : ManagedSkinModLoader.GetActiveProviderAssembly(provider)?
             .GetType(state.TypeName)?.GetField(state.FieldName, Static);
@@ -58,8 +109,7 @@ internal static class ManualCharacterVariantBridge
         Screens.Add(screen, new(groupId, providerId, mode.State));
         if (!mode.State.IsStatic) return; // SlotToggleContract observes the existing _Input method.
         var assembly = ManagedSkinModLoader.GetActiveProviderAssembly(providerId);
-        var toggle = assembly?.GetType(mode.State.ToggleTypeName)?.GetMethod(mode.State.ToggleMethod,
-            Static | BindingFlags.Instance, Type.EmptyTypes);
+        var toggle = ResolveMethod(assembly, mode.State);
         if (toggle == null || !Observed.Add(toggle)) return;
         try { Observer.Patch(toggle, postfix: new HarmonyMethod(typeof(ManualCharacterVariantBridge), nameof(AfterToggle))); }
         catch { Observed.Remove(toggle); throw; }

@@ -5,7 +5,8 @@ using HarmonyLib;
 namespace STS2SkinChanger.Catalog;
 
 internal sealed record ManualCharacterState(string TypeName, string FieldName, bool IsStatic,
-    string ToggleTypeName, string ToggleMethod, string? SaveMethod, string[] SourceSlots)
+    string ToggleTypeName, string ToggleMethod, string? SaveMethod, string[] SourceSlots,
+    bool AppliesArgument = false)
 {
     public string Id => TypeName + ":" + FieldName;
 }
@@ -45,7 +46,17 @@ internal static class ManualCharacterVariantScanner
                 {
                     var isStatic = (bool)Get(field, "IsStatic");
                     var fieldId = Text(field, "FullName");
-                    if (!togglesByField.TryGetValue(fieldId, out var toggles)) continue;
+                    if (!togglesByField.TryGetValue(fieldId, out var toggles))
+                    {
+                        // Second shape: the provider stores the variant in a static flag and applies it
+                        // through its own argument-taking entry point (SetVariant(bool …)) instead of
+                        // flipping the flag itself. Same meaning, so both become one switchable channel.
+                        if (isStatic && FindArgumentApplier(methods, bodies, fieldId) is { } argumentApplier)
+                            states.Add(new(Text(type, "FullName").Replace('/', '+'), Text(field, "Name"), true,
+                                Text(argumentApplier, "DeclaringType").Replace('/', '+'), Text(argumentApplier, "Name"),
+                                null, [], true));
+                        continue;
+                    }
                     foreach (var toggle in toggles)
                     {
                         string? save = null;
@@ -131,8 +142,53 @@ internal static class ManualCharacterVariantScanner
         }
     }
 
-    private static IEnumerable<string> FindToggledFields(object[] body)
+    /// <summary>A provider-side applier: a static entry point whose first argument is the variant
+    /// flag it stores (through that flag's own setter) and which the control that switches variants
+    /// reaches, directly or through one local function. Also requires the flag to be read elsewhere
+    /// so unrelated gameplay/debug booleans never become skin options.</summary>
+    private static object? FindArgumentApplier(object[] methods, Dictionary<object, object[]> bodies, string field)
     {
+        var setters = methods.Where(method => Text(method, "Name").StartsWith("set_", StringComparison.Ordinal) &&
+                Items(Get(method, "Parameters")).Count() == 1 &&
+                Text(Items(Get(method, "Parameters")).First(), "ParameterType") == "System.Boolean" &&
+                Stores(bodies[method], field) && bodies[method].Any(i => Op(i) == "ldarg.0")).ToArray();
+        if (setters.Length == 0) return null;
+        var handlers = methods.Where(method => bodies[method].Any(instruction => Op(instruction) is "call" or "callvirt" &&
+                Text(Operand(instruction), "Name") == "add_ItemSelected"))
+            .SelectMany(method => bodies[method].Where(i => Op(i) == "ldftn").Select(Operand))
+            .Where(handler => handler != null)
+            .Select(handler => Text(handler, "FullName"))
+            .ToHashSet(StringComparer.Ordinal);
+        if (handlers.Count == 0) return null;
+
+        bool Reaches(object applier)
+        {
+            foreach (var handler in methods.Where(method => handlers.Contains(Text(method, "FullName"))))
+            {
+                if (Calls(bodies[handler], applier)) return true;
+                if (methods.Any(middle => Calls(bodies[handler], middle) && Calls(bodies[middle], applier))) return true;
+            }
+            return false;
+        }
+
+        foreach (var method in methods)
+        {
+            if (!(bool)Get(method, "IsStatic")) continue;
+            var parameters = Items(Get(method, "Parameters")).ToArray();
+            if (parameters.Length < 2 || Text(parameters[0], "ParameterType") != "System.Boolean") continue;
+            var body = bodies[method];
+            var storesFirstArgument = setters.Any(setter => Enumerable.Range(0, Math.Max(0, body.Length - 1)).Any(i =>
+                Op(body[i]) == "ldarg.0" && Op(body[i + 1]) is "call" or "callvirt" &&
+                Text(Operand(body[i + 1]), "FullName") == Text(setter, "FullName")));
+            if (!storesFirstArgument) continue;
+            if (!methods.Any(other => other != method && Reads(bodies[other], field))) continue;
+            if (!Reaches(method)) continue;
+            return method;
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> FindToggledFields(object[] body)    {
         for (var i = 0; i + 3 < body.Length; i++)
             if (Op(body[i]) is "ldsfld" or "ldfld" && Text(Operand(body[i]), "FieldType") == "System.Boolean" &&
                 Op(body[i + 1]) == "ldc.i4.0" && Op(body[i + 2]) == "ceq" &&
@@ -153,6 +209,7 @@ internal static class ManualCharacterVariantScanner
         return [];
     }
     private static bool Reads(object[] body, string field) => body.Any(i => Op(i) is "ldfld" or "ldsfld" && Text(Operand(i), "FullName") == field);
+    private static bool Stores(object[] body, string field) => body.Any(i => Op(i) is "stfld" or "stsfld" && Text(Operand(i), "FullName") == field);
     private static bool Calls(object[] body, object method) => body.Any(i => Op(i) is "call" or "callvirt" && Text(Operand(i), "FullName") == Text(method, "FullName"));
     private static bool Calls(object[] body, string type, string name) => body.Any(i => Op(i) is "call" or "callvirt" && Text(Operand(i), "DeclaringType") == type && Text(Operand(i), "Name") == name);
     private static bool References(object[] body, object method) => body.Any(i => Op(i) == "ldftn" && Text(Operand(i), "FullName") == Text(method, "FullName"));

@@ -1,3 +1,13 @@
+## 1.0.38.6（2026-11-22，内测）
+小红帽两包把自己的一套外观做成「原皮 / 女仆」两个变体，开关是提供者自己的静态 bool（`RedHoodNecrobinder.Mod.<Maid>`），切换入口是它自己的 `SetAppearance(bool maid, bool effects, bool audio, bool save)`。我们原来识别不了它，所以角色下拉里只有一项。
+- 识别：`Catalog/ManualCharacterVariantScanner.cs` 新增「静态 bool + 带 bool 首参的静态执行器」通道。判定链条是：bool 字段有自己的 `set_*`（字段由 `stsfld` 写入）、某个静态方法首参是 `bool` 且内部以 `ldarg.0; call set_*` 写入该字段、并且这个方法能从提供者自己的 `OptionButton.ItemSelected` 回调（直接或经一层本地函数）到达。`ManualCharacterState` 增加 `AppliesArgument` 标记。IL 取证：`set_Maid` 体只有 `ldarg.0; stsfld <Maid>k__BackingField; ret`；`SetAppearance` 体里紧跟 `ldarg.0` 调 `set_Maid`，并 `call ReleaseCombatEffects/PreloadCombatEffects/UpdatePortrait/RefreshTextures`；其下拉回调是 `<>c__DisplayClass52_0.<AddOptions>g__Apply|0`。
+- 应用：`Core/ManualCharacterVariantBridge.cs` 对这类提供者不再只写标志位，而是调它自己的执行器（`InvokeApplier`）——其余参数保持提供者当前值（`effects`/`audio` 读活字段，`save` 传 `false`，不覆盖作者存档），这样它内部的骨架切换、立绘重建、贴图重刷都会照常发生。
+- 双向同步：`BindScreen` 现在把执行器本身挂 Postfix，作者自己点下拉时我们跟着改选中项；我们下拉切换时走执行器。
+- 背景：1.0.38.5 的替换确实执行了（日志 `已按提供者声明的背景场景替换选角背景` 16 次，`[选角背景]` 里看到 `NECROBINDER_bg[Control] 子=1`），但提供者的 `portraits/selection.tscn` 本体只是一块全屏深色 `ColorRect`，真正的立绘靠它自己 `Decorate` 往场景里注入 `RedHoodPortrait`；日志里该节点没有出现，说明注入环节没跑。
+- 门禁：Release 3,757,056 B / `E624C07DAEBF28EF`，0 警告 0 错误；LogicTests `Skin Changer logic policy tests passed.`；完整 RuntimeTests 116 行 `EXIT=0` / `Workshop policy tests passed.`；受保护四项全 `EXIT=0`。
+- 部署：两处 mod 目录同步 dll 与 `SkinChanger.json`（旧文件 `*.disabled_20261122i`），回读 3,757,056 B / `E624C07DAEBF28EF` / 内测 1.0.38.6。
+- 已知：`[DEBUG-rh1]` 诊断行仍保留，等背景确认后再删。
+
 ## 1.0.38.5（2026-11-22，内测）
 1.0.38.4 仍然没换背景，日志给了答案：整包分支也没进去，真正跑的是通用资源分支，而那里 `resources[规范路径]` **永远能解析出游戏原版场景**（`scene != null`），所以「scene == null 才补」的判断从根上就不会成立，背景每次都被原版场景替换回去。
 - 改法（`Ui/ContextualSkinControls.cs` 通用分支）：先调 `TryResolveProviderDeclaredBackground`（读活的 `character.CharacterSelectBg`，不是规范路径且能加载就用提供者的场景），命中就替换并打 `已按提供者声明的背景场景替换选角背景：<路径>`；不命中才走原来的规范路径替换，并且把「规范路径取不到场景就什么都不换」的语义保留在取到场景的分支里。
