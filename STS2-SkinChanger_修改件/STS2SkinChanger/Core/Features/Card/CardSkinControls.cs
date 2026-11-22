@@ -2506,7 +2506,9 @@ internal static class CardInspectSkinControls
 [HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary._Ready))]
 internal static class CardLibrarySkinReadyPatch
 {
-    private static void Postfix(NCardLibrary __instance) => CardSkinControls.Attach(__instance);
+    private static void Postfix(NCardLibrary __instance) =>
+        UiInjectionGuard.Run("CardLibrarySkinReadyPatch.Postfix", () =>
+            CardSkinControls.Attach(__instance));
 }
 
 [FeaturePatch(FeatureIds.Card)]
@@ -2514,7 +2516,8 @@ internal static class CardLibrarySkinReadyPatch
 internal static class CardInspectSkinReadyPatch
 {
     private static void Postfix(NInspectCardScreen __instance) =>
-        CardInspectSkinControls.Attach(__instance);
+        UiInjectionGuard.Run("CardInspectSkinReadyPatch.Postfix", () =>
+            CardInspectSkinControls.Attach(__instance));
 }
 
 [FeaturePatch(FeatureIds.Card)]
@@ -2541,10 +2544,12 @@ internal static class CardInspectSkinDisplayPatch
 internal static class CardLibrarySkinOpenedPatch
 {
     private static void Prefix(NCardLibrary __instance) =>
-        CardSkinControls.ResetAvailabilityFilter(__instance);
+        UiInjectionGuard.Run("CardLibrarySkinOpenedPatch.Prefix", () =>
+            CardSkinControls.ResetAvailabilityFilter(__instance));
 
     private static void Postfix(NCardLibrary __instance) =>
-        CardSkinControls.SyncToSelectedFilter(__instance);
+        UiInjectionGuard.Run("CardLibrarySkinOpenedPatch.Postfix", () =>
+            CardSkinControls.SyncToSelectedFilter(__instance));
 }
 
 [FeaturePatch(FeatureIds.Card)]
@@ -2568,7 +2573,8 @@ internal static class CardLibraryAvailabilityFilterPatch
 internal static class CardLibraryPoolSkinPatch
 {
     private static void Postfix(NCardLibrary __instance, NCardPoolFilter filter) =>
-        CardSkinControls.ShowForFilter(__instance, filter);
+        UiInjectionGuard.Run("CardLibraryPoolSkinPatch.Postfix", () =>
+            CardSkinControls.ShowForFilter(__instance, filter));
 }
 
 [FeaturePatch(FeatureIds.Card)]

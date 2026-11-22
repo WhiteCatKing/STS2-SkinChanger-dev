@@ -816,5 +816,6 @@ internal static class BestiaryInitialSkinNamePatch
 {
     [HarmonyPostfix]
     private static void Postfix(NBestiary __instance) =>
-        ContextualSkinControls.ScheduleInitialBestiaryMonsterNameRefresh(__instance);
+        UiInjectionGuard.Run("BestiaryInitialSkinNamePatch.Postfix", () =>
+            ContextualSkinControls.ScheduleInitialBestiaryMonsterNameRefresh(__instance));
 }

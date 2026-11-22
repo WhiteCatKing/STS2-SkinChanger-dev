@@ -12,24 +12,27 @@ internal static class ManagedModListNamePatch
     [HarmonyPriority(Priority.First)]
     private static void Postfix(NModMenuRow __instance)
     {
-        if (!ManagedSkinModLoader.IsManagedProviderForDisplay(__instance.Mod))
+        UiInjectionGuard.Run("ManagedModListNamePatch.Postfix", () =>
         {
-            return;
-        }
+            if (!ManagedSkinModLoader.IsManagedProviderForDisplay(__instance.Mod))
+            {
+                return;
+            }
 
-        var title = __instance.GetNodeOrNull<Control>("Title");
-        switch (title)
-        {
-            case RichTextLabel richTextLabel:
-                richTextLabel.Text = ManagedModListNamePolicy.Format(
-                    richTextLabel.Text,
-                    isManagedProvider: true);
-                break;
-            case Label label:
-                label.Text = ManagedModListNamePolicy.Format(
-                    label.Text,
-                    isManagedProvider: true);
-                break;
-        }
+            var title = __instance.GetNodeOrNull<Control>("Title");
+            switch (title)
+            {
+                case RichTextLabel richTextLabel:
+                    richTextLabel.Text = ManagedModListNamePolicy.Format(
+                        richTextLabel.Text,
+                        isManagedProvider: true);
+                    break;
+                case Label label:
+                    label.Text = ManagedModListNamePolicy.Format(
+                        label.Text,
+                        isManagedProvider: true);
+                    break;
+            }
+        });
     }
 }

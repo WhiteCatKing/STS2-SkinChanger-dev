@@ -106,5 +106,7 @@ internal static class CacheWriteNotice
 [HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]
 internal static class CacheWriteNoticeReadyPatch
 {
-    private static void Postfix(NMainMenu __instance) => CacheWriteNotice.Install(__instance.GetTree());
+    private static void Postfix(NMainMenu __instance) =>
+        UiInjectionGuard.Run("CacheWriteNoticeReadyPatch.Postfix", () =>
+            CacheWriteNotice.Install(__instance.GetTree()));
 }

@@ -386,5 +386,6 @@ internal static class BackgroundAppearancePauseMenuPatch
 
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NPauseMenu __instance) =>
-        BackgroundAppearancePauseMenu.Attach(__instance);
+        UiInjectionGuard.Run("BackgroundAppearancePauseMenuPatch.Postfix", () =>
+            BackgroundAppearancePauseMenu.Attach(__instance));
 }

@@ -4207,11 +4207,13 @@ internal static class CharacterSelectionSkinPatch
 {
     [HarmonyPriority(Priority.First)]
     private static void Prefix(Control __instance) =>
-        ContextualSkinControls.CaptureCharacterBackgroundHostLayout(__instance);
+        UiInjectionGuard.Run("CharacterSelectionSkinPatch.Prefix", () =>
+            ContextualSkinControls.CaptureCharacterBackgroundHostLayout(__instance));
 
     [HarmonyPriority(Priority.First)]
     private static void Postfix(Control __instance, NCharacterSelectButton charSelectButton) =>
-        ContextualSkinControls.ShowCharacter(__instance, charSelectButton.Character);
+        UiInjectionGuard.Run("CharacterSelectionSkinPatch.Postfix", () =>
+            ContextualSkinControls.ShowCharacter(__instance, charSelectButton.Character));
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), "StartNewSingleplayerRun")]
@@ -4312,11 +4314,14 @@ internal static class BestiarySelectionSkinPatch
 
     private static void Postfix(NBestiary __instance, NBestiaryEntry entry)
     {
-        // 皮肤切换触发的重建会再次进入 SelectMonster，跳过重入以避免重复刷新下拉框。
-        if (!ContextualSkinControls.IsRefreshingMonsterDisplay)
+        UiInjectionGuard.Run("BestiarySelectionSkinPatch.Postfix", () =>
         {
-            ContextualSkinControls.ShowMonster(__instance, entry);
-        }
+            // 皮肤切换触发的重建会再次进入 SelectMonster，跳过重入以避免重复刷新下拉框。
+            if (!ContextualSkinControls.IsRefreshingMonsterDisplay)
+            {
+                ContextualSkinControls.ShowMonster(__instance, entry);
+            }
+        });
     }
 }
 
@@ -4568,39 +4573,59 @@ internal static class CharacterMapMarkerResultPatch
 [HarmonyPatch(typeof(NMultiplayerPlayerState), nameof(NMultiplayerPlayerState._Ready))]
 internal static class MultiplayerPlayerStateIconScopePatch
 {
-    private static void Prefix(NMultiplayerPlayerState __instance, out IDisposable? __state) =>
-        __state = __instance.Player == null
-            ? null
-            : MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.Player.NetId);
+    private static void Prefix(NMultiplayerPlayerState __instance, out IDisposable? __state)
+    {
+        IDisposable? scope = null;
+        UiInjectionGuard.Run("MultiplayerPlayerStateIconScopePatch.Prefix", () =>
+        {
+            scope = __instance.Player == null
+                ? null
+                : MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.Player.NetId);
+        });
+        __state = scope;
+    }
 
     private static void Postfix(
         NMultiplayerPlayerState __instance,
         IDisposable? __state)
     {
-        __state?.Dispose();
-        if (__instance.Player != null)
+        UiInjectionGuard.Run("MultiplayerPlayerStateIconScopePatch.Postfix", () =>
         {
-            // Queue one pass after the game's own icon assignment.  The queue is drained from
-            // the normal process tick, avoiding scene-tree re-entry during _Ready.
-            MultiplayerSkinSync.RequestIconRefresh(__instance.Player.NetId);
-        }
+            __state?.Dispose();
+            if (__instance.Player != null)
+            {
+                // Queue one pass after the game's own icon assignment.  The queue is drained from
+                // the normal process tick, avoiding scene-tree re-entry during _Ready.
+                MultiplayerSkinSync.RequestIconRefresh(__instance.Player.NetId);
+            }
+        });
     }
 }
 
 [HarmonyPatch(typeof(NRemoteLobbyPlayer), nameof(NRemoteLobbyPlayer._Ready))]
 internal static class RemoteLobbyPlayerIconScopePatch
 {
-    private static void Prefix(NRemoteLobbyPlayer __instance, out IDisposable? __state) =>
-        __state = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.PlayerId);
+    private static void Prefix(NRemoteLobbyPlayer __instance, out IDisposable? __state)
+    {
+        IDisposable? scope = null;
+        UiInjectionGuard.Run("RemoteLobbyPlayerIconScopePatch.Prefix", () =>
+        {
+            scope = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.PlayerId);
+        });
+        __state = scope;
+    }
 
     private static void Postfix(
         NRemoteLobbyPlayer __instance,
         IDisposable? __state)
     {
-        __state?.Dispose();
-        // The deferred queue is the single refresh path.  Calling back into the scene tree from
-        // _Ready can re-enter NRemoteLobbyPlayer while the lobby is still adding its children.
-        MultiplayerSkinSync.RequestIconRefresh(__instance.PlayerId);
+        UiInjectionGuard.Run("RemoteLobbyPlayerIconScopePatch.Postfix", () =>
+        {
+            __state?.Dispose();
+            // The deferred queue is the single refresh path.  Calling back into the scene tree from
+            // _Ready can re-enter NRemoteLobbyPlayer while the lobby is still adding its children.
+            MultiplayerSkinSync.RequestIconRefresh(__instance.PlayerId);
+        });
     }
 }
 
@@ -4611,15 +4636,25 @@ internal static class RemoteLobbyPlayerIconScopePatch
 [HarmonyPatch(typeof(NRemoteLobbyPlayer), "RefreshVisuals")]
 internal static class RemoteLobbyPlayerVisualRefreshScopePatch
 {
-    private static void Prefix(NRemoteLobbyPlayer __instance, out IDisposable? __state) =>
-        __state = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.PlayerId);
+    private static void Prefix(NRemoteLobbyPlayer __instance, out IDisposable? __state)
+    {
+        IDisposable? scope = null;
+        UiInjectionGuard.Run("RemoteLobbyPlayerVisualRefreshScopePatch.Prefix", () =>
+        {
+            scope = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.PlayerId);
+        });
+        __state = scope;
+    }
 
     private static void Postfix(
         NRemoteLobbyPlayer __instance,
         IDisposable? __state)
     {
-        __state?.Dispose();
-        MultiplayerSkinSync.RequestIconRefresh(__instance.PlayerId);
+        UiInjectionGuard.Run("RemoteLobbyPlayerVisualRefreshScopePatch.Postfix", () =>
+        {
+            __state?.Dispose();
+            MultiplayerSkinSync.RequestIconRefresh(__instance.PlayerId);
+        });
     }
 }
 

@@ -290,5 +290,8 @@ internal static class EventPreviewLifecyclePatch
         AccessTools.Method(typeof(NEventOptionButton), nameof(NEventOptionButton._Ready)),
         AccessTools.Method(typeof(NEventOptionButton), "OnRelease")
     ];
-    private static bool Prefix(Node __instance) => !EventCompendiumPreview.IsPreview(__instance);
+    private static bool Prefix(Node __instance) =>
+        UiInjectionGuard.Run("EventPreviewLifecyclePatch.Prefix",
+            () => !EventCompendiumPreview.IsPreview(__instance),
+            fallback: true);
 }

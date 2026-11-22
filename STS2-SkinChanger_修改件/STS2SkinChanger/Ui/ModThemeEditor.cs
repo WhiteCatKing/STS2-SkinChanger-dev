@@ -392,10 +392,11 @@ internal partial class ModThemeEditor : CanvasLayer
 [HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]
 internal static class ModThemeEditorReadyPatch
 {
-    private static void Postfix(NMainMenu __instance) => Callable.From(() =>
-    {
-        if (!GodotObject.IsInstanceValid(__instance) || !__instance.IsInsideTree()) return;
-        try { ModThemeEditor.Ensure(__instance); }
-        catch (Exception e) { ModLog.Warn("创建主题调节入口失败：" + e.GetBaseException().Message); }
-    }).CallDeferred();
+    private static void Postfix(NMainMenu __instance) =>
+        UiInjectionGuard.Run("ModThemeEditorReadyPatch.Postfix", () =>
+            Callable.From(() => UiInjectionGuard.Run("ModThemeEditorReadyPatch.Deferred", () =>
+            {
+                if (!GodotObject.IsInstanceValid(__instance) || !__instance.IsInsideTree()) return;
+                ModThemeEditor.Ensure(__instance);
+            })).CallDeferred());
 }

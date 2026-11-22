@@ -49,12 +49,14 @@
 
 ## 第 4 步：离线验证（门禁，全部通过才算完）
 
+> 一键双分支门禁入口：`powershell -ExecutionPolicy Bypass -File tools/run-gates.ps1`（自动探测或按 `-StableRef` / `-BetaRef` 使用双引用，依次执行双分支主工程构建、`LogicTests`、完整无参数 `RuntimeTests` 与无外部包单项，末尾输出合并清单表与 `GATE VERDICT: PASSED`）。
+
 | # | 检查 | 通过标准 |
 |---|---|---|
 | 1 | 正式版引用构建 | 0 错误（`-p:GameAssemblyDir=<正式版>\data_sts2_windows_x86_64`） |
 | 2 | 测试版引用构建 | 0 错误 |
 | 3 | LogicTests | 全部通过 |
-| 4 | **完整无参数** RuntimeTests | 跑到最后一行 `Workshop policy tests passed.`（运行前先 `SetErrorMode(3)`） |
+| 4 | **完整无参数** RuntimeTests | 末行输出 `Workshop policy tests passed.` 且一键门禁输出 `GATE VERDICT: PASSED`（`FAIL=0` / `NOT RUN=0`）；**不再以固定输出行数（如旧口径 116 行）为通过条件**，清单增项时行数会正常变化（运行前先 `SetErrorMode(3)`） |
 | 5 | 受保护角色真实包回归 `tools/check-protected-characters.ps1` | 改到十字军、贞德、选人、共享加载入口时必跑，全部通过 |
 | 6 | 本次问题的新测试 | 有新增的测试，而且**用真实包**：涉及运行时取数据的，要有"真实目录构建 → 运行时命中"的端到端用例 |
 
@@ -97,7 +99,7 @@ AI 交件时给出测试步骤，要求：
 [ ] 只改了相关文件，换行是 LF
 [ ] 没有写死游戏路径；没有把原版路径全局改写
 [ ] 正式版引用 0 错误 / 测试版引用 0 错误
-[ ] LogicTests 通过；完整 RuntimeTests 跑到 "Workshop policy tests passed."
+[ ] LogicTests 通过；完整无参数 RuntimeTests 末行输出 `Workshop policy tests passed.` 且 `powershell -ExecutionPolicy Bypass -File tools/run-gates.ps1` 输出 `GATE VERDICT: PASSED`（不以固定行数判定）
 [ ] 动到共享入口或受保护角色：check-protected-characters.ps1 通过
 [ ] 新增了用真实包的测试；没有削弱任何已有断言
 [ ] 给出实机测试步骤（含预期结果）

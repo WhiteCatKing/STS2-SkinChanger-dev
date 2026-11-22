@@ -404,7 +404,8 @@ internal static class BestiaryEntranceReadyPatch
 {
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NCompendiumSubmenu __instance) =>
-        BestiaryEntranceSwitcher.ScanCompendium(__instance);
+        UiInjectionGuard.Run("BestiaryEntranceReadyPatch.Postfix", () =>
+            BestiaryEntranceSwitcher.ScanCompendium(__instance));
 }
 
 [FeaturePatch(FeatureIds.Ancient)]
@@ -413,5 +414,6 @@ internal static class BestiaryEntranceOpenedPatch
 {
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NCompendiumSubmenu __instance) =>
-        BestiaryEntranceSwitcher.ScanCompendium(__instance);
+        UiInjectionGuard.Run("BestiaryEntranceOpenedPatch.Postfix", () =>
+            BestiaryEntranceSwitcher.ScanCompendium(__instance));
 }

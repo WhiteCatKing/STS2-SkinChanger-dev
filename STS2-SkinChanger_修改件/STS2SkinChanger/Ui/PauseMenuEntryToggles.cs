@@ -317,5 +317,6 @@ internal static class PauseMenuEntryTogglesPatch
 
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NPauseMenu __instance) =>
-        PauseMenuEntryToggles.Attach(__instance);
+        UiInjectionGuard.Run("PauseMenuEntryTogglesPatch.Postfix", () =>
+            PauseMenuEntryToggles.Attach(__instance));
 }

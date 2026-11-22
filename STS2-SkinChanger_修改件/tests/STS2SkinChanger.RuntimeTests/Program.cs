@@ -109,6 +109,18 @@ if (args.Length == 1 && args[0] == "--test-load-order-risk-notice")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-required-fixes-manifest")
+{
+    RequiredFixesManifestTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-ui-injection-guard")
+{
+    UiInjectionGuardTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-character-select-modes")
 {
     CharacterSelectModeTests.Run();
@@ -449,6 +461,7 @@ if (args.Length == 2 && args[0] == "--inspect-workshop-metadata")
 if (args.Length == 1 && args[0] == "--test-workshop")
 {
     WorkshopTests.Run();
+    Console.WriteLine("Workshop policy tests passed.");
     return;
 }
 
@@ -835,93 +848,98 @@ if (args.Length == 3 && args[0] == "--audit-part-takeover")
     return;
 }
 
-FoolWaifuIdentityTests.Run();
-LateTakeoverGuardTests.Run();
-OrchisRoomCallbackTests.Run();
-SpineResourcePreflightTests.Run();
-BaselinePartTakeoverTests.Run();
-CacheWriteNoticeTests.Run();
-LargeProviderOverlayTests.Run();
-CardPortraitSessionTests.Run();
-CardPipelineExceptionTests.Run();
-ProviderAssemblyReuseTests.Run();
-MerchantFigureScopeTests.Run();
-MerchantLifecycleTests.RunInputIsolation();
-StorageLifecycleTests.Run();
-StorageLifecycleTests.TestQuitAndLockedFiles();
-QuitBoundaryTests.Run();
-CreatureVisualParentTests.Run();
-ProviderToolbarTests.Run();
-CharacterSelectModeBackgroundTests.Run();
-ManualCharacterVariantTests.Run();
-AppearanceResourceBoundaryTests.Run();
-CharacterSelectPortraitIsolationTests.Run();
-CreatureIntentLayoutTests.Run();
-ManagedCardPortraitTests.Run();
-RandomCharacterSkinTests.Run();
-PresentationNodeOwnershipTests.Run();
-AppearanceRevivalTests.Run();
-RandomSkinExclusionTests.Run();
-RenderedPreviewFramingTests.Run();
-FrameworkSelectorCycleTests.Run();
-FrameworkModelPreviewTests.Run();
-IntrinsicPreviewTests.Run();
-AnimatorPatchDiscoveryTests.Run();
-MultiplayerAppearanceIdentityTests.Run();
-MultiplayerAppearanceIdentityTests.Run(testRetries: true);
-MultiplayerSourceTests.Run();
-MultiplayerSourceTests.Run(handsOnly: true);
-MultiplayerAppearanceIdentityTests.Run(testHands: true);
-OptionalCharacterVfxTests.Run();
-CombatHudLifecycleTests.Run();
-DragHandleHoverTests.Run();
-StandaloneModelPreviewTests.Run();
-ScopedSkinBehaviorTests.Run();
-ProviderSettingsTests.Run();
-SlotVisibilityTests.Run();
-ProviderAnimationCompatibilityTests.Run();
-ProviderCompatibilityTests.Run();
-ProviderRuntimeAuditTests.Run();
-ModPrivateDependencyResolverTests.Run();
-ProviderMinimumVersionPolicyTests.Run();
-ProviderVersionTakeoverTests.Run();
-PackageCompatibilityTests.Run();
-await WorkshopSubmissionIntegrityTests.Run();
-await WorkshopSubmissionTests.Run();
-AppearanceControlContractTests.Run();
-ModThemeTests.Run();
-AppearanceSelectionHintTests.Run();
-ProviderLookupTests.Run();
-CharacterCatalogOwnershipTests.Run();
-CharacterDialogueLocalizationTests.Run();
-EventSkinTests.Run();
-DuplicateProviderLoadingTests.Run();
-CreatureVisualLifecycleTests.Run();
-SharedMonsterGroupTests.Run();
-BundlePresetTests.Run();
-BundleContentModeTests.Run();
-CardPresetMigrationTests.Run();
-CardOptionOrderTests.Run();
-AncientCardPriorityTests.Run();
-CardPoolOwnershipTests.Run();
-CharacterSkinBundleContractTests.Run();
-CharacterSkinBundleSourceTests.Run();
-CharacterSkinBundleRunTests.Run();
-CharacterSkinPopupContractTests.Run();
-ScrollListRebuildContractTests.Run();
-CardSkinRefreshContractTests.Run();
-CardProviderBridgeContractTests.Run();
-SceneAppearanceLifecycleTests.Run();
-MerchantPlayerCharacterIsolationTests.Run();
-MerchantRoomPathTests.Run();
-NonoFoolPreviewTests.Run();
-FoolCardPackIsolationTests.Run();
-HinaUiOstyRegressionTests.Run();
-RelicOwnershipTests.Run();
-AncientWaifusSupportTests.Run();
-LoadOrderSafetyTests.Run();
-LoadOrderRiskNoticeTests.Run();
-EntryPatchIsolationTests.Run();
+var fullSuiteFailed = false;
+try
+{
+Gate.Run("RequiredFixesManifestTests", () => RequiredFixesManifestTests.Run());
+Gate.Run("UiInjectionGuardTests", () => UiInjectionGuardTests.Run());
+Gate.Run("FoolWaifuIdentityTests", () => FoolWaifuIdentityTests.Run());
+Gate.Run("LateTakeoverGuardTests", () => LateTakeoverGuardTests.Run());
+Gate.Run("OrchisRoomCallbackTests", () => OrchisRoomCallbackTests.Run());
+Gate.Run("SpineResourcePreflightTests", () => SpineResourcePreflightTests.Run());
+Gate.Run("BaselinePartTakeoverTests", () => BaselinePartTakeoverTests.Run());
+Gate.Run("CacheWriteNoticeTests", () => CacheWriteNoticeTests.Run());
+Gate.Run("LargeProviderOverlayTests", () => LargeProviderOverlayTests.Run());
+Gate.Run("CardPortraitSessionTests", () => CardPortraitSessionTests.Run());
+Gate.Run("CardPipelineExceptionTests", () => CardPipelineExceptionTests.Run());
+Gate.Run("ProviderAssemblyReuseTests", () => ProviderAssemblyReuseTests.Run());
+Gate.Run("MerchantFigureScopeTests", () => MerchantFigureScopeTests.Run());
+Gate.Run("MerchantLifecycleTests", () => MerchantLifecycleTests.RunInputIsolation());
+Gate.Run("StorageLifecycleTests", () => StorageLifecycleTests.Run());
+Gate.Run("StorageLifecycleTests", () => StorageLifecycleTests.TestQuitAndLockedFiles());
+Gate.Run("QuitBoundaryTests", () => QuitBoundaryTests.Run());
+Gate.Run("CreatureVisualParentTests", () => CreatureVisualParentTests.Run());
+Gate.Run("ProviderToolbarTests", () => ProviderToolbarTests.Run());
+Gate.Run("CharacterSelectModeBackgroundTests", () => CharacterSelectModeBackgroundTests.Run());
+Gate.Run("ManualCharacterVariantTests", () => ManualCharacterVariantTests.Run());
+Gate.Run("AppearanceResourceBoundaryTests", () => AppearanceResourceBoundaryTests.Run());
+Gate.Run("CharacterSelectPortraitIsolationTests", () => CharacterSelectPortraitIsolationTests.Run());
+Gate.Run("CreatureIntentLayoutTests", () => CreatureIntentLayoutTests.Run());
+Gate.Run("ManagedCardPortraitTests", () => ManagedCardPortraitTests.Run());
+Gate.Run("RandomCharacterSkinTests", () => RandomCharacterSkinTests.Run());
+Gate.Run("PresentationNodeOwnershipTests", () => PresentationNodeOwnershipTests.Run());
+Gate.Run("AppearanceRevivalTests", () => AppearanceRevivalTests.Run());
+Gate.Run("RandomSkinExclusionTests", () => RandomSkinExclusionTests.Run());
+Gate.Run("RenderedPreviewFramingTests", () => RenderedPreviewFramingTests.Run());
+Gate.Run("FrameworkSelectorCycleTests", () => FrameworkSelectorCycleTests.Run());
+Gate.Run("FrameworkModelPreviewTests", () => FrameworkModelPreviewTests.Run());
+Gate.Run("IntrinsicPreviewTests", () => IntrinsicPreviewTests.Run());
+Gate.Run("AnimatorPatchDiscoveryTests", () => AnimatorPatchDiscoveryTests.Run());
+Gate.Run("MultiplayerAppearanceIdentityTests", () => MultiplayerAppearanceIdentityTests.Run());
+Gate.Run("MultiplayerAppearanceIdentityTests", () => MultiplayerAppearanceIdentityTests.Run(testRetries: true));
+Gate.Run("MultiplayerSourceTests", () => MultiplayerSourceTests.Run());
+Gate.Run("MultiplayerSourceTests", () => MultiplayerSourceTests.Run(handsOnly: true));
+Gate.Run("MultiplayerAppearanceIdentityTests", () => MultiplayerAppearanceIdentityTests.Run(testHands: true));
+Gate.Run("OptionalCharacterVfxTests", () => OptionalCharacterVfxTests.Run());
+Gate.Run("CombatHudLifecycleTests", () => CombatHudLifecycleTests.Run());
+Gate.Run("DragHandleHoverTests", () => DragHandleHoverTests.Run());
+Gate.Run("StandaloneModelPreviewTests", () => StandaloneModelPreviewTests.Run());
+Gate.Run("ScopedSkinBehaviorTests", () => ScopedSkinBehaviorTests.Run());
+Gate.Run("ProviderSettingsTests", () => ProviderSettingsTests.Run());
+Gate.Run("SlotVisibilityTests", () => SlotVisibilityTests.Run());
+Gate.Run("ProviderAnimationCompatibilityTests", () => ProviderAnimationCompatibilityTests.Run());
+Gate.Run("ProviderCompatibilityTests", () => ProviderCompatibilityTests.Run());
+Gate.Run("ProviderRuntimeAuditTests", () => ProviderRuntimeAuditTests.Run());
+Gate.Run("ModPrivateDependencyResolverTests", () => ModPrivateDependencyResolverTests.Run());
+Gate.Run("ProviderMinimumVersionPolicyTests", () => ProviderMinimumVersionPolicyTests.Run());
+Gate.Run("ProviderVersionTakeoverTests", () => ProviderVersionTakeoverTests.Run());
+Gate.Run("PackageCompatibilityTests", () => PackageCompatibilityTests.Run());
+await Gate.RunAsync("WorkshopSubmissionIntegrityTests", () => WorkshopSubmissionIntegrityTests.Run());
+await Gate.RunAsync("WorkshopSubmissionTests", () => WorkshopSubmissionTests.Run());
+Gate.Run("AppearanceControlContractTests", () => AppearanceControlContractTests.Run());
+Gate.Run("ModThemeTests", () => ModThemeTests.Run());
+Gate.Run("AppearanceSelectionHintTests", () => AppearanceSelectionHintTests.Run());
+Gate.Run("ProviderLookupTests", () => ProviderLookupTests.Run());
+Gate.Run("CharacterCatalogOwnershipTests", () => CharacterCatalogOwnershipTests.Run());
+Gate.Run("CharacterDialogueLocalizationTests", () => CharacterDialogueLocalizationTests.Run());
+Gate.Run("EventSkinTests", () => EventSkinTests.Run());
+Gate.Run("DuplicateProviderLoadingTests", () => DuplicateProviderLoadingTests.Run());
+Gate.Run("CreatureVisualLifecycleTests", () => CreatureVisualLifecycleTests.Run());
+Gate.Run("SharedMonsterGroupTests", () => SharedMonsterGroupTests.Run());
+Gate.Run("BundlePresetTests", () => BundlePresetTests.Run());
+Gate.Run("BundleContentModeTests", () => BundleContentModeTests.Run());
+Gate.Run("CardPresetMigrationTests", () => CardPresetMigrationTests.Run());
+Gate.Run("CardOptionOrderTests", () => CardOptionOrderTests.Run());
+Gate.Run("AncientCardPriorityTests", () => AncientCardPriorityTests.Run());
+Gate.Run("CardPoolOwnershipTests", () => CardPoolOwnershipTests.Run());
+Gate.Run("CharacterSkinBundleContractTests", () => CharacterSkinBundleContractTests.Run());
+Gate.Run("CharacterSkinBundleSourceTests", () => CharacterSkinBundleSourceTests.Run());
+Gate.Run("CharacterSkinBundleRunTests", () => CharacterSkinBundleRunTests.Run());
+Gate.Run("CharacterSkinPopupContractTests", () => CharacterSkinPopupContractTests.Run());
+Gate.Run("ScrollListRebuildContractTests", () => ScrollListRebuildContractTests.Run());
+Gate.Run("CardSkinRefreshContractTests", () => CardSkinRefreshContractTests.Run());
+Gate.Run("CardProviderBridgeContractTests", () => CardProviderBridgeContractTests.Run());
+Gate.Run("SceneAppearanceLifecycleTests", () => SceneAppearanceLifecycleTests.Run());
+Gate.Run("MerchantPlayerCharacterIsolationTests", () => MerchantPlayerCharacterIsolationTests.Run());
+Gate.Run("MerchantRoomPathTests", () => MerchantRoomPathTests.Run());
+Gate.Run("NonoFoolPreviewTests", () => NonoFoolPreviewTests.Run());
+Gate.Run("FoolCardPackIsolationTests", () => FoolCardPackIsolationTests.Run());
+Gate.Run("HinaUiOstyRegressionTests", () => HinaUiOstyRegressionTests.Run());
+Gate.Run("RelicOwnershipTests", () => RelicOwnershipTests.Run());
+Gate.Run("AncientWaifusSupportTests", () => AncientWaifusSupportTests.Run());
+Gate.Run("LoadOrderSafetyTests", () => LoadOrderSafetyTests.Run());
+Gate.Run("LoadOrderRiskNoticeTests", () => LoadOrderRiskNoticeTests.Run());
+Gate.Run("EntryPatchIsolationTests", () => EntryPatchIsolationTests.Run());
 var declaredVersion = Version.Parse(Entry.InternalTestVersion);
 var expectedAssemblyVersion = new Version(
     declaredVersion.Major, declaredVersion.Minor, declaredVersion.Build,
@@ -1838,15 +1856,34 @@ foreach (System.Collections.DictionaryEntry pack in compositionPacks)
     }
 }
 
-CardPresentationLifecycleTests.Run();
-CardPriorityPerformanceTests.Run();
-ExportedCardSurfaceTests.Run();
-StatefulCardArtTests.CheckObservers();
-GitHubFolderSwapTests.Run();
-MlmLaunchPlanSyncTests.Run();
+Gate.Run("CardPresentationLifecycleTests", () => CardPresentationLifecycleTests.Run());
+Gate.Run("CardPriorityPerformanceTests", () => CardPriorityPerformanceTests.Run());
+Gate.Run("ExportedCardSurfaceTests", () => ExportedCardSurfaceTests.Run());
+Gate.Run("StatefulCardArtTests", () => StatefulCardArtTests.CheckObservers());
+Gate.Run("GitHubFolderSwapTests", () => GitHubFolderSwapTests.Run());
+Gate.Run("MlmLaunchPlanSyncTests", () => MlmLaunchPlanSyncTests.Run());
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
-RequiredLibraryVisualGuardTests.Run(args);
-WorkshopTests.Run();
+Gate.Run("RequiredLibraryVisualGuardTests", () => RequiredLibraryVisualGuardTests.Run(args));
+Gate.Run("WorkshopTests", () => WorkshopTests.Run());
+}
+catch
+{
+    fullSuiteFailed = true;
+    throw;
+}
+finally
+{
+    var (_, failCount, notRunCount, _, _) = Gate.PrintReport();
+    if (!fullSuiteFailed && (failCount > 0 || notRunCount > 0))
+    {
+        System.Environment.ExitCode = 1;
+    }
+}
+
+if (!fullSuiteFailed && System.Environment.ExitCode == 0)
+{
+    Console.WriteLine("Workshop policy tests passed.");
+}
 
 static Type RequirePatchType(string name, string error) =>
     typeof(Entry).Assembly.GetType(name) ?? throw new InvalidOperationException(error);

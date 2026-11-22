@@ -1,0 +1,401 @@
+[
+  {
+    "id": "large-provider-overlay-ownership",
+    "title": "完整视觉包挂载后保留路径归属，避免大包反复重写触发闪退",
+    "since": "1.0.35",
+    "symbols": [
+      "SkinService.MountSelectedLargeRuntimeProviderPacks",
+      "SkinService.MountedOverlayOwners"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "LargeProviderOverlayTests", "args": "" }
+    ]
+  },
+  {
+    "id": "card-portrait-session-lifecycle",
+    "title": "隔离卡图按会话缓存并显式管理释放，防止领卡牌奖励时在终结器线程崩溃",
+    "since": "1.0.35",
+    "symbols": [
+      "CardPortraitSessionCache"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CardPortraitSessionTests", "args": "" }
+    ]
+  },
+  {
+    "id": "spine-resource-preflight",
+    "title": "Spine 贴图页预检与导入产物映射，缺页图集不交给 Spine",
+    "since": "1.0.35",
+    "symbols": [
+      "SkinCatalog.SpinePreflight",
+      "ImportedTexturePathPolicy"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "SpineResourcePreflightTests", "args": "" }
+    ]
+  },
+  {
+    "id": "cache-write-budget-and-notice",
+    "title": "缓存总预算 16 GB 与写包前空间检查，拒绝时游戏内提示",
+    "since": "1.0.35",
+    "symbols": [
+      "CacheWriteBudget",
+      "CacheWriteNotice"
+    ],
+    "tests": [
+      { "suite": "Logic", "name": "CacheWriteBudgetTests", "args": "" },
+      { "suite": "Runtime", "name": "CacheWriteNoticeTests", "args": "" }
+    ]
+  },
+  {
+    "id": "provider-assembly-reuse",
+    "title": "同 ID 同名程序集复用（涅奥商人两份包等场景）",
+    "since": "1.0.35",
+    "symbols": [
+      "ManagedSkinModLoader"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "ProviderAssemblyReuseTests", "args": "" }
+    ]
+  },
+  {
+    "id": "orchis-room-callbacks",
+    "title": "奥契丝修复包的商店与火堆回调按玩家选择限制，不禁整包",
+    "since": "1.0.35",
+    "symbols": [
+      "OrchisSkinFixCompat"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "OrchisRoomCallbackTests", "args": "" }
+    ]
+  },
+  {
+    "id": "late-takeover-guard",
+    "title": "CharSelectTakeoverSuppressor 禁止第三方改骨妹选人背景大图并支持晚载补装",
+    "since": "1.0.35",
+    "symbols": [
+      "CharSelectTakeoverSuppressor"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "LateTakeoverGuardTests", "args": "" }
+    ]
+  },
+  {
+    "id": "multiplayer-lobby-change-character-param",
+    "title": "联机大厅补丁不绑定 ChangeCharacter 第三个参数名以兼容正式版与测试版",
+    "since": "1.0.35",
+    "symbols": [
+      "MultiplayerLobbyCharacterChangedPatch",
+      "StartRunLobby.ChangeCharacter"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "MultiplayerAppearanceIdentityTests", "args": "" }
+    ]
+  },
+  {
+    "id": "fool-waifu-self-restore-guard",
+    "title": "未选中 Fool_Waifu 时拦截其自恢复补丁（头像、选人按钮、商店 AttachMerchant）",
+    "since": "1.0.36.102",
+    "symbols": [
+      "FoolWaifuRuntimeCompat"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "FoolWaifuIdentityTests", "args": "" }
+    ]
+  },
+  {
+    "id": "character-dialogue-localization",
+    "title": "角色专属先古对话随当前皮肤切换，Hilde 仅选中时写入 AncientDialogueSet",
+    "since": "1.0.36.102",
+    "symbols": [
+      "SkinCatalog.CharacterDialogue",
+      "HildeAncientDialogueCompat"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CharacterDialogueLocalizationTests", "args": "" }
+    ]
+  },
+  {
+    "id": "merchant-hot-switch-ready-order",
+    "title": "商人热切换第三方 _Ready 前缀进树后才重放且只跑一次",
+    "since": "1.0.36.102",
+    "symbols": [
+      "MerchantRuntimeAppearance"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "MerchantLifecycleTests", "args": "--test-merchant-lifecycle" }
+    ]
+  },
+  {
+    "id": "merchant-player-character-isolation",
+    "title": "纯商人提供者不得修改玩家商店形象 NMerchantCharacter",
+    "since": "1.0.36.102",
+    "symbols": [
+      "ManagedSkinModLoader.ShouldStripPlayerMerchantCharacterPatch"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "MerchantPlayerCharacterIsolationTests", "args": "" }
+    ]
+  },
+  {
+    "id": "char-select-mode-background-and-click",
+    "title": "恐惧与极速选人背景重做、叠加层入树后重挂及仅带切档皮肤放通点击",
+    "since": "1.0.36.102",
+    "symbols": [
+      "CharacterSelectModeBackgroundPatch",
+      "ProviderModeSelectOverlayBridge"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CharacterSelectModeBackgroundTests", "args": "" },
+      { "suite": "Runtime", "name": "CharacterSelectModeBackgroundTests", "args": "--test-mode-background" }
+    ]
+  },
+  {
+    "id": "ancient-waifus-support",
+    "title": "AncientWaifus 遗物独立切片与 BigIcon、时间线、CznStyleUI 兼容及按场景挂触摸区",
+    "since": "1.0.36.102",
+    "symbols": [
+      "RelicSkinResources",
+      "TimelineEpochSkinResources",
+      "CznRelicCollectionCompat",
+      "InteractiveTouchBoxBridge.AttachToScene"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "AncientWaifusSupportTests", "args": "" },
+      { "suite": "Runtime", "name": "CznCompatibilityTests", "args": "--test-czn-style-ui", "requiresExternalPack": true }
+    ]
+  },
+  {
+    "id": "combat-visual-exception-degradation",
+    "title": "战斗内建模型不抛切换器异常、失败降级原版、战斗中不清缓存不强 GC",
+    "since": "1.0.36.104",
+    "symbols": [
+      "MultiplayerSkinSync",
+      "CombatAppearanceBoundary"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CreatureVisualLifecycleTests", "args": "" }
+    ]
+  },
+  {
+    "id": "card-portrait-session-lru-eviction",
+    "title": "卡面会话缓存支持 LRU 淘汰且仅对真正失败路径负缓存",
+    "since": "1.0.36.104",
+    "symbols": [
+      "CardPortraitSessionCache"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CardPortraitSessionTests", "args": "" }
+    ]
+  },
+  {
+    "id": "card-pool-ownership-unified-matching",
+    "title": "借用异池路径的 Mod 卡不得跨池匹配，目录与运行时共用匹配谓词",
+    "since": "1.0.36.104",
+    "symbols": [
+      "SkinCatalog",
+      "SkinService"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CardPoolOwnershipTests", "args": "" }
+    ]
+  },
+  {
+    "id": "merchant-hot-switch-input-isolation",
+    "title": "商人热切换只传按钮视觉状态不传 MouseFilter/FocusMode",
+    "since": "1.0.36.103",
+    "symbols": [
+      "MerchantRuntimeAppearance"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "MerchantLifecycleTests", "args": "" },
+      { "suite": "Runtime", "name": "MerchantLifecycleTests", "args": "--test-merchant-lifecycle" }
+    ]
+  },
+  {
+    "id": "char-select-generic-overlay-and-poller",
+    "title": "恐惧与极速选人叠加层通用挂接、隐藏停用轮询器且背景名大小写无关",
+    "since": "1.0.36.103",
+    "symbols": [
+      "ProviderModeSelectOverlayBridge",
+      "SyncExclusiveScreenPollers"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CharacterSelectModeBackgroundTests", "args": "" }
+    ]
+  },
+  {
+    "id": "orchis-osty-gating-and-reposition",
+    "title": "奥契丝文本与奥斯提模型/缩放按各自选择门控，热切后按召唤偏移归位并兼容双分支方法",
+    "since": "1.0.36.103",
+    "symbols": [
+      "OrchisSkinFixCompat",
+      "OstyScaleToSize",
+      "ScaleAndPositionOsty"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "OrchisRoomCallbackTests", "args": "" },
+      { "suite": "Runtime", "name": "CreatureVisualLifecycleTests", "args": "" }
+    ]
+  },
+  {
+    "id": "canonical-paths-protected-from-global-overwrite",
+    "title": "原版规范路径及共享图集/卡图导入产物不得被提供者全局改写",
+    "since": "1.0.36.105",
+    "symbols": [
+      "CardBinaryResource",
+      "SkinCatalog.ProtectGlobalCanonicalPackFile",
+      "SkinCatalog.IsSharedGameAtlasPath"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CardPoolOwnershipTests", "args": "" },
+      { "suite": "Runtime", "name": "FoolCardPackIsolationTests", "args": "" }
+    ]
+  },
+  {
+    "id": "sidecar-cardartpack-pck-isolation",
+    "title": "带 *.cardartpack.json 的纯素材卡包必须隔离原 PCK",
+    "since": "1.0.36.105",
+    "symbols": [
+      "SkinCatalog.ProbeSkinProviders",
+      "CardArtPackScanner"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "FoolCardPackIsolationTests", "args": "" }
+    ]
+  },
+  {
+    "id": "vanilla-beta-portrait-and-ancient-nope-fallback",
+    "title": "原版卡缺默认图集回退同卡 Beta 图，先古卡说明底图/边框按实际 PCK 解析防 NOPE",
+    "since": "1.0.36.105",
+    "symbols": [
+      "SkinService.ResolveGameCardPortraitFallback",
+      "SkinCatalog"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CardPoolOwnershipTests", "args": "" }
+    ]
+  },
+  {
+    "id": "select-portrait-isolation-and-hibiki",
+    "title": "选角头像过滤安全包与响木天音私有头像路由，禁止对原始 PCK 直接 LoadResourcePack",
+    "since": "1.0.36.105",
+    "symbols": [
+      "SkinService.PrepareSelectPortraitSafePack",
+      "HibikiSelectPortrait",
+      "CharSelectStageCycle"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CharacterSelectPortraitIsolationTests", "args": "" },
+      { "suite": "Runtime", "name": "JoanStageBindingTests", "args": "--test-protected-boundaries" }
+    ]
+  },
+  {
+    "id": "merchant-room-path-per-pck",
+    "title": "商人房间场景按实际 PCK 解析正式版与测试版路径，不写死单一版本",
+    "since": "1.0.36.105",
+    "symbols": [
+      "MerchantRuntimeAppearance"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "MerchantRoomPathTests", "args": "" }
+    ]
+  },
+  {
+    "id": "independent-fool-skin-nono-preview",
+    "title": "独立愚者皮肤合同表新增 NonoFoolSkin，预览走按包分支",
+    "since": "1.0.36.105",
+    "symbols": [
+      "IndependentFoolSkinContract",
+      "IndependentFoolSkinCompat.ApplyPreview"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "NonoFoolPreviewTests", "args": "" },
+      { "suite": "Runtime", "name": "IndependentFoolSkinTests", "args": "--test-independent-fool-skins", "requiresExternalPack": true }
+    ]
+  },
+  {
+    "id": "hina-card-portrait-patch-takeover",
+    "title": "CardModel.PortraitPath 等卡图 getter 归切换器接管，不拦 CharacterModel.IconTexture 等头像补丁",
+    "since": "1.0.36.105",
+    "symbols": [
+      "ManagedSkinModLoader.IsManagedResourceOwnershipPatch"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "HinaUiOstyRegressionTests", "args": "" }
+    ]
+  },
+  {
+    "id": "ui-inject-tree-before-ready-methods",
+    "title": "UI 注入的 Godot 控件必须先入树再调用依赖 _Ready 的方法（防 SetLabel 空引用截断后置链）",
+    "since": "1.0.36.105",
+    "symbols": [
+      "CardSkinControls.Attach",
+      "NLibraryStatTickbox.SetLabel"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "HinaUiOstyRegressionTests", "args": "" }
+    ]
+  },
+  {
+    "id": "card-portrait-session-deferred-dispose",
+    "title": "对局清理只放掉自身引用，外部不可达后在游戏线程 Dispose，防跨局缓存失效与终结器崩溃",
+    "since": "1.0.36.106",
+    "symbols": [
+      "CardPortraitSessionCache.Clear",
+      "CardPortraitSessionCache.TrackForGameThreadRelease",
+      "CardPortraitSessionCache.DrainRetiredTextures"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CardPortraitSessionTests", "args": "" }
+    ]
+  },
+  {
+    "id": "card-pipeline-exception-isolation",
+    "title": "NCard 卡面管线异常隔离：第三方异常吞掉并单次记日志，游戏与切换器异常原样抛出",
+    "since": "1.0.36.106",
+    "symbols": [
+      "CardPipelineExceptionBoundary"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "CardPipelineExceptionTests", "args": "" }
+    ]
+  },
+  {
+    "id": "load-order-risk-notice",
+    "title": "提前加载危险提供者每次启动提醒，检测到 LoadOrderManager 时仅提示不自动移动",
+    "since": "1.0.36.106",
+    "symbols": [
+      "LoadOrderRiskDetector",
+      "LoadOrderWarningController"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "LoadOrderRiskNoticeTests", "args": "" }
+    ]
+  },
+  {
+    "id": "stable-vakuu-compendium-entry",
+    "title": "正式版缺少 Vakuu.ConfigureBackgroundScene 时由 Prepare() 跳过补丁类，防 ancient 模块回滚导致图鉴入口消失",
+    "since": "1.0.37.4",
+    "symbols": [
+      "VakuuVanillaArtPatch.Prepare",
+      "VakuuVanillaArtPatch.TargetMethods"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "EntryPatchIsolationTests", "args": "" },
+      { "suite": "Runtime", "name": "VakuuVanillaArtTests", "args": "--test-vakuu-vanilla", "requiresExternalPack": true }
+    ]
+  },
+  {
+    "id": "ui-injection-guard",
+    "title": "UI 注入生命周期补丁统一经 UiInjectionGuard 隔离异常（首错记堆栈、后错仅计数），不截断同链其他 Mod 后置",
+    "since": "1.0.38.12",
+    "symbols": [
+      "UiInjectionGuard.Run",
+      "UiInjectionGuard.RunWhenInTree"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "UiInjectionGuardTests", "args": "" }
+    ]
+  }
+]

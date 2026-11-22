@@ -46,6 +46,33 @@ internal static class EntryPatchIsolationTests
                     .Owners.Contains(harmony.Id),
                 "排在坏类之后的好类也必须装上（安装不因单类失败中断）。");
             harmony.UnpatchAll(harmony.Id);
+
+            // 1.0.37.4 (60eb38f): 正式版缺少 Vakuu.ConfigureBackgroundScene，VakuuVanillaArtPatch 必须靠 Prepare()
+            // 跳过整类，不能靠 TargetMethods() 空产出导致 ancient 模块回滚、图鉴入口消失。
+            var vakuuTarget = AccessTools.Method(typeof(MegaCrit.Sts2.Core.Models.Events.Vakuu), "ConfigureBackgroundScene");
+            var vakuuPrepare = AccessTools.Method(typeof(STS2SkinChanger.Core.VakuuVanillaArtPatch), "Prepare")
+                ?? throw new InvalidOperationException("VakuuVanillaArtPatch 缺少 Prepare()，正式版缺失目标方法会导致 ancient 模块整组回滚。");
+            Require(Equals(vakuuPrepare.Invoke(null, null), vakuuTarget != null),
+                "VakuuVanillaArtPatch.Prepare() 必须随当前分支是否存在 Vakuu.ConfigureBackgroundScene 返回 true/false。");
+
+            var ancientHarmony = new Harmony("Gurio.SkinChanger.Tests.AncientFeaturePrepare");
+            try
+            {
+                var results = STS2SkinChanger.Core.Features.FeatureBootstrap.InstallGroups(
+                    ancientHarmony,
+                    [typeof(STS2SkinChanger.Core.VakuuVanillaArtPatch), typeof(STS2SkinChanger.Ui.BestiaryEntranceReadyPatch)]);
+                Require(results.Count == 1 && results[0].Installed,
+                    "正式版缺少 Vakuu.ConfigureBackgroundScene 时，ancient 模块必须由 Prepare() 跳过该类且整组安装成功，不得回滚。");
+                Require(Harmony.GetPatchInfo(AccessTools.Method(
+                            typeof(MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NCompendiumSubmenu),
+                            nameof(MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NCompendiumSubmenu._Ready)))!
+                        .Owners.Contains(ancientHarmony.Id),
+                    "ancient 模块安装后，图鉴入口补丁 BestiaryEntranceReadyPatch 必须挂上 NCompendiumSubmenu._Ready。");
+            }
+            finally
+            {
+                ancientHarmony.UnpatchAll(ancientHarmony.Id);
+            }
         }
         finally
         {

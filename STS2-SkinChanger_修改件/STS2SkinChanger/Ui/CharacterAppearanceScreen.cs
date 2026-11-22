@@ -2875,7 +2875,8 @@ internal static class CharacterAppearancePauseMenuPatch
 
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NPauseMenu __instance) =>
-        CharacterAppearancePauseMenu.Attach(__instance);
+        UiInjectionGuard.Run("CharacterAppearancePauseMenuPatch.Postfix", () =>
+            CharacterAppearancePauseMenu.Attach(__instance));
 }
 
 

@@ -436,17 +436,20 @@ internal static class LoadOrderWarningController
 [HarmonyPatch(typeof(NModalContainer), nameof(NModalContainer._Ready))]
 internal static class LoadOrderWarningModalReadyPatch
 {
-    private static void Postfix() => LoadOrderWarningController.TryShow();
+    private static void Postfix() =>
+        UiInjectionGuard.Run("LoadOrderWarningModalReadyPatch.Postfix", LoadOrderWarningController.TryShow);
 }
 
 [HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]
 internal static class MainMenuLoadOrderWarningPatch
 {
-    private static void Postfix() => LoadOrderWarningController.Schedule();
+    private static void Postfix() =>
+        UiInjectionGuard.Run("MainMenuLoadOrderWarningPatch.Postfix", LoadOrderWarningController.Schedule);
 }
 
 [HarmonyPatch(typeof(NModalContainer), nameof(NModalContainer.Clear))]
 internal static class LoadOrderWarningModalClosedPatch
 {
-    private static void Postfix() => LoadOrderWarningController.TryShow();
+    private static void Postfix() =>
+        UiInjectionGuard.Run("LoadOrderWarningModalClosedPatch.Postfix", LoadOrderWarningController.TryShow);
 }

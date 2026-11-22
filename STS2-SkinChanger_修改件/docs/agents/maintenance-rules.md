@@ -54,6 +54,10 @@
 - **卡牌管线异常隔离**（`CardPipelineExceptionBoundary`）：`NCard._EnterTree / _Ready / UpdateVisuals / Reload` 上的 finalizer，抛出点在第三方 Mod 时让调用方继续，同一程序集 + 方法只记一条 `[卡牌管线]` 日志；游戏本体和切换器自己的异常原样抛出。测试：`CardPipelineExceptionTests`。
 - **加载顺序风险提醒**（`LoadOrderRiskDetector`）：排在切换器前面的皮肤包，如果给卡面挂了全局补丁、或带和游戏本体同名的共享图集文件，每次启动都提醒；检测到 Load Order Manager 时只提示，不自动移动。测试：`LoadOrderRiskNoticeTests`。
 
+1.0.37.4 / 1.0.38 新增（2026-11-22）：
+- **正式版图鉴「切换 / 其他图鉴」入口保护**（`Core/VakuuVanillaArt.cs` 的 `VakuuVanillaArtPatch.Prepare()`）：测试版独有方法 `Vakuu.ConfigureBackgroundScene` 在正式版缺失时由 `Prepare()` 整类跳过，不能仅靠 `TargetMethods()` 空产出，否则 Harmony 抛异常导致整个 `ancient` 模块回滚、图鉴入口消失。测试：`EntryPatchIsolationTests`、`--test-vakuu-vanilla`（`VakuuVanillaArtTests`，需游戏 PCK）。
+- **UI 注入点外层异常隔离**（`Ui/UiInjectionGuard.cs`）：切换器在游戏节点生命周期（`_Ready` / `_EnterTree` / `OnSubmenuOpened`）及界面刷新钩子里注入 UI 时统一经 `UiInjectionGuard.Run` / `RunWhenInTree` 隔离，同点位仅首次记录完整堆栈、后续仅累计次数，绝不向外抛截断同链其他 Mod 回调；`CardPipelineExceptionBoundary` 与 `CombatAppearanceBoundary` 维持各自规则，不套此护栏。测试：`UiInjectionGuardTests`。
+
 ## 改完必须做
 
 1. 正式版和测试版**两种引用都构建一次**，都要 0 错误（`AnyCPU`）：

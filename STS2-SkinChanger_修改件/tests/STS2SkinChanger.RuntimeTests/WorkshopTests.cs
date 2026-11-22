@@ -61,7 +61,6 @@ internal static class WorkshopTests
         using var reader = new StreamReader(catalogResource!);
         var bundled = (ulong[])Call("FilterIds", reader.ReadToEnd(), "", "");
         Require(bundled.Length > 0 && bundled.Distinct().Count() == bundled.Length && !bundled.Contains(3787302680UL), "工坊浏览器不能收录自身或重复物品。");
-        Console.WriteLine("Workshop policy tests passed.");
     }
     private static void CheckPackageCapabilities()
     {
