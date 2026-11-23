@@ -7,6 +7,20 @@ using STS2SkinChanger.Core.Features;
 
 namespace STS2SkinChanger.Core;
 
+internal static class NativeCreatureEffects
+{
+    internal static bool SuppressesOstyFlame(string groupId, string providerId) =>
+        groupId.Equals("osty", StringComparison.OrdinalIgnoreCase) &&
+        providerId.Equals("Chaos_XC_necrobinder01", StringComparison.OrdinalIgnoreCase);
+
+    internal static void HideOstyFlame(Node body)
+    {
+        body.GetNodeOrNull<CanvasItem>("Flame")?.Hide();
+        // Match the Chaos pack's own Ready callback. Spine can control slot visibility.
+        body.GetNodeOrNull<Sprite2D>("Flame/SteppedFireMix_dark")?.Hide();
+    }
+}
+
 [FeaturePatch(FeatureIds.Character)]
 [HarmonyPatch(typeof(NNecrobinderVfx), nameof(NNecrobinderVfx._Ready))]
 internal static class NecrobinderOptionalHeadReadyPatch

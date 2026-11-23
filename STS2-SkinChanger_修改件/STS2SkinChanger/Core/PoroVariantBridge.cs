@@ -154,7 +154,7 @@ internal static class PoroVariantBridge
             // Match NativeVisuals.Create(pet: true) in the author pack. The parent still
             // handles the game's health-based scaling and the player's size adjustments.
             spine.Scale = Vector2.One * 0.45f;
-            spine.GetNodeOrNull<CanvasItem>("Flame")?.Hide();
+            NativeCreatureEffects.HideOstyFlame(spine);
             spine.SetMeta(CombatBodyMeta, true);
 
             // 换骨骼后从头播待机，否则会停在旧骨架的最后一帧。
