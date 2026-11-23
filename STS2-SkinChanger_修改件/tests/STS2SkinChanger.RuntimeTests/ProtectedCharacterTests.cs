@@ -27,6 +27,10 @@ internal static class ProtectedCharacterTests
                 if (provider.Id == "JoanofArcIroncladHpwear")
                     JoanStagePaletteTests.Run(Path.Combine(provider.RootPath!, "JoanofArcIroncladHpwear.dll"));
                 var options = group.Options.Where(option => option.EffectiveProviderId == provider.Id).ToArray();
+                if (provider.Id.StartsWith("JoanofArc", StringComparison.OrdinalIgnoreCase) &&
+                    options.Any(option => (catalog.RuntimeStageSources("ironclad", option.Id).Length != 0) !=
+                        (provider.Id == "JoanofArcIroncladHpwear")))
+                    throw new Exception("Resident stage detection must distinguish the two actual Joan packs.");
                 var minimum = provider.Id == "CrusaderSkin" ? 5 : 4;
                 if (options.Length < minimum) throw new Exception("Protected variants missing: " + provider.Id);
                 var scenes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -50,6 +54,23 @@ internal static class ProtectedCharacterTests
                             var stageRoots = Enumerable.Range(1, 3).Select(stage =>
                                 $"res://joanofarcironcladhpwear/s{stage}_charselect_data.tres").ToArray();
                             var stages = catalog.BuildRuntimeResourceOverlay("ironclad", selection.Id, stageRoots, "protected-stages/001", true);
+                            if (!ledgerChecked)
+                            {
+                                var bg = catalog.BuildRuntimeResourceOverlay("ironclad", selection.Id,
+                                    ["res://scenes/screens/char_select/char_select_bg_ironclad.tscn"],
+                                    "protected-stages/002", true);
+                                var stageBytes = RuntimeLoadSafety.EstimateOverlayTextureBytes(stages.Files);
+                                var backgroundBytes = RuntimeLoadSafety.EstimateOverlayTextureBytes(bg.Files);
+                                var combat = catalog.BuildRuntimeResourceOverlay("ironclad", selection.Id,
+                                    ["res://scenes/creature_visuals/ironclad.tscn"], "protected-stages/003", true);
+                                var combatBytes = RuntimeLoadSafety.EstimateOverlayTextureBytes(combat.Files);
+                                var workingSet = stageBytes + backgroundBytes + combatBytes;
+                                if (workingSet > RuntimeLoadSafety.StageBundleBudget)
+                                    throw new Exception("The three observed Joan contexts must fit the selected budget.");
+                                Console.WriteLine($"Joan runtime working set: stage batch={stageBytes / 1048576d:F1} MiB; " +
+                                    $"selection background={backgroundBytes / 1048576d:F1} MiB; combat={combatBytes / 1048576d:F1} MiB; " +
+                                    $"total={workingSet / 1048576d:F1} MiB");
+                            }
                             if (!stages.CanBindDependencies || stageRoots.Any(path => !stages.ResourcePaths.ContainsKey(path)) ||
                                 RuntimeLoadSafety.EstimateTextureBytes(stages.Files) > RuntimeLoadSafety.MaximumSingleLoadBytes)
                                 throw new Exception("Joan stage graph incomplete or outside budget: " + selection.Id +

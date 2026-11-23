@@ -28,6 +28,7 @@ internal static partial class SkinService
             _runtimePressureCleanupPending = false;
             // Release optional cache ownership only. Active scenes retain their own resources.
             RuntimeResourceBundles.Clear();
+            StageRuntimeBundles.TrimForPressure();
             RuntimeResourceCache.Clear();
             GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
         }

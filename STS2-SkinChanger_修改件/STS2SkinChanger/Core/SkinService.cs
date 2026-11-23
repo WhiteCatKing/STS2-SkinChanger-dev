@@ -796,6 +796,8 @@ internal static partial class SkinService
                          key.Contains(cacheMarker, StringComparison.OrdinalIgnoreCase)).ToArray())
             {
                 RuntimeResourceBundles.Remove(key);
+                if (PreparedRuntimeOverlays[key].StageResidencyKey is { } stageKey)
+                    StageRuntimeBundles.Forget(stageKey);
                 PreparedRuntimeOverlays.Remove(key);
                 // Leaving a run removes session choices, not Godot's mounted PCK directory.
                 // Even after the player disappears, delayed UI/Spine loads can reference it.
@@ -1219,6 +1221,8 @@ internal static partial class SkinService
                 RuntimeResourceCache.Clear();
                 PreparedRuntimeOverlays.Clear();
                 RuntimeResourceBundles.Clear();
+                StageRuntimeBundles.Clear();
+                StageSourceChecks.Clear();
                 ResetCardPortraitSession();
                 BaselineRelicAtlasCache.Clear();
                 BaselineRelicIconCache.Clear();
@@ -6272,6 +6276,7 @@ internal static partial class SkinService
         bool takeOverCanonicalPaths)
     {
         var loadStarted = Stopwatch.GetTimestamp();
+        var previousBuildCount = _sessionPreparedCount;
         var prepared = GetOrPrepareRuntimeOverlay(
             catalog,
             groupId,
@@ -6280,6 +6285,13 @@ internal static partial class SkinService
             includeProviderDependencies);
         if (RuntimeFailures.IsBlocked(prepared.Key, DateTime.UtcNow))
             throw new AppearanceResourceUnavailableException("该外观资源刚加载失败，30 秒内停止重复解码。");
+
+        var stageSource = prepared.StageSource;
+        var stageKey = prepared.StageResidencyKey;
+        if (stageSource != null && MultiplayerSkinSync.GetScopedSelection(groupId) == null)
+            StageRuntimeBundles.Prefer(stageSource.Family);
+        var builtCount = _sessionPreparedCount - previousBuildCount;
+        var mountStarted = stageSource == null ? 0 : Stopwatch.GetTimestamp();
         if (prepared.OverlayPath != null &&
             !SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A06, prepared.OverlayPath,
                 replaceFiles: true, throwOnBlock: true))
@@ -6298,12 +6310,34 @@ internal static partial class SkinService
             trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
         }
 
+        var resourceStarted = stageSource == null ? 0 : Stopwatch.GetTimestamp();
         var loadBindings = new List<CanonicalRuntimeResourceOwnershipEntry>();
         using var loadOwnership = new CanonicalRuntimeResourceOwnershipScope(loadBindings);
-        var reused = TryGetRuntimeResourceBundle(prepared.Key, out var resources);
+        Dictionary<string, Resource> resources;
+        bool reused;
+        if (stageKey == null)
+        {
+            reused = TryGetRuntimeResourceBundle(prepared.Key, out resources);
+        }
+        else
+        {
+            var resident = StageRuntimeBundles.Find(stageKey);
+            reused = IsValidRuntimeBundle(resident);
+            resources = resident?.Resources!;
+            if (!reused) StageRuntimeBundles.Forget(stageKey);
+        }
+        string? admission = null;
+        string? evictionReason = null;
+        var trimmedBeforeDecode = false;
         if (!reused)
         {
             TrimRuntimeResidency();
+            if (stageSource != null && !RuntimeLoadSafety.CanRetainStageBundles(prepared.EstimatedBytes))
+            {
+                var previousCount = StageRuntimeBundles.Count;
+                StageRuntimeBundles.TrimForPressure();
+                trimmedBeforeDecode = StageRuntimeBundles.Count != previousCount;
+            }
             resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
             try
             {
@@ -6326,19 +6360,36 @@ internal static partial class SkinService
                         NonCombatSceneIdentity.Register(alias, path);
                         NonCombatSceneIdentity.Register(resource.ResourcePath, path);
                     }
-                    RuntimeResourceCache[
-                        RuntimeResourceKey(groupId, selection, path)] = resource;
+                    if (stageSource == null)
+                        RuntimeResourceCache[RuntimeResourceKey(groupId, selection, path)] = resource;
                 }
 
-                RuntimeResourceBundles[prepared.Key] = new RuntimeResourceBundleState(resources, prepared.EstimatedBytes);
-                TrimRuntimeResidency(prepared.Key);
+                var bundle = new RuntimeResourceBundleState(resources, prepared.EstimatedBytes);
+                if (stageKey == null)
+                {
+                    RuntimeResourceBundles[prepared.Key] = bundle;
+                    TrimRuntimeResidency(prepared.Key);
+                }
+                else
+                {
+                    RequireStageSources(stageSource!, fresh: true);
+                    var kept = StageRuntimeBundles.Store(stageKey, stageSource!.Family, bundle,
+                        prepared.EstimatedBytes, RuntimeLoadSafety.CanRetainStageBundles);
+                    admission = kept ? "已保留" : "按需使用";
+                    evictionReason = StageRuntimeBundles.LastEviction;
+                }
             }
             catch (Exception error)
             {
                 RuntimeFailures.Fail(prepared.Key, DateTime.UtcNow);
-                RuntimeResourceBundles.Remove(prepared.Key);
-                foreach (var pair in prepared.ResourcePaths)
-                    RuntimeResourceCache.Remove(RuntimeResourceKey(groupId, selection, pair.Key));
+                if (stageKey != null)
+                    StageRuntimeBundles.Forget(stageKey);
+                else
+                {
+                    RuntimeResourceBundles.Remove(prepared.Key);
+                    foreach (var pair in prepared.ResourcePaths)
+                        RuntimeResourceCache.Remove(RuntimeResourceKey(groupId, selection, pair.Key));
+                }
                 if (error is AppearanceResourceUnavailableException) RequestRuntimePressureCleanup();
                 // Loading failed before the callback's finally existed; still restore any
                 // foreign canonical groups temporarily bridged by this immutable pack.
@@ -6359,6 +6410,9 @@ internal static partial class SkinService
                 BindRuntimeDependency(pair.Key, prepared.ResourcePaths[pair.Key], pair.Value, loadBindings);
         }
 
+        using var stageScope = stageKey == null ? null : HoldStageBundle(stageKey, resources);
+        var callbackStarted = stageSource == null ? 0 : Stopwatch.GetTimestamp();
+        var callbackElapsed = 0d;
         T callbackResult;
         IDisposable? canonicalOwnership = null;
         using var manualModeScope = ManualCharacterVariantBridge.BeginScope(groupId);
@@ -6373,6 +6427,12 @@ internal static partial class SkinService
             }
 
             callbackResult = callback(resources);
+            if (stageKey != null)
+            {
+                if (callbackResult is Node node && HoldStageBundle(stageKey, resources) is { } lease)
+                    KeepStageDisplay(node, lease);
+                callbackElapsed = Stopwatch.GetElapsedTime(callbackStarted).TotalMilliseconds;
+            }
             if (!CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
                     MultiplayerSkinSync.GetScopedSelection(groupId), Config.GetSelection(groupId)))
                 loadBindings.RemoveAll(entry => catalog.GetRuntimeDependencyRestoreGroups(
@@ -6397,10 +6457,15 @@ internal static partial class SkinService
         }
 
         var elapsedMs = Stopwatch.GetElapsedTime(loadStarted).TotalMilliseconds;
+        var stageMetrics = stageSource == null ? "" : FormatStageResidencyMetrics(
+            loadStarted, mountStarted, resourceStarted, callbackStarted, callbackElapsed,
+            builtCount, admission, evictionReason, trimmedBeforeDecode);
         ModLog.Info(
             $"已{(reused ? "复用" : "加载")} {groupId} 的 {resources.Count} 个独立资源；" +
             $"运行包={prepared.FileCount} 个文件/{prepared.FileSize / 1024d:F1} KiB，" +
-            $"耗时={elapsedMs:F1} ms：{prepared.AliasToken}");
+            $"耗时={elapsedMs:F1} ms：{prepared.AliasToken}{stageMetrics}" +
+            // Godot's own texture counter; compares the residency estimate with real usage.
+            $" 实际纹理={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TextureMemUsed) / 1048576d:F0} MiB");
         return callbackResult;
     }
 
@@ -6488,6 +6553,14 @@ internal static partial class SkinService
             includeProviderDependencies,
             reuseMountedPrivateDependencies,
             isolateRelicCanonicalPaths);
+        StageBundleSource? stageSource = null;
+        if (!isolateRelicCanonicalPaths && includeProviderDependencies &&
+            catalog.RuntimeStageSources(groupId, selection) is { Length: > 0 } sources)
+        {
+            stageSource = new StageBundleSource(groupId + "\n" + ManualVariantResourceSelection(groupId, selection), sources);
+            RequireStageSources(stageSource);
+            key += "\nstage\n" + stageSource.Key;
+        }
         if (PreparedRuntimeOverlays.TryGetValue(key, out var cached) &&
             (cached.OverlayPath == null || File.Exists(cached.OverlayPath)))
         {
@@ -6495,7 +6568,8 @@ internal static partial class SkinService
             return cached;
         }
 
-        RuntimeResourceBundles.Remove(key);
+        if (cached?.StageResidencyKey is { } obsolete) StageRuntimeBundles.Forget(obsolete);
+        else RuntimeResourceBundles.Remove(key);
 
         RuntimeLoadSafety.RequirePreparationHeadroom();
         var generation = ++_overlayGeneration;
@@ -6552,6 +6626,7 @@ internal static partial class SkinService
             overlay.RootBytes,
             overlay.CanBindDependencies)
         {
+            StageSource = stageSource,
             SpinePages = overlay.SpinePages,
             RelicSpriteTextures = overlay.RelicSpriteTextures
         };
@@ -8339,6 +8414,8 @@ internal static partial class SkinService
         IReadOnlyDictionary<string, long> RootBytes,
         bool CanBindDependencies)
     {
+        internal StageBundleSource? StageSource { get; init; }
+        internal string? StageResidencyKey => StageSource == null ? null : Key + "\n" + AliasToken;
         internal IReadOnlyList<string> SpinePages { get; init; } = [];
         internal IReadOnlyDictionary<string, string> RelicSpriteTextures { get; init; } =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

@@ -12,6 +12,15 @@
     ]
   },
   {
+    "id": "runtime-bundle-residency",
+    "title": "多档角色的运行包按纹理预算保留，持有者独立且来源变化时失效",
+    "since": "1.0.38.13",
+    "symbols": ["RuntimeBundleResidency", "SkinService.WithPreparedRuntimeResources"],
+    "tests": [
+      { "suite": "Runtime", "name": "RuntimeBundleResidencyTests", "args": "--test-runtime-bundle-residency" }
+    ]
+  },
+  {
     "id": "card-cache-reuse",
     "title": "同源私有图集与散图跨切换复用，按包身份失效并在游戏线程退役",
     "since": "1.0.38.13",

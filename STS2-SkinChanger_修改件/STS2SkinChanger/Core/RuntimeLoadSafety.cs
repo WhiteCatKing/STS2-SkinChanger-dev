@@ -13,6 +13,9 @@ internal static partial class RuntimeLoadSafety
     internal const long ResidentCacheBudget = 512L * 1024 * 1024;
     internal const long MaximumSingleLoadBytes = 1536L * 1024 * 1024;
     internal const int BundleLimit = 8;
+    // Three separately aliased 748 MiB models fit, with room for another small stage.
+    internal const long StageBundleBudget = 2560L * 1024 * 1024;
+    internal const int StageBundleLimit = 12;
     internal const long MinimumHeadroom = 512L * 1024 * 1024;
     internal const long OverlayPreparationBytes = 64L * 1024 * 1024;
 
@@ -96,6 +99,15 @@ internal static partial class RuntimeLoadSafety
         RequireMemory(OverlayPreparationBytes, preparingOverlay: true);
 
     internal static void RequireHeadroom(long estimated) => RequireMemory(estimated, preparingOverlay: false);
+
+    internal static bool CanRetainStageBundles(long extraBytes)
+    {
+        if (!OperatingSystem.IsWindows()) return true;
+        var status = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
+        return !GlobalMemoryStatusEx(ref status) ||
+            HasHeadroom((long)Math.Min(status.AvailablePhysical, status.AvailablePageFile),
+                Math.Max(512L * 1024 * 1024, extraBytes));
+    }
 
     private static void RequireMemory(long estimated, bool preparingOverlay)
     {
