@@ -12,6 +12,15 @@
     ]
   },
   {
+    "id": "card-cache-reuse",
+    "title": "同源私有图集与散图跨切换复用，按包身份失效并在游戏线程退役",
+    "since": "1.0.38.13",
+    "symbols": ["CardPrivateGraph", "SkinService.LoadIsolatedCardPortrait", "CardPortraitSessionCache"],
+    "tests": [
+      { "suite": "Runtime", "name": "CardCacheReuseTests", "args": "--test-card-cache-reuse" }
+    ]
+  },
+  {
     "id": "card-portrait-session-lifecycle",
     "title": "隔离卡图按会话缓存并显式管理释放，防止领卡牌奖励时在终结器线程崩溃",
     "since": "1.0.35",

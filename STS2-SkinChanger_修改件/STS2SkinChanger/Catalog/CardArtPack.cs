@@ -36,6 +36,8 @@ internal sealed record CardArtPackCard(
     /// <summary>The pack this entry came from, filled in by the scanner.</summary>
     public string PackId { get; init; } = string.Empty;
 
+    internal STS2SkinChanger.Pck.CardFileStamp? SourceStamp { get; init; }
+
     public bool IsFullArt => DisplayMode.Equals("full_art", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>

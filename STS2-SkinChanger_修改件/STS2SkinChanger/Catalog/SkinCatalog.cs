@@ -4740,7 +4740,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
 
                 var asset = new ResourceAsset(packCard.SourcePath);
-                asset.AddInlineFile(packCard.SourcePath, packCard.Bytes);
+                asset.AddInlineFile(packCard.SourcePath, packCard.Bytes, packCard.SourceStamp);
                 bucket.Assets[packCard.SourcePath] = asset;
                 bucket.Portraits[card.TypeName] = packCard.SourcePath;
                 // Each card takes the canvas its artwork was composed for: a card-shaped image
@@ -6172,7 +6172,14 @@ internal sealed partial class SkinCatalog : IDisposable
         bool useSelectedProvider,
         out byte[] bytes)
     {
-        bytes = [];
+        var file = FindCardImageFile(groupId, selectionId, resourcePath, useSelectedProvider);
+        bytes = file?.Read() ?? [];
+        return bytes.Length > 0;
+    }
+
+    internal ResourceFile? FindCardImageFile(string groupId, string selectionId, string resourcePath,
+        bool useSelectedProvider)
+    {
         ResourceAsset? asset;
         if (useSelectedProvider)
         {
@@ -6190,13 +6197,10 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var directFile = asset == null ? null : FindDirectFile(asset, resourcePath);
-        if (directFile == null || !IsRasterImagePath(directFile.Path))
-        {
-            return false;
-        }
-
-        bytes = directFile.Read();
-        return bytes.Length > 0;
+        if (directFile == null || !IsRasterImagePath(directFile.Path)) return null;
+        var nonempty = directFile.InlineBytes is { } bytes ? bytes.Length > 0 :
+            directFile.Archive.GetFileSize(directFile.Path) > 0;
+        return nonempty ? directFile : null;
     }
 
     private static bool IsRasterImagePath(string path)
@@ -6268,12 +6272,32 @@ internal sealed partial class SkinCatalog : IDisposable
                 StringComparer.OrdinalIgnoreCase),
             isolateBinaryDependencies: true);
 
-        return BuildAliasedResourceOverlay(
+        var overlay = BuildAliasedResourceOverlay(
             resources,
             resources.Select(resource => resource.SourcePath).ToArray(),
             aliasToken,
             existingSourceAliases: existingResourcePaths,
             isolateBinaryDependencies: true);
+        if (!useSelectedProvider) return overlay;
+        var privateFiles = new Dictionary<string, CardPrivateFile>(StringComparer.Ordinal);
+        foreach (var resource in resources)
+        {
+            var alias = overlay.SourceAliases[resource.SourcePath];
+            if (resource.DirectFile is { } direct) Inspect(direct, alias);
+            if (resource.RemapFile is { } remap) Inspect(remap, alias + Path.GetExtension(remap.Path).ToLowerInvariant());
+            foreach (var payload in resource.PayloadFiles) Inspect(payload, overlay.PayloadAliases[payload.Path]);
+        }
+        return overlay with { CardFiles = privateFiles };
+
+        void Inspect(ResourceFile file, string path)
+        {
+            if (privateFiles.TryGetValue(path, out var previous))
+            {
+                if (previous.Stamp != file.SourceStamp) privateFiles[path] = new(null, [], "");
+                return;
+            }
+            privateFiles.Add(path, CardPrivateFile.Inspect(file, path, overlay.Files[path]));
+        }
     }
 
     private ResourceAsset? ResolveCardProviderAsset(CardSkinOption option, string resourcePath)
@@ -10629,6 +10653,7 @@ internal sealed record RuntimeResourceOverlay(
     IReadOnlySet<string> CanonicalDependencyPaths,
     bool CanReuseExternalDependencies = false)
 {
+    internal IReadOnlyDictionary<string, CardPrivateFile>? CardFiles { get; init; }
     internal IReadOnlyList<string> LoadOrder { get; init; } = [];
     internal IReadOnlyDictionary<string, long> RootBytes { get; init; } = new Dictionary<string, long>();
     internal bool CanBindDependencies { get; init; }
@@ -10666,11 +10691,11 @@ internal sealed class ResourceAsset(string sourcePath)
     // Card-art packs are plain JSON bundles rather than PCK archives, so their decoded
     // images have no archive behind them. They join the same asset chain as an already
     // materialised payload so every downstream consumer keeps working unchanged.
-    public void AddInlineFile(string path, byte[] bytes)
+    public void AddInlineFile(string path, byte[] bytes, CardFileStamp? stamp = null)
     {
         if (Files.All(file => !file.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
         {
-            Files.Add(new ResourceFile(path, bytes));
+            Files.Add(new ResourceFile(path, bytes) { InlineStamp = stamp });
         }
     }
 }
@@ -10707,6 +10732,8 @@ internal sealed record ResourceFile
             $"资源 {Path} 由卡图包内联提供，没有对应的 PCK 归档。");
 
     public bool IsInline => InlineBytes != null;
+    internal CardFileStamp? InlineStamp { get; init; }
+    internal CardFileStamp? SourceStamp => _archive?.Stamp ?? InlineStamp;
 
     public byte[] Read() => InlineBytes ?? Archive.ReadFile(Path);
 

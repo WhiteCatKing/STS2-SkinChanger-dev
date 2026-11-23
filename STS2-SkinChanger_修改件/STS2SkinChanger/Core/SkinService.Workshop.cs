@@ -44,6 +44,7 @@ internal static partial class SkinService
                 descriptors = _workshopDescriptors;
                 gamePack = _workshopGamePack;
                 if (baseline == null || gamePack == null) return WorkshopLoadReason.ChangedFiles;
+                CardSourceChecks.Clear();
                 if (!WorkshopSourcesUnchanged()) return WorkshopLoadReason.ChangedFiles;
                 cards = BuildCardCatalogEntries(ModelDb.AllCards);
             }
@@ -126,6 +127,7 @@ internal static partial class SkinService
                 // their PckArchive/FileStream alive. Once those references disappear, normal
                 // FileStream finalization releases the handles. Do not retain entire catalogs.
                 Catalog = staged;
+                CardSourceChecks.Clear();
                 Config = nextConfig;
                 staged = null;
                 _workshopDescriptors = combined;

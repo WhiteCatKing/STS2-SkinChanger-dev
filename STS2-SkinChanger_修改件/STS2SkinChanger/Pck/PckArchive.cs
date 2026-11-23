@@ -22,12 +22,14 @@ internal sealed class PckArchive : IDisposable
         IReadOnlyCollection<string> removedPaths)
     {
         Path = path;
+        Stamp = CardFileStamp.From(stream);
         _stream = stream;
         _entries = entries;
         RemovedPaths = removedPaths;
     }
 
     public string Path { get; }
+    internal CardFileStamp Stamp { get; }
 
     public IReadOnlyCollection<string> Paths => _entries.Keys;
 
@@ -460,4 +462,19 @@ internal sealed class PckArchive : IDisposable
             _archive!.CopyFileTo(_archivePath!, destination);
         }
     }
+}
+
+internal sealed record CardFileStamp(string PhysicalPath, long Length, long ModifiedUtcTicks)
+{
+    internal static CardFileStamp From(FileStream stream) => new(
+        System.IO.Path.GetFullPath(stream.Name), stream.Length,
+        File.GetLastWriteTimeUtc(stream.SafeFileHandle).Ticks);
+
+    internal bool IsCurrent()
+    {
+        var info = new FileInfo(PhysicalPath);
+        return info.Exists && info.Length == Length && info.LastWriteTimeUtc.Ticks == ModifiedUtcTicks;
+    }
+
+    internal string Key => $"{PhysicalPath}\n{Length}\n{ModifiedUtcTicks}";
 }

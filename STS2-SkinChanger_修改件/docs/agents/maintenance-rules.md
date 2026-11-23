@@ -13,6 +13,8 @@
 
 ## 不许丢的修复（改到相关代码时必须保留，并保持对应测试通过）
 
+- 卡图跨切换复用须验证私有依赖闭包、物理来源与导入参数。原版和不同包各自取图，包更新须失效。按底图字节做 LRU，外部视图放手后由游戏线程释放。门禁 `card-cache-reuse`。
+
 - 完整视觉包挂载后保留路径归属（`MountSelectedLargeRuntimeProviderPacks` / `MountedOverlayOwners`）——否则 CZN 等大包每次切换重写上百 MB，几次就闪退。测试：`LargeProviderOverlayTests`。
 - 隔离卡图按会话缓存并显式释放（`CardPortraitSessionCache`）——否则领卡牌奖励时在终结器线程崩溃。测试：`CardPortraitSessionTests`。
 - Spine 贴图页预检与导入产物映射（`SkinCatalog.SpinePreflight`、`ImportedTexturePathPolicy`）——缺页的图集不许交给 Spine，否则原生崩溃（魅魔战士、铁甲恶魔）。测试：`SpineResourcePreflightTests`。

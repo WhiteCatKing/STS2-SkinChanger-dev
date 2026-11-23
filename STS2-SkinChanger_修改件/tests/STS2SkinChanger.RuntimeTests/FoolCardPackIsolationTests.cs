@@ -436,6 +436,15 @@ internal static class FoolCardPackIsolationTests
                     cuteAliasOverlay.ResourcePaths[cuteAllIsWellPath]
                         .StartsWith("res://sts2_skin_runtime/", StringComparison.OrdinalIgnoreCase),
                 "CuteFool-Cards 卡面资源必须通过隔离别名路径加载且不得产生全局重定向。");
+            var privateGraph = new CardPrivateGraph();
+            foreach (var (path, file) in cuteAliasOverlay.CardFiles!) privateGraph.Add(path, file);
+            var cuteIdentity = privateGraph.Resolve(cuteAliasOverlay.ResourcePaths[cuteAllIsWellPath], "fool-test/b-001");
+            Require(cuteIdentity != null && cuteIdentity.Stamp.IsCurrent() &&
+                    Path.GetFullPath(cuteIdentity.Stamp.PhysicalPath) == Path.GetFullPath(cutePck),
+                $"CuteFool real atlas must have a closed, same-pack private graph: {cuteAllIsWellPath}");
+            var beautyFile = catalog.FindCardImageFile("fool", "fool_card_beauty", beautyAllIsWellPath, true);
+            Require(beautyFile?.SourceStamp?.IsCurrent() == true,
+                "Real beauty PNG must retain the physical identity of the file that supplied its bytes.");
             var cuteBytes = ReadOverlayPayloadBytes(
                 cuteAliasOverlay, cuteAliasOverlay.ResourcePaths[cuteAllIsWellPath]);
             Require(!beautyBytes.SequenceEqual(cuteBytes),

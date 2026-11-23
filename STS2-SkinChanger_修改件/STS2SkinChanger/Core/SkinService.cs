@@ -45,9 +45,17 @@ internal static partial class SkinService
     private static readonly Dictionary<string, RuntimeResourceBundleState> RuntimeResourceBundles =
         new(StringComparer.OrdinalIgnoreCase);
     private const int MaxCardPortraitCacheEntries = 64;
-    private static readonly BoundedLruCache<string, Texture2D> CardPortraitCache =
+    private static readonly BoundedLruCache<string, CardPortraitLookup> CardPortraitCache =
         new(MaxCardPortraitCacheEntries, StringComparer.OrdinalIgnoreCase);
     private static readonly CardPortraitSessionCache SessionCardPortraits = new();
+    private const long PrivateCardBudget = 1024L * 1024 * 1024;
+    private static readonly CardPortraitSessionCache PrivateCardPortraits = new(PrivateCardBudget, ownsPrivatePages: true);
+
+    private static readonly CardSourceCheckCache CardSourceChecks =
+        new(ProbeCardSource, static () => System.Environment.TickCount64);
+
+    private sealed record CardPortraitLookup(WeakReference<Texture2D> Texture, CardPrivateIdentity? Identity,
+        bool SelectionScoped);
     private static readonly CardPortraitPerformance CardPortraitMetrics = new();
     private static readonly Dictionary<string, string> ExternalCardProviderIdentityPaths =
         new(StringComparer.OrdinalIgnoreCase);
@@ -1390,6 +1398,7 @@ internal static partial class SkinService
         {
             var cardEntries = cards as IReadOnlyList<CardCatalogEntry> ?? cards.ToArray();
             var packs = new List<CardArtPack>();
+            CardSourceChecks.Clear();
             var roots = CardArtPackScanRoots();
             if (roots.Count > 0)
             {
@@ -3572,7 +3581,8 @@ internal static partial class SkinService
         {
             var request = ResolveCardPortraitRequest(card);
             if (request == null ||
-                !CardPortraitCache.TryGetValue(request.CacheKey, out var managedTexture) ||
+                !CardPortraitCache.TryGetValue(request.CacheKey, out var lookup) ||
+                !lookup.Texture.TryGetTarget(out var managedTexture) ||
                 !GodotObject.IsInstanceValid(managedTexture) ||
                 managedTexture.GetInstanceId() != texture.GetInstanceId())
             {
@@ -3614,11 +3624,13 @@ internal static partial class SkinService
                 var sample = batch.First();
                 try
                 {
-                    EnsureIsolatedCardOverlay(
-                        sample.GroupId,
-                        sample.Selection,
-                        sample.UseSelectedProvider,
-                        batch.Select(request => request.ResourcePath));
+                    // Buffer-decoded portraits don't need a mounted root. A native slice that
+                    // depends on one still includes its page through its own dependency graph.
+                    var nativePaths = batch.Where(request => Catalog?.FindCardImageFile(request.GroupId,
+                            request.Selection, request.ResourcePath, request.UseSelectedProvider) == null)
+                        .Select(request => request.ResourcePath).ToArray();
+                    if (nativePaths.Length != 0)
+                        EnsureIsolatedCardOverlay(sample.GroupId, sample.Selection, sample.UseSelectedProvider, nativePaths);
                 }
                 catch
                 {
@@ -3761,12 +3773,6 @@ internal static partial class SkinService
     private static Texture2D? GetOrLoadCardPortrait(CardPortraitRequest request)
     {
         CardPortraitMetrics.Request();
-        if (CardPortraitCache.TryGetValue(request.CacheKey, out var cached) &&
-            GodotObject.IsInstanceValid(cached))
-        {
-            CardPortraitMetrics.Hit();
-            return cached;
-        }
 
         if (FailedCardPortraitRequests.Contains(request.CacheKey))
         {
@@ -3776,9 +3782,27 @@ internal static partial class SkinService
 
         try
         {
+            if (CardPortraitCache.TryGetValue(request.CacheKey, out var lookup))
+            {
+                Texture2D? cached;
+                if (lookup.Identity is { } identity)
+                {
+                    RequireCurrentCardSource(identity.Stamp);
+                    if (PrivateCardPortraits.TryGet(identity.Key, request.WrapAtlas, out cached))
+                    {
+                        CardPortraitMetrics.Hit();
+                        return cached;
+                    }
+                }
+                else if (!lookup.SelectionScoped && lookup.Texture.TryGetTarget(out cached) && GodotObject.IsInstanceValid(cached))
+                {
+                    CardPortraitMetrics.Hit();
+                    return cached;
+                }
+            }
             CardPortraitMetrics.IsolatedLoad();
             var loadStarted = Stopwatch.GetTimestamp();
-            var portrait = LoadIsolatedCardPortrait(request);
+            var portrait = LoadIsolatedCardPortrait(request, out var privateIdentity, out var selectionScoped);
             var loadElapsed = Stopwatch.GetElapsedTime(loadStarted);
             if (loadElapsed >= TimeSpan.FromMilliseconds(30))
             {
@@ -3794,7 +3818,7 @@ internal static partial class SkinService
                 throw new InvalidOperationException("资源包未返回可用卡牌贴图。");
             }
 
-            if (CardPortraitCache.Set(request.CacheKey, portrait, out var evicted))
+            if (CardPortraitCache.Set(request.CacheKey, new(new(portrait), privateIdentity, selectionScoped), out var evicted))
             {
                 // Evict only the fast request lookup. The session still owns the source and
                 // any atlas view, so this request's return does not need another native load.
@@ -3820,17 +3844,23 @@ internal static partial class SkinService
         }
     }
 
-    internal static void ResetCardPortraitMetricsWindow()
+    internal static void BeginCardLibraryVisit()
     {
         lock (Sync)
+        {
+            CardSourceChecks.Clear();
             CardPortraitMetrics.ResetWindow();
+        }
     }
 
     internal static string TakeCardPortraitMetrics(
         string scene, string detail, long? textureBytes, long managedBytes)
     {
         lock (Sync)
-            return CardPortraitMetrics.TakeSummary(scene, detail, textureBytes, managedBytes);
+            return CardPortraitMetrics.TakeSummary(scene, detail, textureBytes, managedBytes) +
+                $" reuse_hits={PrivateCardPortraits.Hits} reuse_evictions={PrivateCardPortraits.Evictions}" +
+                $" reuse_bytes={PrivateCardPortraits.EstimatedBytes} reuse_budget={PrivateCardBudget}" +
+                $" other_card_bytes={SessionCardPortraits.EstimatedBytes}";
     }
 
     private static int CardArtSelectionScore(
@@ -4116,29 +4146,46 @@ internal static partial class SkinService
             : GetCardPoolGroupId(card);
     }
 
-    private static Texture2D? LoadIsolatedCardPortrait(CardPortraitRequest request)
+    private static bool ProbeCardSource(CardFileStamp stamp)
     {
+        if (stamp.IsCurrent()) return true;
+        PrivateCardPortraits.Invalidate(stamp.Key + "\n");
+        return false;
+    }
+
+    private static void RequireCurrentCardSource(CardFileStamp stamp)
+    {
+        if (!CardSourceChecks.IsCurrent(stamp))
+            throw new AppearanceResourceUnavailableException($"卡图包已变更，等待重新扫描：{stamp.PhysicalPath}");
+    }
+
+    private static Texture2D? LoadIsolatedCardPortrait(CardPortraitRequest request,
+        out CardPrivateIdentity? identity, out bool selectionScoped)
+    {
+        identity = null;
+        selectionScoped = false;
         var (groupId, selection, resourcePath, _, useSelectedProvider, wrapAtlas) = request;
         // Raw raster entries are not Godot resources. Calling ResourceLoader for them first emits
         // two engine errors per card ("No loader found" + "Error loading resource") before the
         // direct-image fallback gets a chance to run. Large card-art packs can therefore flood
         // the log and stall the card library even though their bytes are perfectly valid. Resolve
         // direct provider images first; imported .ctex/.tres resources still take the overlay path
-        // below because TryReadCardImageBytes deliberately accepts only raster source files.
+        // below because FindCardImageFile deliberately accepts only raster source files.
         var rawKey = $"raw\n{request.OverlayKey}\n{resourcePath}";
-        if (SessionCardPortraits.TryGet(rawKey, wrapAtlas, out var raw))
-            return raw;
-        var catalog = Catalog;
-        if (catalog != null && catalog.TryReadCardImageBytes(
-                groupId,
-                selection,
-                resourcePath,
-                useSelectedProvider,
-                out var directBytes))
+        var file = Catalog?.FindCardImageFile(groupId, selection, resourcePath, useSelectedProvider);
+        if (file != null)
         {
-            return SessionCardPortraits.GetOrLoad(rawKey, wrapAtlas, () =>
+            if (useSelectedProvider && file.SourceStamp is { } stamp)
             {
-                using var image = LoadRasterImageFromBuffer(directBytes, resourcePath, rawKey);
+                RequireCurrentCardSource(stamp);
+                identity = new(stamp, $"{stamp.Key}\nraw-image-v1\n{_sessionId}\n{rawKey}\n{file.Path}");
+            }
+            selectionScoped = useSelectedProvider && identity == null;
+            var rasterCache = identity == null ? SessionCardPortraits : PrivateCardPortraits;
+            var rasterKey = identity?.Key ?? (selectionScoped ? $"unverified\n{groupId}\n{rawKey}" : rawKey);
+            return rasterCache.GetOrLoad(rasterKey, wrapAtlas, () =>
+            {
+                using var image = LoadRasterImageFromBuffer(file.Read(), resourcePath, rawKey);
                 return ImageTexture.CreateFromImage(image);
             });
         }
@@ -4153,7 +4200,20 @@ internal static partial class SkinService
             return null;
         }
 
-        return SessionCardPortraits.GetOrLoad(isolatedPath, wrapAtlas, () =>
+        if (useSelectedProvider && overlay.AliasToken is { } token)
+            identity = overlay.PrivateGraph.Resolve(isolatedPath, token);
+        if (identity != null) RequireCurrentCardSource(identity.Stamp);
+        var privateChain = identity != null;
+        selectionScoped = useSelectedProvider && !privateChain && overlay.PrivateGraph.HasFiles;
+        if (selectionScoped && !overlay.PrivateGraph.Sources.All(CardSourceChecks.IsCurrent))
+        {
+            SessionCardPortraits.Invalidate($"unverified\n{groupId}\n");
+            throw new AppearanceResourceUnavailableException("卡图依赖包已变更，等待重新扫描。");
+        }
+        var nativeKey = identity?.Key ?? (selectionScoped ? $"unverified\n{groupId}\n{isolatedPath}" : isolatedPath);
+        var nativeCache = privateChain ? PrivateCardPortraits : SessionCardPortraits;
+        var shallowLoad = privateChain || (!selectionScoped && overlay.CanReuseExternalDependencies);
+        return nativeCache.GetOrLoad(nativeKey, wrapAtlas, () =>
         {
             var started = Stopwatch.GetTimestamp();
             try
@@ -4161,7 +4221,7 @@ internal static partial class SkinService
                 return ResourceLoader.Load<Texture2D>(
                     isolatedPath,
                     null,
-                    overlay.CanReuseExternalDependencies
+                    shallowLoad
                         ? ResourceLoader.CacheMode.Ignore
                         : ResourceLoader.CacheMode.IgnoreDeep);
             }
@@ -4287,6 +4347,9 @@ internal static partial class SkinService
             {
                 throw new InvalidOperationException("Godot 拒绝加载批量独立卡牌资源包。");
             }
+            if (overlay.CardFiles != null)
+                foreach (var path in newFiles.Keys)
+                    if (overlay.CardFiles.TryGetValue(path, out var file)) state.PrivateGraph.Add(path, file);
             state.MountedFilePaths.UnionWith(newFiles.Keys);
             state.CanReuseExternalDependencies &= overlay.CanReuseExternalDependencies;
             stopwatch.Stop();
@@ -8289,6 +8352,7 @@ internal static partial class SkinService
 
     private sealed class IsolatedCardOverlayState
     {
+        public CardPrivateGraph PrivateGraph { get; } = new();
         public string? AliasToken { get; set; }
         public Dictionary<string, string> ResourcePaths { get; } =
             new(StringComparer.OrdinalIgnoreCase);
@@ -8396,11 +8460,14 @@ internal static partial class SkinService
             ExternalCardProviderIdentityPaths.Clear();
             FailedCardPortraitRequests.Clear();
             SessionCardPortraits.Clear();
+            PrivateCardPortraits.Clear();
+            CardSourceChecks.Clear();
         }
     }
 
     private static void ClearCardPortraitCache(string groupId)
     {
+        CardSourceChecks.Clear();
         // Character priorities can change a portrait cached under its canonical Ancient
         // category. Clear dependent keys as well, without throwing away GPU resources for
         // unrelated providers or changing their ownership.
@@ -8417,6 +8484,7 @@ internal static partial class SkinService
             ExternalCardProviderIdentityPaths.Remove(key);
         }
 
+        foreach (var group in affectedGroups) SessionCardPortraits.Invalidate($"unverified\n{group}\n");
         FailedCardPortraitRequests.RemoveWhere(Affected);
     }
 

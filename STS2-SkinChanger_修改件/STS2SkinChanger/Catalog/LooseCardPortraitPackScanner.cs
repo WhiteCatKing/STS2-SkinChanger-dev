@@ -155,7 +155,11 @@ internal static class LooseCardPortraitPackScanner
                 return false;
             }
 
-            var bytes = File.ReadAllBytes(imagePath);
+            using var stream = File.OpenRead(imagePath);
+            var stamp = STS2SkinChanger.Pck.CardFileStamp.From(stream);
+            if (stamp.Length <= 0 || stamp.Length > MaxImageBytes) return false;
+            var bytes = new byte[(int)stamp.Length];
+            stream.ReadExactly(bytes);
             var relative = Path.GetRelativePath(root, imagePath)
                 .Replace(Path.DirectorySeparatorChar, '/');
             // Card Art Editor's full-art mode composes artwork onto the whole card instead of into
@@ -172,7 +176,7 @@ internal static class LooseCardPortraitPackScanner
                 bytes,
                 displayMode,
                 "static",
-                UsesEditSource: false);
+                UsesEditSource: false) { SourceStamp = stamp };
             return true;
         }
         catch (Exception exception) when (

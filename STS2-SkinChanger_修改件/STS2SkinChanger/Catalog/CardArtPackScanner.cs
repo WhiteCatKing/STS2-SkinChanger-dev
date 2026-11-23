@@ -281,6 +281,7 @@ internal static class CardArtPackScanner
     {
         var best = new Dictionary<string, CardArtPackCard>(StringComparer.OrdinalIgnoreCase);
         using var stream = OpenRead(packPath);
+        var stamp = STS2SkinChanger.Pck.CardFileStamp.From(stream);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
         // The bundle is one line of JSON, so it only ever arrives in pieces. Every override is a
@@ -325,6 +326,7 @@ internal static class CardArtPackScanner
         }
 
         return best.Values
+            .Select(card => card with { SourceStamp = stamp })
             .OrderBy(card => card.SourcePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 

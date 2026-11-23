@@ -7,15 +7,17 @@ using MegaCrit.Sts2.Core.Runs;
 namespace STS2SkinChanger.Core;
 
 // Called under SkinService's lock on the game thread. Owns only the textures we load or create.
-internal sealed class CardPortraitSessionCache
+internal sealed class CardPortraitSessionCache(long budget = RuntimeLoadSafety.ResidentCacheBudget, bool ownsPrivatePages = false)
 {
     private const int MaxPaths = 1024;
-    private readonly Dictionary<string, Entry> _entries = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Entry> _entries = new(ownsPrivatePages ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
     private readonly LinkedList<string> _lruOrder = new();
-    private readonly HashSet<string> _failedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _failedPaths = new(ownsPrivatePages ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<ulong, int> _backingTextureRefCounts = [];
     private long _estimatedBytes;
 
+    internal long Hits { get; private set; }
+    internal long Evictions { get; private set; }
     internal long EstimatedBytes => _estimatedBytes;
     internal int Count => _entries.Count;
 
@@ -26,6 +28,7 @@ internal sealed class CardPortraitSessionCache
         if (!_entries.TryGetValue(path, out var entry)) return false;
         if (GodotObject.IsInstanceValid(entry.Source))
         {
+            Hits++;
             Touch(entry);
             texture = entry.Resolve(wrapAtlas);
             return true;
@@ -79,7 +82,7 @@ internal sealed class CardPortraitSessionCache
 
             // A single card texture that meets or exceeds the entire resident budget cannot fit
             // even in an empty cache: reject, dispose on the game thread, and do not decode again.
-            if (incrementalBytes >= RuntimeLoadSafety.ResidentCacheBudget)
+            if (incrementalBytes >= Math.Min(budget, RuntimeLoadSafety.ResidentCacheBudget))
             {
                 RememberFailedPath(path);
                 return null;
@@ -90,11 +93,12 @@ internal sealed class CardPortraitSessionCache
             // Evicted entries drop cache ownership without force-disposing active native textures.
             while (_lruOrder.First is { } oldestNode &&
                    (_entries.Count >= MaxPaths ||
-                    incrementalBytes > RuntimeLoadSafety.ResidentCacheBudget - _estimatedBytes))
+                    incrementalBytes > budget - _estimatedBytes))
             {
                 var oldestPath = oldestNode.Value;
                 if (_entries.TryGetValue(oldestPath, out var oldestEntry))
                 {
+                    Evictions++;
                     RemoveEntry(oldestPath, oldestEntry);
                     // Recompute in case evicting the last sibling released the same backing texture.
                     alreadyTracked = _backingTextureRefCounts.ContainsKey(textureId);
@@ -106,16 +110,17 @@ internal sealed class CardPortraitSessionCache
                 }
             }
 
-            if (incrementalBytes > RuntimeLoadSafety.ResidentCacheBudget - _estimatedBytes)
+            if (incrementalBytes > budget - _estimatedBytes)
             {
                 RememberFailedPath(path);
                 return null;
             }
 
             var lruNode = _lruOrder.AddLast(path);
-            var entry = new Entry(source, textureId, backingBytes, lruNode);
+            var entry = new Entry(source, ownsPrivatePages ? backing : null, textureId, backingBytes, lruNode);
             _entries[path] = entry;
             TrackForGameThreadRelease(source);
+            if (ownsPrivatePages && !ReferenceEquals(source, backing)) TrackForGameThreadRelease(backing);
             if (_backingTextureRefCounts.TryGetValue(textureId, out var count))
             {
                 _backingTextureRefCounts[textureId] = count + 1;
@@ -143,7 +148,20 @@ internal sealed class CardPortraitSessionCache
         _failedPaths.Clear();
         _backingTextureRefCounts.Clear();
         _estimatedBytes = 0;
+        Hits = Evictions = 0;
         DrainRetiredTextures();
+    }
+
+    internal void Invalidate(string prefix)
+    {
+        var comparison = _entries.Comparer == StringComparer.Ordinal
+            ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        foreach (var path in _entries.Keys.Where(path => path.StartsWith(prefix, comparison)).ToArray())
+        {
+            RemoveEntry(path, _entries[path]);
+            Evictions++;
+        }
+        _failedPaths.RemoveWhere(path => path.StartsWith(prefix, comparison));
     }
 
     private void Touch(Entry entry)
@@ -223,9 +241,12 @@ internal sealed class CardPortraitSessionCache
         }
     }
 
-    private sealed class Entry(Texture2D source, ulong backingTextureId, long backingBytes, LinkedListNode<string> lruNode)
+    private sealed class Entry(Texture2D source, Texture2D? privatePage, ulong backingTextureId, long backingBytes, LinkedListNode<string> lruNode)
     {
         internal Texture2D Source { get; } = source;
+        // The managed page wrapper must survive as long as any resident slice. Native views
+        // also reference the RefCounted page independently after cache ownership ends.
+        internal Texture2D? PrivatePage { get; } = privatePage;
         internal ulong BackingTextureId { get; } = backingTextureId;
         internal long BackingBytes { get; } = backingBytes;
         internal LinkedListNode<string> LruNode { get; } = lruNode;

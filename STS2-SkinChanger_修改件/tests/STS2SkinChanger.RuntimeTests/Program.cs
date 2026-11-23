@@ -222,6 +222,13 @@ if (args.Length == 1 && args[0] == "--test-card-portrait-performance")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-card-cache-reuse")
+{
+    try { CardCacheReuseTests.Run(); }
+    catch (Exception error) { Console.Error.WriteLine(error); System.Environment.ExitCode = 1; }
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-card-portrait-session")
 {
     CardPortraitSessionTests.Run();

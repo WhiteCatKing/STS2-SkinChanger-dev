@@ -20,7 +20,7 @@ internal static class CardPortraitPerformanceView
 
     internal static void OnLibraryOpening()
     {
-        SkinService.ResetCardPortraitMetricsWindow();
+        SkinService.BeginCardLibraryVisit();
         _visit++;
         _openingStarted = Stopwatch.GetTimestamp();
         _libraryOpen = true;

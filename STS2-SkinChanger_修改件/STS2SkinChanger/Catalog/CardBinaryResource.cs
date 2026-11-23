@@ -16,6 +16,8 @@ internal sealed class CardBinaryResource
     private readonly string[] _dependencyTypes;
     private readonly string[] _dependencyPaths;
 
+    internal string RootType { get; }
+
     internal IEnumerable<string> Dependencies(string sourcePath) =>
         _dependencyPaths.Select(path => ResolvePath(sourcePath, path));
 
@@ -33,7 +35,7 @@ internal sealed class CardBinaryResource
         if (major != 4 || format is < 4 or > 6)
             throw new InvalidDataException("Unsupported binary card resource format.");
 
-        _ = ReadString(reader);
+        RootType = ReadString(reader);
         _metadataOffsetPosition = stream.Position;
         _ = reader.ReadUInt64();
         var flags = reader.ReadUInt32();

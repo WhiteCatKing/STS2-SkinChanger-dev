@@ -18,7 +18,7 @@ internal static class CardPortraitSessionTests
     private static int _gameThread;
     private static int _wrongThreadReleases;
 
-    internal static void Run()
+    internal static void Run(bool privateReuse = false)
     {
         var root = Directory.CreateTempSubdirectory("sc-card-portrait-session-");
         var harmony = new Harmony("sc.tests.card-portrait-session");
@@ -39,7 +39,7 @@ internal static class CardPortraitSessionTests
             var load = typeof(ResourceLoader).GetMethods().Single(method => method.Name == "Load" && method.IsGenericMethodDefinition);
             Patch(load.MakeGenericMethod(typeof(Texture2D)), nameof(Load));
             Patch(AccessTools.Method(typeof(Texture2D), nameof(Texture2D.GetWidth)), nameof(Size));
-            Patch(AccessTools.Method(typeof(Texture2D), nameof(Texture2D.GetHeight)), nameof(Size));
+            Patch(AccessTools.Method(typeof(Texture2D), nameof(Texture2D.GetHeight)), nameof(Height));
             Patch(AccessTools.Method(typeof(GodotObject), nameof(GodotObject.GetInstanceId)), nameof(Id));
             Patch(AccessTools.Method(typeof(GodotObject), nameof(GodotObject.IsInstanceValid)), nameof(Valid));
             Patch(AccessTools.Method(typeof(GodotObject), "Dispose", [typeof(bool)]), nameof(Dispose));
@@ -82,6 +82,14 @@ internal static class CardPortraitSessionTests
                 return (Texture2D?)getPortrait.Invoke(null, [request]);
             }
 
+            if (privateReuse)
+            {
+                CardCacheReuseTests.Check(root.FullName, harmony, overlayType, overlayStates, requestType, getPortrait);
+                CheckReuseEviction();
+                CheckInvalidationCase();
+                return;
+            }
+
             var retiredTexture = RunAcrossCleanup(Request, enterTree, updateVisuals);
             var drain = AccessTools.Method(typeof(CardPortraitSessionCache), "DrainRetiredTextures");
             GC.Collect();
@@ -122,8 +130,7 @@ internal static class CardPortraitSessionTests
             SkinService.ResetCardPortraitSession();
             GC.Collect();
             GC.WaitForPendingFinalizers();
-            for (var frame = 0; frame < 4; frame++)
-                AccessTools.Method(typeof(CardPortraitSessionCache), "DrainRetiredTextures").Invoke(null, null);
+            DrainReleaseQueue();
             if (oldState == null) overlayStates.Remove(stateKey);
             else overlayStates[stateKey] = oldState;
             catalogProperty.SetValue(null, previousCatalog);
@@ -213,10 +220,80 @@ internal static class CardPortraitSessionTests
             "Other behavior, other providers and providers without known artwork must keep their callbacks.");
     }
 
+    internal static Texture2D FakeTexture(Type type, int pixels = 32, int? height = null)
+    {
+        var texture = (Texture2D)RuntimeHelpers.GetUninitializedObject(type);
+        GC.SuppressFinalize(texture); // Fabricated handle. The production retirement queue still calls Dispose.
+        Sizes.Add(texture, new TextureSize(pixels, height));
+        return texture;
+    }
+
+    private static void DrainReleaseQueue()
+    {
+        var queue = (System.Collections.Concurrent.ConcurrentQueue<Texture2D>)
+            AccessTools.Field(typeof(CardPortraitSessionCache), "RetiredTextures").GetValue(null)!;
+        var framePump = AccessTools.Method(typeof(CardPortraitSessionCache), "DrainRetiredTextures");
+        while (!queue.IsEmpty) framePump.Invoke(null, null);
+    }
+
+    private static void CheckInvalidationCase()
+    {
+        var privateCache = new CardPortraitSessionCache(ownsPrivatePages: true);
+        var fallbackCache = new CardPortraitSessionCache();
+        foreach (var cache in new[] { privateCache, fallbackCache })
+        {
+            cache.GetOrLoad("Provider/portrait", false, () => FakeTexture(typeof(ImageTexture)));
+            cache.GetOrLoad("Provider/missing", false, () => null);
+            cache.Invalidate("provider/");
+        }
+
+        Require(privateCache.TryGet("Provider/portrait", false, out var resident) && resident != null &&
+            privateCache.TryGet("Provider/missing", false, out _), "Private invalidation must compare case exactly.");
+        Require(!fallbackCache.TryGet("Provider/portrait", false, out _) &&
+            !fallbackCache.TryGet("Provider/missing", false, out _), "Fallback invalidation must ignore case.");
+        privateCache.Invalidate("Provider/");
+        Require(!privateCache.TryGet("Provider/portrait", false, out _) &&
+            !privateCache.TryGet("Provider/missing", false, out _), "Exact private invalidation must clear both caches.");
+    }
+
+    private static void CheckReuseEviction()
+    {
+        static void Drain()
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            DrainReleaseQueue();
+        }
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        static (WeakReference Reference, int Id) Evict()
+        {
+            var cache = new CardPortraitSessionCache(2 * 8192);
+            Texture2D LoadOne(string key) => cache.GetOrLoad(key, false, () => FakeTexture(typeof(ImageTexture)))!;
+            var held = LoadOne("old");
+            var hot = LoadOne("hot");
+            Require(ReferenceEquals(hot, LoadOne("hot")), "Hot entry should hit.");
+            LoadOne("third");
+            Require(cache.Evictions == 1 && cache.EstimatedBytes == 16384 &&
+                !cache.TryGet("old", false, out _) && cache.TryGet("hot", false, out _), "Byte LRU order.");
+            Drain();
+            Require(!Released.Contains(held), "Eviction invalidated an externally held texture.");
+            return (new WeakReference(held), RuntimeHelpers.GetHashCode(held));
+        }
+        var (weak, id) = Evict();
+        Drain();
+        Require(!weak.IsAlive && Released.Any(texture => RuntimeHelpers.GetHashCode(texture) == id) && _wrongThreadReleases == 0,
+            "Evicted textures must retire on the game thread after the last holder releases them.");
+    }
+
     private static bool Load(string path, ResourceLoader.CacheMode cacheMode, ref Texture2D __result)
     {
         Loads[path] = Loads.GetValueOrDefault(path) + 1;
         Modes.Add(cacheMode);
+        if (CardCacheReuseTests.LoadAtlas(path, cacheMode) is { } mock)
+        {
+            __result = mock;
+            return false;
+        }
         __result = (Texture2D)RuntimeHelpers.GetUninitializedObject(path.EndsWith("card-0.tres", StringComparison.Ordinal)
             ? typeof(AtlasTexture)
             : typeof(CompressedTexture2D));
@@ -248,7 +325,7 @@ internal static class CardPortraitSessionTests
         return false;
     }
 
-    private static bool SkipAtlas(ref Texture2D? __result) { __result = null; return false; }
+    private static bool SkipAtlas(AtlasTexture __instance, ref Texture2D? __result) { __result = CardCacheReuseTests.Backing(__instance); return false; }
 
     private static bool SetTexture(Texture2D __0)
     {
@@ -256,7 +333,13 @@ internal static class CardPortraitSessionTests
         return false;
     }
 
-    private sealed record TextureSize(int Pixels);
+    private static bool Height(Texture2D __instance, ref int __result)
+    {
+        var size = Sizes.GetValue(__instance, _ => throw new InvalidOperationException("Missing texture size."));
+        __result = size.Height ?? size.Pixels;
+        return false;
+    }
+    private sealed record TextureSize(int Pixels, int? Height = null);
 
     private static bool Skip() => false;
     private static void Require(bool value, string message)
