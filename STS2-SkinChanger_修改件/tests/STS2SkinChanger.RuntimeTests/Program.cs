@@ -121,6 +121,12 @@ if (args.Length == 3 && args[0] == "--test-private-merchant")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--test-decimillipede-isolation")
+{
+    DecimillipedeSkinIsolationTests.Run(args[1], args[2], args[3]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--test-vakuu-vanilla")
 {
     VakuuVanillaArtTests.Run(args[1]);

@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.Core.Nodes.Vfx;
 
 namespace STS2SkinChanger.Core;
 
@@ -43,14 +44,20 @@ internal static class ManagedSceneCompatibility
                 continue;
             }
 
+            var destinationParent = FindDestinationParent(
+                baselineRoot!, replacementRoot!, source.GetParent());
+            if (destinationParent is Sprite2D &&
+                RequiresSpineParent(source.GetClass(), source is NDecimillipedeSegmentVfx))
+            {
+                continue;
+            }
+
             var clone = source.Duplicate();
             if (clone == null)
             {
                 continue;
             }
 
-            var destinationParent = FindDestinationParent(
-                baselineRoot!, replacementRoot!, source.GetParent());
             clone.Name = source.Name;
             destinationParent.AddChild(clone);
             clone.UniqueNameInOwner = true;
@@ -60,6 +67,11 @@ internal static class ManagedSceneCompatibility
 
         return copied;
     }
+
+    // Sprite skins can omit these optional nodes. Copying them under the replacement
+    // Sprite2D initializes the original effects against a nonexistent Spine skeleton.
+    internal static bool RequiresSpineParent(string nativeClass, bool isDecimillipedeSegmentEffect) =>
+        isDecimillipedeSegmentEffect || nativeClass is "SpineSlotNode" or "SpineBoneNode";
 
     private static void CollectUniqueNodes(Node node, Node owner, ICollection<Node> output)
     {

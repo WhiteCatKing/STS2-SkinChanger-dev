@@ -113,6 +113,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlySet<string> _directCharacterRuntimeProviders;
     private readonly IReadOnlySet<string> _scopedMonsterRuntimeProviders;
     private readonly IReadOnlySet<string> _interactiveRuntimeProviders;
+    private readonly IReadOnlySet<string> _instanceAnimationProviders;
     private readonly IReadOnlySet<string> _characterAppearanceGroupIds;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _fullRuntimeProviderGroups;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _scopedMonsterRuntimeProviderGroups;
@@ -254,6 +255,14 @@ internal sealed partial class SkinCatalog : IDisposable
                             ContainsInteractiveScene(index.Archive))
             .Select(index => index.Mod.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // The animation DLL binds these exact private texture paths. A repack can
+        // rename the files and manifest ID without changing that resource contract.
+        _instanceAnimationProviders = cosmeticIndexes
+            .Where(index => index.Mod.HasDll &&
+                new[] { "front", "middle", "back" }.All(segment => index.Archive.Contains(
+                    $"res://dmotion/private/decimillipede_segment_{segment}_motion.png.import")))
+            .Select(index => index.Mod.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visualGroupsByProvider = _groups.Where(group => !EventSkinPolicy.IsEventGroup(group.Id))
             .SelectMany(group => group.Options
                 .Where(option => !option.IsCharacterIconOnly && !option.IsMerchantVariantFallback)
@@ -344,6 +353,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 !_directCharacterRuntimeProviders.Contains(providerId) &&
                 !independentManagedAncientProviders.Contains(providerId) &&
                 !_scopedMonsterRuntimeProviders.Contains(providerId) &&
+                !_instanceAnimationProviders.Contains(providerId) &&
                 (!cardProviderIds.Contains(providerId) ||
                  singleCharacterBundleGroupsByProvider.ContainsKey(providerId)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -2163,8 +2173,14 @@ internal sealed partial class SkinCatalog : IDisposable
         _groups
             .Where(group => selections.TryGetValue(group.Id, out var selectedId))
             .Select(group => ResolveVisualProviderId(selections[group.Id]))
-            .Where(ProviderUsesInteractiveRuntime)
+            .Where(providerId => ProviderUsesInteractiveRuntime(providerId) ||
+                ProviderUsesInstanceAnimation(providerId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    // This package only animates sprites already created from its private textures.
+    // Its scenes belong to the selected model's runtime alias, including in the Bestiary.
+    internal bool ProviderUsesInstanceAnimation(string optionId) =>
+        _instanceAnimationProviders.Contains(ResolveVisualProviderId(optionId));
 
     /// <summary>
     /// Some DLL providers expose one statically discoverable replacement profile per monster.
@@ -3132,7 +3148,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 return group.Options.FirstOrDefault(option =>
                     option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
             })
-            .Where(option => option?.IsRuntimeProvider == true)
+            .Where(option => option?.IsRuntimeProvider == true &&
+                !ProviderUsesInstanceAnimation(option.EffectiveProviderId))
             .Cast<SkinOption>()
             .GroupBy(option => option.Id, StringComparer.OrdinalIgnoreCase)
             .Select(options =>
@@ -3173,6 +3190,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
             })
             .Where(option => option is { IsRuntimeProvider: false } &&
+                             !ProviderUsesInstanceAnimation(option.EffectiveProviderId) &&
                              option.Assets.Values.Any(asset =>
                                  asset.SourcePath.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
                                  asset.SourcePath.EndsWith(".scn", StringComparison.OrdinalIgnoreCase)))
@@ -3255,7 +3273,8 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             selections.TryGetValue(group.Id, out var selectedId);
             var selected = FrameworkRegistryCooperation.FilterAssets(group.Options.FirstOrDefault(option =>
-                option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase)));
+                option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase) &&
+                !ProviderUsesInstanceAnimation(option.EffectiveProviderId)));
             var sourcePaths = group.Options
                 .SelectMany(option => option.Assets.Keys)
                 .Distinct(StringComparer.OrdinalIgnoreCase);
@@ -5510,16 +5529,24 @@ internal sealed partial class SkinCatalog : IDisposable
             resources.Add(CreateRuntimeResource(sourcePath, primary, baseline));
         }
 
+        var usesInstanceAnimation = selected != null && ProviderUsesInstanceAnimation(selected.EffectiveProviderId);
         IncludeAliasedDependencyChain(
             selected,
             resources,
-            reuseMountedPrivateDependencies);
+            reuseMountedPrivateDependencies,
+            isolateBinaryDependencies: usesInstanceAnimation);
 
         var overlay = BuildAliasedResourceOverlay(
             resources,
             resourcePaths,
             aliasToken,
-            redirectDirectScenesAtCanonicalPath: true);
+            redirectDirectScenesAtCanonicalPath: !usesInstanceAnimation,
+            isolateBinaryDependencies: usesInstanceAnimation);
+        if (usesInstanceAnimation)
+        {
+            return ValidateSpinePages(overlay);
+        }
+
         if (selected == null ||
             !includeProviderDependencies ||
             reuseMountedPrivateDependencies ||
@@ -5635,7 +5662,7 @@ internal sealed partial class SkinCatalog : IDisposable
         List<RuntimeResource> resources,
         bool reuseMountedPrivateDependencies = false,
         IReadOnlySet<string>? availableSourcePaths = null,
-        bool isolateCardDependencies = false)
+        bool isolateBinaryDependencies = false)
     {
         IReadOnlyList<PckResourceIndex> selectedIndexes = selected == null
             ? []
@@ -5701,7 +5728,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     }
                 }
                 var allowImportedPayloadAlias = IsRewritableTextResource(dependencyFile.Path);
-                var dependencies = isolateCardDependencies
+                var dependencies = isolateBinaryDependencies
                     ? EnumerateCardDependencyPaths(dependencyFile, resource.SourcePath)
                     : EnumerateDependencyPaths(dependencyFile);
                 foreach (var sourcePath in dependencies)
@@ -6206,14 +6233,14 @@ internal sealed partial class SkinCatalog : IDisposable
             resources,
             availableSourcePaths: existingResourcePaths?.Keys.ToHashSet(
                 StringComparer.OrdinalIgnoreCase),
-            isolateCardDependencies: true);
+            isolateBinaryDependencies: true);
 
         return BuildAliasedResourceOverlay(
             resources,
             resources.Select(resource => resource.SourcePath).ToArray(),
             aliasToken,
             existingSourceAliases: existingResourcePaths,
-            isolateCardDependencies: true);
+            isolateBinaryDependencies: true);
     }
 
     private ResourceAsset? ResolveCardProviderAsset(CardSkinOption option, string resourcePath)
@@ -6250,7 +6277,7 @@ internal sealed partial class SkinCatalog : IDisposable
         string aliasToken,
         bool redirectDirectScenesAtCanonicalPath = false,
         IReadOnlyDictionary<string, string>? existingSourceAliases = null,
-        bool isolateCardDependencies = false)
+        bool isolateBinaryDependencies = false)
     {
         var sourceAliases = existingSourceAliases == null
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -6290,7 +6317,7 @@ internal sealed partial class SkinCatalog : IDisposable
             if (resource.DirectFile != null)
             {
                 var bytes = resource.DirectFile.Read();
-                files[sourceAliases[resource.SourcePath]] = isolateCardDependencies &&
+                files[sourceAliases[resource.SourcePath]] = isolateBinaryDependencies &&
                     CardBinaryResource.Parse(bytes) is { } binaryDirect
                     ? binaryDirect.Rewrite(resource.SourcePath, sourceAliases, payloadAliases)
                     : RewriteAliasedResourceBytes(
@@ -6318,7 +6345,7 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (var payloadFile in resource.PayloadFiles)
             {
                 var bytes = payloadFile.Read();
-                files[payloadAliases[payloadFile.Path]] = isolateCardDependencies &&
+                files[payloadAliases[payloadFile.Path]] = isolateBinaryDependencies &&
                     CardBinaryResource.Parse(bytes) is { } binaryPayload
                     ? binaryPayload.Rewrite(resource.SourcePath, sourceAliases, payloadAliases)
                     : RewriteAliasedResourceBytes(
@@ -6365,7 +6392,7 @@ internal sealed partial class SkinCatalog : IDisposable
             // paths are where an installed event pack shows its redrawn art, so redirecting them
             // would keep the fight on the vanilla tent even though the event showed the new one.
             var canonicalRemapPath = resource.SourcePath + remapSuffix;
-            if (!isolateCardDependencies &&
+            if (!isolateBinaryDependencies &&
                 !IsCanonicalCharacterSelectPortrait(resource.SourcePath) &&
                 !IsSharedGameAtlasPath(resource.SourcePath) &&
                 !FakeMerchantEventArtPolicy.SuppressesCanonicalRedirect(resource.SourcePath))

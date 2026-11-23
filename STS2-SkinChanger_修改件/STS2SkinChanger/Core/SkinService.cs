@@ -6871,7 +6871,8 @@ internal static partial class SkinService
             : null;
         var activationSchedule = ProviderActivationSchedulePolicy.Plan(
             activeRuntimeProviders,
-            providerId => firstScreenProviders?.Contains(providerId) ?? true,
+            providerId => (firstScreenProviders?.Contains(providerId) ?? true) ||
+                (_runtimeProviderBehaviorScope != null && catalog.ProviderUsesInstanceAnimation(providerId)),
             deferNonFirstScreen,
             requiredProviderId: catalog.ResolveVisualProviderId(
                 effectiveSelections.GetValueOrDefault("merchant", SkinCatalog.BaseOptionId)));

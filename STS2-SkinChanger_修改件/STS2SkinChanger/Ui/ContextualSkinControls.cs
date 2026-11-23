@@ -358,6 +358,29 @@ internal static partial class ContextualSkinControls
         Populate(selector, group);
     }
 
+    internal static void PrepareInstanceAnimatedBestiarySkin(NBestiaryEntry entry)
+    {
+        var monster = entry.IsDiscovered ? ResolveBestiaryMonster(entry.Entry) : null;
+        var group = monster == null ? null : FindGroup(monster.Id.Entry, monster.GetType().Name);
+        if (group == null || SkinService.Catalog?.ProviderUsesInstanceAnimation(
+                SkinService.GetDisplayedSelection(group.Id)) != true)
+        {
+            return;
+        }
+
+        // Setup builds the creatures and installs the animation before ShowMonster runs.
+        if (NRun.Instance != null)
+        {
+            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+                [group.Id], reason: "局内怪物图鉴");
+        }
+        else
+        {
+            SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                [group.Id], runEnvironmentProviderIds: [], reason: "怪物图鉴");
+        }
+    }
+
     private static MonsterModel? ResolveBestiaryMonster(BestiaryEntry entry)
     {
         if (entry.monsterModel != null)
@@ -1586,6 +1609,12 @@ internal static partial class ContextualSkinControls
         {
             SkinService.SetSelectedMonsterScale(groupId, scale);
             ApplySharedAnimationScaleToDescendants(screen, groupId);
+            if (groupId == DecimillipedeBestiarySetupCleanupPatch.GroupId &&
+                FindDescendant<NBestiaryLayoutDecimillipede>(screen, layout => !layout.IsQueuedForDeletion()) is { } layout)
+            {
+                DecimillipedeBestiarySetupCleanupPatch.ApplyStaticScale(
+                    layout, SkinService.GetSelectedMonsterScale(groupId));
+            }
         }
         catch (Exception exception)
         {
@@ -3122,8 +3151,12 @@ internal static partial class ContextualSkinControls
         // that actually indexes this path so the overlay contains it; both groups are selected
         // together by the shared-animation transaction.
         var sceneGroupId = SkinService.Catalog?.FindGroupIdForResourcePath(visualsPath) ?? groupId;
-        var scene = SkinService.LoadRuntimeScene(sceneGroupId, visualsPath);
-        PreloadManager.Cache.SetAsset(visualsPath, scene);
+        if (SkinService.Catalog?.ProviderUsesInstanceAnimation(
+                SkinService.GetDisplayedSelection(sceneGroupId)) != true)
+        {
+            var scene = SkinService.LoadRuntimeScene(sceneGroupId, visualsPath);
+            PreloadManager.Cache.SetAsset(visualsPath, scene);
+        }
 
         // 置空选中项绕过 SelectMonster 的同项短路；SelectMonster 的 Setup 阶段会重建生物，
         // 走 MonsterModel.CreateVisuals 的接管补丁从而应用新皮肤。
@@ -4216,6 +4249,18 @@ internal static class CharacterSkinBundleRunCleanupPatch
 [HarmonyPatch(typeof(NBestiary), "SelectMonster")]
 internal static class BestiarySelectionSkinPatch
 {
+    private static void Prefix(NBestiaryEntry entry)
+    {
+        try
+        {
+            ContextualSkinControls.PrepareInstanceAnimatedBestiarySkin(entry);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"准备图鉴皮肤动画失败：{exception.GetBaseException().Message}");
+        }
+    }
+
     private static void Postfix(NBestiary __instance, NBestiaryEntry entry)
     {
         // 皮肤切换触发的重建会再次进入 SelectMonster，跳过重入以避免重复刷新下拉框。

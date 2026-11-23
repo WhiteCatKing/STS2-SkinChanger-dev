@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Runtime.CompilerServices;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Combat;
@@ -18,11 +19,18 @@ namespace STS2SkinChanger.Ui;
 [HarmonyPatch(typeof(NBestiaryLayoutDecimillipede), "Setup")]
 internal static class DecimillipedeBestiarySetupCleanupPatch
 {
+    internal const string GroupId = "decimillipede";
+
+    private sealed record StaticFormation(NCreature[] Segments, Vector2[] Positions, Vector2 Center);
+
+    private static readonly ConditionalWeakTable<NBestiaryLayoutDecimillipede, StaticFormation> StaticFormations = new();
+
     [HarmonyPrefix]
     private static void Prefix(NBestiaryLayoutDecimillipede __instance)
     {
         try
         {
+            StaticFormations.Remove(__instance);
             if (AccessTools.Field(typeof(NBestiaryLayoutDecimillipede), "_creatures")
                     ?.GetValue(__instance) is IList creatures)
             {
@@ -59,4 +67,45 @@ internal static class DecimillipedeBestiarySetupCleanupPatch
             ModLog.Warn("清理残杀千足虫图鉴旧段落失败：" + exception.GetBaseException().Message);
         }
     }
+
+    [HarmonyPostfix]
+    private static void Postfix(NBestiaryLayoutDecimillipede __instance)
+    {
+        try
+        {
+            var selection = SkinService.GetDisplayedSelection(GroupId);
+            if (!string.Equals(SkinService.Catalog?.ResolveVisualProviderId(selection),
+                    "Kiteseven sfw csqzc", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var segments = __instance.GetCreatures().ToArray();
+            if (segments.Length == 3)
+            {
+                var positions = segments.Select(segment => segment.Position).ToArray();
+                StaticFormations.Add(__instance, new StaticFormation(segments, positions, positions[1]));
+                ApplyStaticScale(__instance, SkinService.GetSelectedMonsterScale(GroupId));
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"设置残杀千足虫图鉴站位失败：{exception.GetBaseException().Message}");
+        }
+    }
+
+    internal static void ApplyStaticScale(NBestiaryLayoutDecimillipede layout, float scale)
+    {
+        if (StaticFormations.TryGetValue(layout, out var formation))
+        {
+            for (var index = 0; index < formation.Segments.Length; index++)
+            {
+                formation.Segments[index].Position = ScalePosition(
+                    formation.Positions[index], formation.Center, scale);
+            }
+        }
+    }
+
+    internal static Vector2 ScalePosition(Vector2 position, Vector2 center, float scale) =>
+        center + (position - center) * scale;
 }
