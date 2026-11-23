@@ -81,7 +81,7 @@ internal sealed class RemoteRoomSceneLease : IDisposable
                 return null;
             }
 
-            PreloadManager.Cache.SetAsset(scenePath, resolved);
+            GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A25, PreloadManager.Cache, scenePath, resolved);
             if (Reported.Add(groupId + "\n" + scenePath))
             {
                 ModLog.Info(
@@ -109,7 +109,7 @@ internal sealed class RemoteRoomSceneLease : IDisposable
         {
             if (_previous != null && GodotObject.IsInstanceValid(_previous))
             {
-                PreloadManager.Cache.SetAsset(_path, _previous);
+                GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A26, PreloadManager.Cache, _path, _previous, restoring: true);
             }
         }
         catch
@@ -162,7 +162,7 @@ internal sealed class RemoteRoomSceneLease : IDisposable
                 return null;
             }
 
-            PreloadManager.Cache.SetAsset(texturePath, resolved);
+            GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A27, PreloadManager.Cache, texturePath, resolved);
             if (Reported.Add(groupId + "\n" + texturePath))
             {
                 ModLog.Info(
@@ -187,7 +187,7 @@ internal sealed class RemoteRoomSceneLease : IDisposable
             {
                 if (previous != null && GodotObject.IsInstanceValid(previous))
                 {
-                    PreloadManager.Cache.SetAsset(path, previous);
+                    GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A28, PreloadManager.Cache, path, previous, restoring: true);
                 }
             }
             catch

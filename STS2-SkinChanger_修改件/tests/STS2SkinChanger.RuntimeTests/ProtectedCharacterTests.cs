@@ -20,7 +20,7 @@ internal static class ProtectedCharacterTests
                 var id = doc.RootElement.GetProperty("id").GetString()!;
                 return new SkinModDescriptor(id, id, Path.Combine(root, id + ".pck"), false, root, true);
             }).ToArray();
-            using var catalog = SkinCatalog.Build(gamePack, descriptors);
+            using var catalog = SkinCatalog.BuildWithGlobalWriteAudit(gamePack, descriptors);
             var group = catalog.Groups.Single(group => group.Id == "ironclad");
             foreach (var provider in descriptors)
             {
@@ -30,6 +30,7 @@ internal static class ProtectedCharacterTests
                 var minimum = provider.Id == "CrusaderSkin" ? 5 : 4;
                 if (options.Length < minimum) throw new Exception("Protected variants missing: " + provider.Id);
                 var scenes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var ledgerChecked = false;
                 foreach (var selection in options)
                 {
                     if (provider.Id.StartsWith("JoanofArc", StringComparison.OrdinalIgnoreCase))
@@ -62,6 +63,24 @@ internal static class ProtectedCharacterTests
                     scenes.Add(scenePath);
                     var overlay = catalog.BuildRuntimeResourceOverlay("ironclad", selection.Id,
                         [scenePath], "protected-test/001", true);
+                    if (!ledgerChecked)
+                    {
+                        GlobalWriteLedgerTests.AssertSafeGeneratedPack(catalog, GlobalWriteSite.A06,
+                            overlay.Files, provider.Id + " scoped combat runtime");
+                        if (provider.Id == "JoanofArcIroncladHpwear")
+                        {
+                            var onlyIronclad = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ironclad" };
+                            var correction = catalog.BuildOverlay(
+                                new Dictionary<string, string> { ["ironclad"] = selection.Id }, onlyIronclad);
+                            GlobalWriteLedgerTests.AssertSafeGeneratedPack(catalog, GlobalWriteSite.A11,
+                                correction.ToDictionary(pair => pair.Key, pair => pair.Value.Read(), StringComparer.OrdinalIgnoreCase),
+                                "Joan and the original select portrait correction");
+                            if (GlobalResourceWrites.Snapshot()[^1] is not
+                                { Result: GlobalWriteResult.OriginalRestored, OriginalCount: > 0 })
+                                throw new InvalidOperationException("The real A11 correction must restore original protected portrait bytes.");
+                        }
+                        ledgerChecked = true;
+                    }
                     var estimated = RuntimeLoadSafety.EstimateTextureBytes(overlay.Files);
                     if (estimated > RuntimeLoadSafety.MaximumSingleLoadBytes) throw new Exception("Protected model exceeds new budget: " + provider.Id);
                     Console.WriteLine($"Protected real package: {provider.Id}; variant={selection.Id}; estimated={estimated / 1048576d:F1} MiB; bound graph={overlay.CanBindDependencies}; order={overlay.LoadOrder.Count}");

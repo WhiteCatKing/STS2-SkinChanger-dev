@@ -410,5 +410,21 @@
     "tests": [
       { "suite": "Runtime", "name": "VanillaIntegritySelfCheckTests", "args": "" }
     ]
+  },
+  {
+    "id": "global-write-ledger",
+    "title": "全局资源写入统一判定与记账，放行原版恢复并为拦截提供安全回退",
+    "since": "phase3a",
+    "symbols": [
+      "GlobalResourceWrites.MountPack",
+      "GlobalResourceWrites.TakeOver",
+      "GlobalResourceWrites.SetPreloadAsset",
+      "GlobalResourceWrites.LoadReplacing"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "GlobalWriteLedgerTests", "args": "" },
+      { "suite": "Runtime", "name": "GlobalWriteFallbackTests", "args": "--test-global-write-fallback" },
+      { "suite": "Runtime", "name": "GlobalWritePackAudit", "args": "--audit-global-write-packs", "requiresExternalPack": true }
+    ]
   }
 ]

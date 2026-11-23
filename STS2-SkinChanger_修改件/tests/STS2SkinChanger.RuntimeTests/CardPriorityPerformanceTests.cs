@@ -66,8 +66,7 @@ internal static class CardPriorityPerformanceTests
 
             // Capture the archive-writing boundary, keeping MountCardOverlay's partition and
             // canonical-owner reset real. No game, player cache or native Godot mount is used.
-            var catalog = (SkinCatalog)RuntimeHelpers.GetUninitializedObject(typeof(SkinCatalog));
-            AccessTools.Field(typeof(SkinCatalog), "_cardGroups").SetValue(catalog, new List<CardSkinGroup>());
+            using var catalog = SkinCatalog.Build(paths[0], []);
             catalogProperty.SetValue(null, catalog);
             _files = files.ToDictionary(file => file.Path);
             _files.Add("res://testprovider/new.png", nextFiles.Single());

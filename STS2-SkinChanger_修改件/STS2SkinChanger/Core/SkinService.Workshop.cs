@@ -60,7 +60,7 @@ internal static partial class SkinService
             var combined = descriptors.Concat(additions).ToArray();
             staged = await Task.Run<SkinCatalog?>(() =>
             {
-                var candidate = SkinCatalog.Build(gamePack, combined);
+                var candidate = SkinCatalog.BuildWithGlobalWriteAudit(gamePack, combined);
                 try
                 {
                     candidate.FinalizeCardGroups(cards);

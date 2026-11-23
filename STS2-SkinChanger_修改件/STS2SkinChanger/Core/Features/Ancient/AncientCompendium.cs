@@ -2560,8 +2560,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     return (SkinService.InstantiateRuntimeScene<Node>(group.Id, scenePath), scenePath);
                 }
 
-                var scene = ResourceLoader.Load<PackedScene>(
-                    scenePath,
+                var scene = GlobalResourceWrites.LoadReplacing<PackedScene>(
+                    GlobalWriteSite.A30, scenePath,
                     null,
                     ResourceLoader.CacheMode.ReplaceDeep);
                 if (scene != null)

@@ -97,6 +97,30 @@ if (args.Length == 1 && args[0] == "--test-fool-card-pack-isolation")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-global-write-ledger")
+{
+    GlobalWriteLedgerTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-global-write-fallback")
+{
+    GlobalWriteFallbackTests.Run();
+    return;
+}
+
+if (args.Length == 5 && args[0] == "--audit-global-write-packs")
+{
+    GlobalWritePackAudit.Run(args[1], args[2], args[3], args[4]);
+    return;
+}
+
+if (args.Length == 6 && args[0] == "--inspect-global-write-overlay")
+{
+    GlobalWritePackAudit.InspectOverlay(args[1], args[2], args[3], args[4], args[5]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-hina-ui-osty")
 {
     HinaUiOstyRegressionTests.Run();
@@ -864,6 +888,7 @@ var fullSuiteFailed = false;
 try
 {
 Gate.Run("RequiredFixesManifestTests", () => RequiredFixesManifestTests.Run());
+Gate.Run("GlobalWriteLedgerTests", () => GlobalWriteLedgerTests.Run());
 Gate.Run("UiInjectionGuardTests", () => UiInjectionGuardTests.Run());
 Gate.Run("VanillaIntegritySelfCheckTests", () => VanillaIntegritySelfCheckTests.Run());
 Gate.Run("FoolWaifuIdentityTests", () => FoolWaifuIdentityTests.Run());

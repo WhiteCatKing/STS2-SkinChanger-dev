@@ -139,9 +139,11 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyList<SkinGroup> groups,
         IReadOnlyList<CardSkinGroup> cardGroups,
         IReadOnlyList<CardSkinOption> pckCardOptions,
-        IReadOnlyList<SkinModDescriptor> mods)
+        IReadOnlyList<SkinModDescriptor> mods,
+        Lazy<GlobalWriteProtection> globalWriteProtection)
     {
         _gameArchive = gameArchive;
+        _globalWriteProtection = globalWriteProtection;
         _workshopSourceIds = mods.Where(mod => WorkshopSourceId(mod.RootPath) != 0)
             .ToDictionary(mod => mod.Id, mod => WorkshopSourceId(mod.RootPath), StringComparer.OrdinalIgnoreCase);
         _baselineIndexes = baselineIndexes;
@@ -672,6 +674,19 @@ internal sealed partial class SkinCatalog : IDisposable
         TryGetPrimaryGroup(NormalizeTakeoverPath(resourcePath)) != null ||
         TryGetRuntimeProviderAsset(providerId, NormalizeTakeoverPath(resourcePath)) != null;
 
+    private readonly Lazy<GlobalWriteProtection> _globalWriteProtection;
+    internal GlobalWriteProtection GlobalWriteProtection => _globalWriteProtection.Value;
+
+    private static IEnumerable<string> EnumerateGlobalWriteDependencies(PckArchive archive, string path)
+    {
+        if (!IsDependencyGraphTextResource(path)) return [];
+        var file = new ResourceFile(archive, path);
+        return path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)
+            ? EnumerateDependencyPaths(file)
+            : EnumerateCardDependencyPaths(file, path);
+    }
+
     public bool IsBaseGameResource(string resourcePath) => _gameArchive.Contains(resourcePath);
 
     public bool TryReadBaseGameResource(string resourcePath, out byte[] bytes)
@@ -911,7 +926,13 @@ internal sealed partial class SkinCatalog : IDisposable
         return true;
     }
 
-    public static SkinCatalog Build(string gamePckPath, IEnumerable<SkinModDescriptor> mods)
+    public static SkinCatalog Build(string gamePckPath, IEnumerable<SkinModDescriptor> mods) =>
+        BuildCatalog(gamePckPath, mods, warmGlobalWrites: false);
+
+    internal static SkinCatalog BuildWithGlobalWriteAudit(string gamePckPath, IEnumerable<SkinModDescriptor> mods) =>
+        BuildCatalog(gamePckPath, mods, warmGlobalWrites: true);
+
+    private static SkinCatalog BuildCatalog(string gamePckPath, IEnumerable<SkinModDescriptor> mods, bool warmGlobalWrites)
     {
         // CznStyleUI is a UI application, including frames/icons that resemble card art.
         // Its initializer and entire PCK must stay owned by the native loader.
@@ -920,6 +941,16 @@ internal sealed partial class SkinCatalog : IDisposable
             .Where(mod => !string.Equals(mod.ResourceNamespaceId, "CznStyleUI", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var gameArchive = PckArchive.Open(gamePckPath);
+        var globalWriteProtection = new Lazy<GlobalWriteProtection>(() =>
+            new GlobalWriteProtection(gameArchive, path => EnumerateGlobalWriteDependencies(gameArchive, path)));
+        if (warmGlobalWrites)
+        {
+            _ = Task.Run(() =>
+            {
+                try { _ = globalWriteProtection.Value; }
+                catch (Exception) { /* If this read fails, each later observation is marked incomplete. */ }
+            });
+        }
         var baselineIndexes = new List<PckResourceIndex>();
         var cosmeticIndexes = new List<PckResourceIndex>();
         try
@@ -978,7 +1009,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 groups,
                 cardGroups,
                 pckCardOptions,
-                modList);
+                modList,
+                globalWriteProtection);
             catalog.SortGroupsAndOptions();
             return catalog;
         }
@@ -4060,22 +4092,8 @@ internal sealed partial class SkinCatalog : IDisposable
         path.StartsWith("res://images/packed/character_select/", StringComparison.OrdinalIgnoreCase) &&
         CharacterSelectIconRegex().IsMatch(StripResourceRedirectSuffix(path));
 
-    private HashSet<string>? _canonicalSelectPortraitPayloads;
-
-    internal bool ProtectCanonicalSelectPortraitFile(string path)
-    {
-        var canonical = NormalizeTakeoverPath(path);
-        if (IsCanonicalCharacterSelectPortrait(canonical)) return true;
-        if (!canonical.StartsWith("res://.godot/", StringComparison.OrdinalIgnoreCase)) return false;
-
-        _canonicalSelectPortraitPayloads ??= _gameArchive.Paths
-            .Where(IsCanonicalCharacterSelectPortrait)
-            .Where(path => path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
-                           path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase))
-            .SelectMany(path => EnumerateDependencyPaths(new ResourceFile(_gameArchive, path)))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return _canonicalSelectPortraitPayloads.Contains(canonical);
-    }
+    internal bool ProtectCanonicalSelectPortraitFile(string path) =>
+        GlobalWriteProtection.Decide(path, fromGame: false, GlobalWriteScope.SelectPortraitFilter) != ForbiddenGlobalWrite.None;
 
     internal static bool IsSharedGameAtlasPath(string path)
     {
@@ -4085,35 +4103,17 @@ internal sealed partial class SkinCatalog : IDisposable
                EpochAtlasRegex().IsMatch(stripped);
     }
 
-    private HashSet<string>? _sharedGameImportedPayloads;
-
     /// <summary>
     /// Shared game atlas pages (card_atlas_N, relic_atlas, epoch_atlas, ui_atlas, etc.) and
     /// vanilla card portrait imported payloads (<c>res://.godot/imported/...</c>) must never be
     /// published globally from a provider PCK: overwriting one shared atlas page replaces every
     /// unrelated card/icon drawn from that page even when set to game default.
     /// </summary>
-    internal bool ProtectSharedGameImportedPayloadFile(string path)
-    {
-        var canonical = NormalizeTakeoverPath(path);
-        if (IsSharedGameAtlasPath(canonical)) return true;
-        if (!canonical.StartsWith("res://.godot/", StringComparison.OrdinalIgnoreCase)) return false;
-
-        _sharedGameImportedPayloads ??= _gameArchive.Paths
-            .Where(candidate =>
-                (candidate.StartsWith("res://images/atlases/", StringComparison.OrdinalIgnoreCase) ||
-                 candidate.StartsWith("res://images/packed/card_portraits/", StringComparison.OrdinalIgnoreCase)) &&
-                (candidate.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
-                 candidate.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)))
-            .SelectMany(candidate => EnumerateDependencyPaths(new ResourceFile(_gameArchive, candidate)))
-            .Where(dependency => dependency.StartsWith("res://.godot/", StringComparison.OrdinalIgnoreCase))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return _sharedGameImportedPayloads.Contains(canonical);
-    }
+    internal bool ProtectSharedGameImportedPayloadFile(string path) =>
+        GlobalWriteProtection.Decide(path, fromGame: false, GlobalWriteScope.SharedPayloadFilter) != ForbiddenGlobalWrite.None;
 
     internal bool ProtectGlobalCanonicalPackFile(string path) =>
-        ProtectCanonicalSelectPortraitFile(path) ||
-        ProtectSharedGameImportedPayloadFile(path);
+        GlobalWriteProtection.Decide(path, fromGame: false, GlobalWriteScope.SafePackFilter) != ForbiddenGlobalWrite.None;
 
     private static bool IsCharacterIconSourcePath(string sourcePath) =>
         TryGetCharacterIconGroup(NormalizeTakeoverPath(sourcePath)) != null;
@@ -5605,18 +5605,17 @@ internal sealed partial class SkinCatalog : IDisposable
             pair => pair.Key,
             pair => pair.Value,
             StringComparer.OrdinalIgnoreCase);
+        var canonicalDependencyPaths = overlay.CanonicalDependencyPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var dependency in dependencyFiles)
         {
             // Canonical redirect files emitted by the alias overlay deliberately point binary
             // scene dependencies at their fresh payload aliases. Do not replace those bridges
             // with the provider's original .remap/.import file.
-            if (!ProtectGlobalCanonicalPackFile(dependency.Key))
-                files.TryAdd(dependency.Key, dependency.Value);
+            if (ProtectGlobalCanonicalPackFile(dependency.Key) &&
+                !GlobalWriteProtection.MatchesGameEntry(dependency.Key, dependency.Value)) continue;
+            files.TryAdd(dependency.Key, dependency.Value);
+            canonicalDependencyPaths.Add(dependency.Key);
         }
-
-        var canonicalDependencyPaths = overlay.CanonicalDependencyPaths
-            .Concat(dependencyFiles.Keys.Where(path => !ProtectGlobalCanonicalPackFile(path)))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return ValidateSpinePages(overlay with { Files = files, CanonicalDependencyPaths = canonicalDependencyPaths });
     }
@@ -6089,7 +6088,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 // 重写后整条链都指向别名空间的新鲜副本，避免命中游戏缓存的
                 // 原版贴图导致预览图混用资源。
                 var dependencyBytes = file.Read();
-                if (IsRewritableTextResource(file.Path))
+                if (IsRewritableTextResource(file.Path) &&
+                    (GlobalWriteProtection.Decide(file.Path, fromGame: false) == ForbiddenGlobalWrite.None ||
+                     !GlobalWriteProtection.MatchesGameEntry(file.Path, dependencyBytes)))
                 {
                     dependencyBytes = RewriteTextResource(
                         dependencyBytes,
@@ -6303,7 +6304,7 @@ internal sealed partial class SkinCatalog : IDisposable
         return null;
     }
 
-    private static RuntimeResourceOverlay BuildAliasedResourceOverlay(
+    private RuntimeResourceOverlay BuildAliasedResourceOverlay(
         IReadOnlyCollection<RuntimeResource> resources,
         IReadOnlyCollection<string> resourcePaths,
         string aliasToken,
@@ -6394,7 +6395,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            var remapText = Encoding.UTF8.GetString(resource.RemapFile.Read());
+            var sourceRemap = resource.RemapFile.Read();
+            var remapText = Encoding.UTF8.GetString(sourceRemap);
             var replacements = new Dictionary<string, string>(sourceAliases, StringComparer.OrdinalIgnoreCase);
             foreach (Match match in ResourcePathRegex().Matches(remapText))
             {
@@ -6429,7 +6431,12 @@ internal sealed partial class SkinCatalog : IDisposable
                 !IsSharedGameAtlasPath(resource.SourcePath) &&
                 !FakeMerchantEventArtPolicy.SuppressesCanonicalRedirect(resource.SourcePath))
             {
-                files[canonicalRemapPath] = rewrittenRemap;
+                // Preserve a byte-identical game redirect at its shared address. Its private
+                // counterpart above still points at the isolated payload used by this skin.
+                files[canonicalRemapPath] =
+                    GlobalWriteProtection.Decide(canonicalRemapPath, fromGame: false) != ForbiddenGlobalWrite.None &&
+                    GlobalWriteProtection.MatchesGameEntry(canonicalRemapPath, sourceRemap)
+                        ? sourceRemap : rewrittenRemap;
                 canonicalRedirectPaths.Add(canonicalRemapPath);
             }
         }

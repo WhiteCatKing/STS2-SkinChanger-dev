@@ -280,7 +280,7 @@ internal static class PoroVariantBridge
         var output = Path.Combine(SkinChangerPaths.CacheDirectory, $"poro_{key}.pck");
         if (!File.Exists(output))
             SkinChangerPaths.WriteCache(output, () => PckArchive.WriteFromArchives(output, files));
-        if (!SkinChangerPaths.LoadResourcePack(output, replaceFiles: false))
+        if (!SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A32, output, replaceFiles: false))
             throw new IOException("无法挂载魄罗随从资源：" + output);
 
         var script = ResourceLoader.Load<GDScript>(discovery.ScriptPath);

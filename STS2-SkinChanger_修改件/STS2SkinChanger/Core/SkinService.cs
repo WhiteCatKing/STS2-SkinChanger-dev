@@ -166,7 +166,25 @@ internal static partial class SkinService
     {
         var selection = MultiplayerSkinSync.GetScopedSelection(groupId) ??
                         CharacterPreviewSelections.GetValueOrDefault(groupId) ?? Config.GetSelection(groupId);
-        return Catalog?.ResolveSpineSelection(groupId, selection) ?? selection;
+        return ResolveUsableVisualSelection(Catalog, groupId, selection);
+    }
+
+    private static readonly Dictionary<string, GlobalWriteBlockedException> SkippedRuntimeProviders =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static string ResolveUsableVisualSelection(SkinCatalog? catalog, string groupId, string selection)
+    {
+        if (catalog == null) return selection;
+        if (SkippedRuntimeProviders.Count != 0 &&
+            SkippedRuntimeProviders.ContainsKey(catalog.ResolveVisualProviderId(selection)))
+            return SkinCatalog.BaseOptionId;
+        return catalog.ResolveSpineSelection(groupId, selection);
+    }
+
+    private static void SkipRuntimeProvider(string providerId, GlobalWriteBlockedException exception)
+    {
+        if (SkippedRuntimeProviders.TryAdd(providerId, exception))
+            ModLog.Warn($"{exception.Message} → 跳过提供者 {providerId}");
     }
 
     /// <summary>
@@ -185,7 +203,7 @@ internal static partial class SkinService
         // The Osty impostor mod owns that summon with its own SpineSprite. Mounting a skin's osty
         // resources on top of it made the model render dark and stay dark after an attack.
         if (merged.Count == 0 ||
-            (!merged.Keys.Any(key => OstyImpostorCompat.MustDefer(key)) &&
+             (!merged.Keys.Any(key => OstyImpostorCompat.MustDefer(key)) && SkippedRuntimeProviders.Count == 0 &&
              !merged.Any(pair => Catalog?.IsSpineSelectionRejected(pair.Key, pair.Value) == true)))
         {
             return merged;
@@ -196,7 +214,7 @@ internal static partial class SkinService
         {
             if (!OstyImpostorCompat.MustDefer(pair.Key))
             {
-                filtered[pair.Key] = Catalog?.ResolveSpineSelection(pair.Key, pair.Value) ?? pair.Value;
+                filtered[pair.Key] = ResolveUsableVisualSelection(Catalog, pair.Key, pair.Value);
             }
         }
 
@@ -756,7 +774,7 @@ internal static partial class SkinService
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (affectedGroups.Count > 0)
             {
-                MountOverlay(affectedGroups);
+                MountOverlay(affectedGroups, skipBlockedProviders: true);
             }
 
             Catalog.RemoveSessionVisualProvider(optionId);
@@ -792,7 +810,7 @@ internal static partial class SkinService
         {
             if (Catalog != null)
             {
-                MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase), skipBlockedProviders: true);
             }
         }
     }
@@ -1209,6 +1227,7 @@ internal static partial class SkinService
                 SummonModCompat.Reset();
                 MountedScopedRuntimeProviderPacks.Clear();
                 MountedLargeRuntimeProviderPacks.Clear();
+                SkippedRuntimeProviders.Clear();
                 RuntimeCanonicalDependencyPaths.Clear();
                 WarmedRuntimeProviderPacks.Clear();
                 WarmingRuntimeProviderPacks.Clear();
@@ -1253,7 +1272,7 @@ internal static partial class SkinService
                     .Select(IndependentFoolSkinContract.Normalize)
                     .ToArray();
 
-                Catalog = SkinCatalog.Build(gamePckPath, mods);
+                Catalog = SkinCatalog.BuildWithGlobalWriteAudit(gamePckPath, mods);
                 // 外观覆盖包的跨会话缓存：材质戳 = 游戏主包 + 每个皮肤包的大小/修改时间。
                 // 任何一方更新都会让它变化，从而整目录作废——这是"缓存不会挂到旧皮肤"的保证。
                 OverlayCacheStore.BeginSession(OverlayCacheStore.ComputeStamp(
@@ -1274,8 +1293,8 @@ internal static partial class SkinService
                 OrchisSkinFixCompat.Install();
                 FoolWaifuRuntimeCompat.InstallLoaded();
                 SanitizeSelections();
-                MountOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
-                Config.Save(ConfigPath);
+                MountStartupOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase),
+                    () => Config.Save(ConfigPath));
                 // 仅在完整成功后才标记已初始化，失败时允许后续调用重试而不是整个会话失效。
                 _initialized = true;
                 ModLog.Info(
@@ -1289,6 +1308,19 @@ internal static partial class SkinService
                 LastError = exception.ToString();
                 ModLog.Error("初始化失败：" + exception);
             }
+        }
+    }
+
+    private static void MountStartupOverlay(IReadOnlySet<string> groups, Action save)
+    {
+        try
+        {
+            MountOverlay(groups, skipBlockedProviders: true);
+            save();
+        }
+        catch (GlobalWriteBlockedException exception) when (exception.Site == GlobalWriteSite.A11)
+        {
+            ModLog.Warn($"{exception.Message} → 保留启动前的配置与覆盖层");
         }
     }
 
@@ -1682,7 +1714,15 @@ internal static partial class SkinService
             DeferredProviderActivator.Cancel(reason);
             ManagedSkinModLoader.ConfigureRunEnvironmentProviders(nextRunEnvironmentProviders);
             ManagedSkinModLoader.DeactivateProvidersExcept(activeProviders);
-            EnsureScopedRuntimeProviderResourcesMounted(catalog, activeProviders);
+            var skippedCount = SkippedRuntimeProviders.Count;
+            EnsureScopedRuntimeProviderResourcesMounted(catalog, activeProviders, skipBlockedProviders: true);
+            if (skippedCount != SkippedRuntimeProviders.Count)
+            {
+                nextRunEnvironmentProviders.ExceptWith(SkippedRuntimeProviders.Keys);
+                ManagedSkinModLoader.ConfigureRunEnvironmentProviders(nextRunEnvironmentProviders);
+                activeProviders = GetActiveRuntimeProviders(catalog);
+                ManagedSkinModLoader.DeactivateProvidersExcept(activeProviders);
+            }
             foreach (var providerId in activeProviders.Where(
                          catalog.ProviderUsesManagedGodotScripts))
             {
@@ -1876,6 +1916,13 @@ internal static partial class SkinService
             if (Catalog == null)
             {
                 LastError = "皮肤目录尚未初始化。";
+                return false;
+            }
+
+            if (SkippedRuntimeProviders.TryGetValue(Catalog.ResolveVisualProviderId(optionId), out var blocked))
+            {
+                LastError = blocked.Message;
+                ModLog.Warn($"{blocked.Message} → 本次切换已撤销");
                 return false;
             }
 
@@ -4236,7 +4283,7 @@ internal static partial class SkinService
                 SkinChangerPaths.CacheDirectory,
                 $"sts2_skin_overlay_{_sessionId}_{generation:D3}_card_{sourceName}.pck");
             SkinChangerPaths.WriteCache(overlayPath, () => PckArchive.Write(overlayPath, newFiles));
-            if (!SkinChangerPaths.LoadResourcePack(overlayPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A01, overlayPath, replaceFiles: true))
             {
                 throw new InvalidOperationException("Godot 拒绝加载批量独立卡牌资源包。");
             }
@@ -4429,22 +4476,28 @@ internal static partial class SkinService
     /// instantiating it after <see cref="WithRuntimeResources{T}"/> restores the canonical packs
     /// can therefore bind a remote player's model to the other player's currently mounted skin.
     /// </summary>
-    internal static Node InstantiateMerchantVariantScene(string groupId, string scenePath, bool vanilla, Action<Node>? prepare)
+    internal static Node InstantiateMerchantVariantScene(string groupId, string scenePath, bool vanilla, Action<Node, bool>? prepare)
     {
         using var foreground = CharacterPackPrefetch.HoldForeground();
         lock (Sync)
         {
-            var identity = CaptureCharacterAppearance(groupId);
+            CharacterAppearanceIdentity identity = default;
+            var usesSkin = false;
             return WithRuntimeResourcesForSelection(groupId, vanilla ? SkinCatalog.BaseOptionId : GetVisualSelection(groupId),
-                RuntimeSceneResourcePaths(groupId, scenePath), resources =>
+                [scenePath], resources =>
                 {
                     if (!identity.IsCurrent) throw new AppearanceResourceUnavailableException("商人外观请求已过期。");
                     var scene = resources.GetValueOrDefault(scenePath) as PackedScene ??
                         throw new AppearanceResourceUnavailableException("商人场景未就绪：" + scenePath);
                     var node = scene.Instantiate(PackedScene.GenEditState.Disabled);
-                    try { prepare?.Invoke(node); identity.Bind(node); return node; }
+                    try { prepare?.Invoke(node, usesSkin); identity.Bind(node); return node; }
                     catch { node.Free(); throw; }
-                }, includeProviderDependencies: !vanilla, takeOverCanonicalPaths: false);
+                }, includeProviderDependencies: !vanilla, takeOverCanonicalPaths: false,
+                beginAttempt: selection =>
+                {
+                    usesSkin = selection != SkinCatalog.BaseOptionId;
+                    identity = CaptureCharacterAppearance(groupId);
+                }, attemptPaths: selection => RuntimeSceneResourcePaths(groupId, scenePath, selection));
         }
     }
 
@@ -4596,7 +4649,8 @@ internal static partial class SkinService
                             selection, Config.GetSelection(groupId)))
                         MountContextualFullRuntimeProviderPacks(catalog, selection);
                     if (prepared.OverlayPath != null &&
-                        !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+                        !SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A02, prepared.OverlayPath,
+                            replaceFiles: true, throwOnBlock: true))
                     {
                         throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
                     }
@@ -4636,12 +4690,12 @@ internal static partial class SkinService
         }
     }
 
-    private static IReadOnlyList<string> RuntimeSceneResourcePaths(string groupId, string scenePath)
+    private static IReadOnlyList<string> RuntimeSceneResourcePaths(string groupId, string scenePath, string? effectiveSelection = null)
     {
         lock (Sync)
         {
             var catalog = Catalog;
-            var selection = GetVisualSelection(groupId);
+            var selection = effectiveSelection ?? GetVisualSelection(groupId);
             var mode = catalog?.GetRuntimeMonsterVisualMode(groupId, selection);
             IEnumerable<string> modeResourcePaths = catalog != null &&
                                                     CanReuseMountedLargeProviderPack(
@@ -4909,7 +4963,7 @@ internal static partial class SkinService
                 }
 
                 if (prepared.OverlayPath != null &&
-                    !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+                    !SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A03, prepared.OverlayPath, replaceFiles: true))
                 {
                     throw new InvalidOperationException("Godot 拒绝加载时间线插图私有资源包。");
                 }
@@ -4971,7 +5025,7 @@ internal static partial class SkinService
                 includeProviderDependencies: false,
                 isolateRelicCanonicalPaths: true);
             if (prepared.OverlayPath != null &&
-                !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+                !SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A04, prepared.OverlayPath, replaceFiles: true))
             {
                 throw new InvalidOperationException("Godot 拒绝加载原版遗物私有图集。");
             }
@@ -5040,7 +5094,7 @@ internal static partial class SkinService
             isolateRelicCanonicalPaths: true);
 
         if (prepared.OverlayPath != null &&
-            !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+            !SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A05, prepared.OverlayPath, replaceFiles: true))
         {
             throw new InvalidOperationException("Godot 拒绝加载遗物皮肤资源包。");
         }
@@ -5151,7 +5205,7 @@ internal static partial class SkinService
             var restoreGroups = prepared.RestoreGroups
                 .Append(groupId)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            MountOverlay(restoreGroups);
+            MountOverlay(restoreGroups, skipBlockedProviders: true);
         }
 
         foreach (var resource in loaded)
@@ -6076,7 +6130,7 @@ internal static partial class SkinService
         lock (Sync)
         {
             var selection = GetVisualSelection(groupId);
-            var identity = CaptureCharacterAppearance(groupId);
+            CharacterAppearanceIdentity identity = default;
             return WithRuntimeResourcesForSelection(
                 groupId,
                 selection,
@@ -6089,7 +6143,8 @@ internal static partial class SkinService
                     return result;
                 },
                 includeProviderDependencies,
-                takeOverCanonicalPaths);
+                takeOverCanonicalPaths,
+                beginAttempt: _ => identity = CaptureCharacterAppearance(groupId));
         }
     }
 
@@ -6099,29 +6154,46 @@ internal static partial class SkinService
         IReadOnlyCollection<string> resourcePaths,
         Func<IReadOnlyDictionary<string, Resource>, T> callback,
         bool includeProviderDependencies,
-        bool takeOverCanonicalPaths)
+        bool takeOverCanonicalPaths,
+        Action<string>? beginAttempt = null,
+        Func<string, IReadOnlyCollection<string>>? attemptPaths = null)
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
         return WithSpinePageFallback(catalog, groupId, selection, effectiveSelection =>
-            WithPreparedRuntimeResources(catalog, groupId, effectiveSelection, resourcePaths, callback,
-                includeProviderDependencies, takeOverCanonicalPaths));
+        {
+            beginAttempt?.Invoke(effectiveSelection);
+            return WithPreparedRuntimeResources(catalog, groupId, effectiveSelection,
+                attemptPaths?.Invoke(effectiveSelection) ?? resourcePaths, callback,
+                includeProviderDependencies && effectiveSelection != SkinCatalog.BaseOptionId, takeOverCanonicalPaths);
+        });
     }
 
     internal static T WithSpinePageFallback<T>(
         SkinCatalog catalog, string groupId, string selection, Func<string, T> load)
     {
-        selection = catalog.ResolveSpineSelection(groupId, selection);
+        selection = ResolveUsableVisualSelection(catalog, groupId, selection);
         try
         {
             return load(selection);
         }
-        catch (MissingSpinePageException exception) when (selection != SkinCatalog.BaseOptionId)
+        catch (Exception exception) when (selection != SkinCatalog.BaseOptionId &&
+            (exception is MissingSpinePageException or
+                GlobalWriteBlockedException { Site: GlobalWriteSite.A02 or GlobalWriteSite.A06 or GlobalWriteSite.A07 }))
         {
             if (catalog.RejectSpineSelection(groupId, selection))
             {
                 ClearRuntimeResourceCache(groupId);
-                ModLog.Warn($"[资源检查] {selection} 缺少贴图页 {exception.PagePath}，已回退原版");
-                MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
+                if (exception is MissingSpinePageException missing)
+                {
+                    ModLog.Warn($"[资源检查] {selection} 缺少贴图页 {missing.PagePath}，已回退原版");
+                    MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId },
+                        skipBlockedProviders: true);
+                }
+                else
+                {
+                    ModLog.Warn($"{exception.Message} → {groupId} 回退原版");
+                    TryRestoreOverlay(groupId, cardOverlay: false);
+                }
             }
             return load(SkinCatalog.BaseOptionId);
         }
@@ -6146,7 +6218,8 @@ internal static partial class SkinService
         if (RuntimeFailures.IsBlocked(prepared.Key, DateTime.UtcNow))
             throw new AppearanceResourceUnavailableException("该外观资源刚加载失败，30 秒内停止重复解码。");
         if (prepared.OverlayPath != null &&
-            !SkinChangerPaths.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+            !SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A06, prepared.OverlayPath,
+                replaceFiles: true, throwOnBlock: true))
         {
             throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
         }
@@ -6208,7 +6281,7 @@ internal static partial class SkinService
                 // foreign canonical groups temporarily bridged by this immutable pack.
                 try
                 {
-                    if (prepared.RestoreGroups.Count > 0) MountOverlay(prepared.RestoreGroups);
+                    if (prepared.RestoreGroups.Count > 0) MountOverlay(prepared.RestoreGroups, skipBlockedProviders: true);
                 }
                 catch (Exception restoreError)
                 {
@@ -6256,7 +6329,7 @@ internal static partial class SkinService
                 // the other catalog groups that the temporary dependency pack actually
                 // touched; rebuilding every skin group here caused a full localization reload
                 // on the first character click.
-                MountOverlay(prepared.RestoreGroups);
+                MountOverlay(prepared.RestoreGroups, skipBlockedProviders: true);
             }
         }
 
@@ -6377,6 +6450,7 @@ internal static partial class SkinService
                 aliasToken,
                 includeProviderDependencies,
                 reuseMountedPrivateDependencies);
+        overlay = StripRuntimeSharedWrites(catalog.GlobalWriteProtection, overlay, groupId, selection);
         var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
             groupId,
             overlay.CanonicalDependencyPaths);
@@ -6421,6 +6495,26 @@ internal static partial class SkinService
         PreparedRuntimeOverlays[key] = prepared;
         LastPreparedRuntimeOverlays[groupId] = prepared;
         return prepared;
+    }
+
+    internal static RuntimeResourceOverlay StripRuntimeSharedWrites(GlobalWriteProtection protection,
+        RuntimeResourceOverlay overlay, string group, string selection)
+    {
+        // BuildAliasedResourceOverlay has already copied the resource chain to fresh aliases.
+        // Remove only the optional shared publications, never the alias used by the loader.
+        var excluded = overlay.Files.Where(pair =>
+                protection.Decide(pair.Key, fromGame: false) != ForbiddenGlobalWrite.None &&
+                !protection.MatchesGameEntry(pair.Key, pair.Value))
+            .Select(pair => pair.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (excluded.Count == 0) return overlay;
+
+        GlobalResourceWrites.RecordStripped(GlobalWriteSite.A06, $"{group}/{selection}", excluded);
+        return overlay with
+        {
+            Files = overlay.Files.Where(pair => !excluded.Contains(pair.Key)).ToDictionary(StringComparer.OrdinalIgnoreCase),
+            CanonicalDependencyPaths = overlay.CanonicalDependencyPaths.Where(path => !excluded.Contains(path))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+        };
     }
 
     /// <summary>
@@ -6521,7 +6615,7 @@ internal static partial class SkinService
             }
             else
             {
-                MountOverlay(groups);
+                MountOverlay(groups, skipBlockedProviders: true);
             }
         }
         catch (Exception restoreException)
@@ -6558,7 +6652,7 @@ internal static partial class SkinService
     // F29：挂载过程中框架/资源回调可能同线程再次触发重建。递归重建会逐层同步写 overlay 包
     //（IO 风暴，表现为选人界面长时间卡死）直至栈溢出闪退。重入请求改为合并到最外层，
     // 外层返回后用最终状态循环补一轮，既断开递归也不丢任何分组的更新。
-    private static void MountOverlay(IReadOnlySet<string> groups)
+    private static void MountOverlay(IReadOnlySet<string> groups, bool skipBlockedProviders = false)
     {
         var depth = ++_mountOverlayDepth;
         try
@@ -6589,7 +6683,7 @@ internal static partial class SkinService
 
             for (var round = 0; round < 8; round++)
             {
-                MountOverlayCore(current);
+                MountOverlayCore(current, skipBlockedProviders);
                 var queued = _pendingRemountGroups;
                 if (queued == null || queued.Count == 0)
                 {
@@ -6620,10 +6714,18 @@ internal static partial class SkinService
         }
     }
 
-    private static void MountOverlayCore(IReadOnlySet<string> groups)
+    private static void MountOverlayCore(IReadOnlySet<string> groups, bool skipBlockedProviders)
     {
         var totalStarted = Stopwatch.GetTimestamp();
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        if (!skipBlockedProviders && SkippedRuntimeProviders.Count != 0)
+        {
+            foreach (var group in groups)
+            {
+                if (SkippedRuntimeProviders.TryGetValue(catalog.ResolveVisualProviderId(Config.GetSelection(group)), out var blocked))
+                    throw new GlobalWriteBlockedException(blocked.Site, blocked.ResourcePath, blocked.Rule, blocked.Reason);
+            }
+        }
         // F29 取证：与结尾的「已挂载」成对，卡死时可分辨停在目录构建、写包还是挂载阶段。
         ModLog.Info($"开始重建外观覆盖：{groups.Count} 个分组。");
         // 临时性能探针：把这次重建拆成阶段，找到"到底是哪一步在卡"。
@@ -6667,19 +6769,38 @@ internal static partial class SkinService
         FrameworkCompatibilityLayer.SynchronizeSelections(catalog, effectiveSelections);
         var activeRuntimeProviders = GetActiveRuntimeProviders(catalog);
         Mark("行为提供者筛选");
-        ManagedSkinModLoader.ConfigureRunEnvironmentProviders(
-            _runtimeProviderBehaviorScope?.RunEnvironmentProviderIds ?? []);
+        IEnumerable<string> runEnvironment = _runtimeProviderBehaviorScope?.RunEnvironmentProviderIds ?? [];
+        ManagedSkinModLoader.ConfigureRunEnvironmentProviders(runEnvironment.Except(SkippedRuntimeProviders.Keys,
+            StringComparer.OrdinalIgnoreCase));
         // Provider callbacks must be gone before a baseline replacement pack is mounted. Otherwise
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
         ManagedSkinModLoader.DeactivateProvidersExcept(activeRuntimeProviders);
-        EnsureScopedRuntimeProviderResourcesMounted(catalog, activeRuntimeProviders);
+        var skippedCount = SkippedRuntimeProviders.Count;
+        EnsureScopedRuntimeProviderResourcesMounted(catalog, activeRuntimeProviders, skipBlockedProviders);
         Mark("停用未选中补丁");
         // Native framework initializers register author settings (including persisted values).
         // Read them before building the correction overlay, not one selection too late.
-        ManagedSkinModLoader.ActivateSelectedProviders(
-            activeRuntimeProviders.Where(FrameworkRegistryCooperation.IsNativeProvider));
-        Mark("激活原生提供者");
-        var largeProviderMountPlan = MountSelectedLargeRuntimeProviderPacks(catalog, groups);
+        void RefreshSkippedProviders()
+        {
+            if (skippedCount == SkippedRuntimeProviders.Count) return;
+            skippedCount = SkippedRuntimeProviders.Count;
+            effectiveSelections = GetVisualSelections();
+            RefreshScopedMonsterSelectionSnapshot(catalog);
+            FrameworkCompatibilityLayer.SynchronizeSelections(catalog, effectiveSelections);
+            activeRuntimeProviders = GetActiveRuntimeProviders(catalog);
+            ManagedSkinModLoader.ConfigureRunEnvironmentProviders(runEnvironment.Except(SkippedRuntimeProviders.Keys,
+                StringComparer.OrdinalIgnoreCase));
+            ManagedSkinModLoader.DeactivateProvidersExcept(activeRuntimeProviders);
+        }
+
+        var largeProviderMountPlan = MountSelectedLargeRuntimeProviderPacks(catalog, groups, skipBlockedProviders, () =>
+        {
+            RefreshSkippedProviders();
+            ManagedSkinModLoader.ActivateSelectedProviders(
+                activeRuntimeProviders.Where(FrameworkRegistryCooperation.IsNativeProvider));
+            Mark("激活原生提供者");
+        });
+        RefreshSkippedProviders();
         Mark("提权完整包");
         var promotedPackResourcePaths = largeProviderMountPlan.PromotedPackPaths
             .Where(MountedLargeRuntimeProviderPacks.ContainsKey)
@@ -6824,20 +6945,20 @@ internal static partial class SkinService
         var mountedDeltaFiles = 0;
         try
         {
-            // 只挂"和当前已经挂在栈顶的那一层不一样"的文件。整份覆盖包平均 630 MB，
-            // 每换一次皮肤就整份重写、再整份挂上去，既慢（500 ms 写盘）又会把内存和
-            // 文件句柄耗光（实测一个会话连切 20 次写了 11.8 GB 后闪退）。
-            // 玩家绝大多数切换只改动几十个路径，剩下的直接复用先前已经挂好的层。
-            mountedDeltaFiles = MountOverlayDelta(
-                files,
-                "visual",
-                "Godot 拒绝加载生成的皮肤资源包。");
+            // Mount just the paths whose current provider differs from the requested plan.
+            mountedDeltaFiles = MountOverlayDelta(files, "visual", "Godot 拒绝加载生成的皮肤资源包。");
         }
         catch (CacheWriteRejectedException) { throw; }
         catch (Exception exception)
         {
-            // 覆盖包生成/挂载失败时保留上一次的外观继续玩，不要让一次写盘失败把整个
-            // 初始化（或当前场景构建）带崩。下一次重建会重新尝试。
+            if (exception is GlobalWriteBlockedException)
+            {
+                _cachedOverlayPlan = null;
+                if (largeProviderMountPlan.PromotedPackPaths.Count != 0)
+                    RequestFullOverlayReassert("全局写入被拦截后恢复上一份外观");
+                ModLog.Warn("[全局写入] 本次切换已撤销，外观校正层未挂载。");
+                throw;
+            }
             ModLog.Error("本次外观覆盖没有挂上，保留上一次的外观：" +
                          exception.GetBaseException().Message);
         }
@@ -7001,14 +7122,17 @@ internal static partial class SkinService
 
     private static void RefreshScopedMonsterSelectionSnapshot(SkinCatalog catalog)
     {
+        IReadOnlyDictionary<string, string> selections = Config.Selections;
+        if (SkippedRuntimeProviders.Count != 0)
+            selections = selections.ToDictionary(pair => pair.Key,
+                pair => ResolveUsableVisualSelection(catalog, pair.Key, pair.Value), StringComparer.OrdinalIgnoreCase);
         var selectedMonsterIdsByProvider = new Dictionary<string, IReadOnlyCollection<string>>(
             StringComparer.OrdinalIgnoreCase);
-        foreach (var providerId in catalog.GetSelectedScopedMonsterRuntimeProviders(
-                     Config.Selections))
+        foreach (var providerId in catalog.GetSelectedScopedMonsterRuntimeProviders(selections))
         {
             selectedMonsterIdsByProvider[providerId] = catalog
                 .GetRuntimeProviderGroups(providerId)
-                .Where(groupId => catalog.ResolveVisualProviderId(Config.GetSelection(groupId))
+                .Where(groupId => catalog.ResolveVisualProviderId(selections.GetValueOrDefault(groupId, SkinCatalog.BaseOptionId))
                     .Equals(providerId, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
         }
@@ -7020,7 +7144,7 @@ internal static partial class SkinService
     {
         try
         {
-            if (restoreGroups.Count > 0) MountOverlay(restoreGroups);
+            if (restoreGroups.Count > 0) MountOverlay(restoreGroups, skipBlockedProviders: true);
         }
         catch (Exception error)
         {
@@ -7106,6 +7230,8 @@ internal static partial class SkinService
     private static string PrepareSelectPortraitSafePack(SkinCatalog catalog, string source)
     {
         using var archive = PckArchive.Open(source);
+        // Preserve the projection's old filter. The mount applies the full publication check
+        // and verifies actual original bytes for the final pack.
         var excluded = archive.Paths.Where(catalog.ProtectGlobalCanonicalPackFile)
             .Order(StringComparer.OrdinalIgnoreCase).ToArray();
         if (excluded.Length == 0) return source;
@@ -7128,6 +7254,46 @@ internal static partial class SkinService
         return output;
     }
 
+    private static string PrepareHighPriorityProviderPack(SkinCatalog catalog, GlobalWriteSite site, string source)
+    {
+        PckArchive archive;
+        try
+        {
+            archive = PckArchive.OpenForAudit(source);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or OverflowException)
+        {
+            GlobalResourceWrites.CheckMount(site, source, replaceFiles: true);
+            throw;
+        }
+        using var sourceArchive = archive;
+        var projection = GlobalResourceWrites.InspectHighPriorityPack(archive, catalog.GlobalWriteProtection);
+        if (projection.Stripped.Count == 0) return source;
+
+        var info = new FileInfo(source);
+        var fingerprint = source + "\n" + info.Length + "\n" + info.LastWriteTimeUtc.Ticks + "\n" +
+                          string.Join('\n', projection.Stripped.Keys.Order(StringComparer.OrdinalIgnoreCase));
+        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint)));
+        var output = System.IO.Path.Combine(SkinChangerPaths.CacheDirectory, $"global_safe_{key}.pck");
+        if (!File.Exists(output))
+        {
+            var files = archive.Paths.Where(path => !projection.Stripped.ContainsKey(path))
+                .ToDictionary(path => path, path => (archive, path), StringComparer.OrdinalIgnoreCase);
+            var removals = archive.RemovedPaths.Where(path => !projection.Stripped.ContainsKey(path));
+            SkinChangerPaths.WriteCache(output, () =>
+            {
+                try { PckArchive.WriteFromArchives(output, files, removals); }
+                catch
+                {
+                    TryDelete(output);
+                    throw;
+                }
+            });
+        }
+        GlobalResourceWrites.RecordStripped(site, source, projection.Stripped.Keys.ToArray());
+        return output;
+    }
+
     private static void MountContextualFullRuntimeProviderPacks(
         SkinCatalog catalog,
         string selection)
@@ -7145,10 +7311,15 @@ internal static partial class SkinService
         // lifetime of this creature-creation scope. The generated alias is mounted immediately
         // afterwards and remains the authoritative entry scene; MountedRuntimeResourceScope then
         // restores this client's configured provider/baseline resources.
-        foreach (var resourcePackPath in catalog.GetProviderResourcePackPaths(selection))
+        var prepared = catalog.GetProviderResourcePackPaths(selection)
+            .Select(path => PrepareHighPriorityProviderPack(catalog, GlobalWriteSite.A07, System.IO.Path.GetFullPath(path)))
+            .ToArray();
+        foreach (var pack in prepared)
+            GlobalResourceWrites.CheckMount(GlobalWriteSite.A07, pack, replaceFiles: true);
+        foreach (var pack in prepared)
         {
-            var normalizedPath = System.IO.Path.GetFullPath(resourcePackPath);
-            if (!SkinChangerPaths.LoadResourcePack(PrepareSelectPortraitSafePack(catalog, normalizedPath), replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A07, pack,
+                    replaceFiles: true, throwOnBlock: true))
             {
                 throw new InvalidOperationException(
                     $"无法为联机玩家挂载 {selection} 的完整运行时资源包。");
@@ -7160,41 +7331,58 @@ internal static partial class SkinService
 
     private static void EnsureScopedRuntimeProviderResourcesMounted(
         SkinCatalog catalog,
-        IEnumerable<string> activeRuntimeProviders)
+        IEnumerable<string> activeRuntimeProviders,
+        bool skipBlockedProviders)
     {
         foreach (var providerId in activeRuntimeProviders
                      .Where(provider => catalog.ProviderUsesScopedMonsterRuntime(provider) ||
                                         catalog.ProviderUsesDirectCharacterRuntime(provider))
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            foreach (var resourcePackPath in catalog.GetProviderResourcePackPaths(providerId))
+            if (SkippedRuntimeProviders.ContainsKey(providerId)) continue;
+            try
             {
-                var normalizedPath = System.IO.Path.GetFullPath(resourcePackPath);
-                if (!MountedScopedRuntimeProviderPacks.Add(normalizedPath))
+                var packs = catalog.GetProviderResourcePackPaths(providerId)
+                    .Select(System.IO.Path.GetFullPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Where(path => !MountedScopedRuntimeProviderPacks.Contains(path))
+                    .Select(path => (Path: path, Prepared: PrepareSelectPortraitSafePack(catalog, path)))
+                    .ToArray();
+                foreach (var pack in packs)
+                    GlobalResourceWrites.CheckMount(GlobalWriteSite.A08, pack.Prepared, replaceFiles: false);
+                foreach (var pack in packs)
                 {
-                    continue;
+                    if (!MountedScopedRuntimeProviderPacks.Add(pack.Path)) continue;
+                    try
+                    {
+                        // Lower priority makes provider-private dependencies available without replacing game assets.
+                        if (!SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A08, pack.Prepared,
+                                replaceFiles: false, throwOnBlock: true))
+                        {
+                            MountedScopedRuntimeProviderPacks.Remove(pack.Path);
+                            throw new InvalidOperationException($"无法挂载 {providerId} 的运行时依赖资源包。");
+                        }
+                    }
+                    catch (GlobalWriteBlockedException)
+                    {
+                        MountedScopedRuntimeProviderPacks.Remove(pack.Path);
+                        throw;
+                    }
+                    ModLog.Info($"已低优先级挂载 {providerId} 的完整运行时资源。");
                 }
-
-                // A scoped DLL can resolve effects, sounds or encounter backgrounds dynamically;
-                // those paths cannot be discovered by walking references from the selected
-                // skeleton alone. Mount its original PCK as a low-priority dependency namespace.
-                // Canonical game paths remain owned by the game/current generated overlay because
-                // replaceFiles is false, while provider-private res:// paths become available.
-                if (!SkinChangerPaths.LoadResourcePack(PrepareSelectPortraitSafePack(catalog, normalizedPath), replaceFiles: false))
-                {
-                    MountedScopedRuntimeProviderPacks.Remove(normalizedPath);
-                    throw new InvalidOperationException(
-                        $"无法挂载 {providerId} 的运行时依赖资源包。");
-                }
-
-                ModLog.Info($"已低优先级挂载 {providerId} 的完整运行时资源。");
+            }
+            catch (GlobalWriteBlockedException exception) when (skipBlockedProviders)
+            {
+                SkipRuntimeProvider(providerId, exception);
             }
         }
     }
 
     private static LargeProviderMountPlan MountSelectedLargeRuntimeProviderPacks(
         SkinCatalog catalog,
-        IReadOnlySet<string> affectedGroups)
+        IReadOnlySet<string> affectedGroups,
+        bool skipBlockedProviders,
+        Action beforeMount)
     {
         var selectedOptions = catalog.Groups
             .Select(group =>
@@ -7239,20 +7427,59 @@ internal static partial class SkinService
             .ToArray();
         // A pack shared by a summon group and a real group (same provider) must stay promoted for
         // the real group; only packs used exclusively by summon selections are demoted.
-        var companionOnlyPackPaths = directProviderPacks
-            .Where(pack => pack.CompanionOnly)
-            .Select(pack => pack.Path)
+        HashSet<string> CompanionOnlyPaths() => directProviderPacks
+            .GroupBy(pack => pack.Path, StringComparer.OrdinalIgnoreCase)
+            .Where(packs => packs.All(pack => pack.CompanionOnly))
+            .Select(packs => packs.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        companionOnlyPackPaths.ExceptWith(directProviderPacks
-            .Where(pack => !pack.CompanionOnly)
-            .Select(pack => pack.Path));
+        var companionOnlyPackPaths = CompanionOnlyPaths();
         var promotedPackPaths = directProviderPacks
             .Where(pack => affectedGroups.Contains(pack.GroupId))
             .Select(pack => pack.Path)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var preparedPromotions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Check the entire promotion plan before mounting any high-priority pack. One rejected
+        // member must not leave half a provider's packs on the permanent Godot stack.
         foreach (var packPath in selectedPackPaths)
         {
+            if (companionOnlyPackPaths.Contains(packPath) ||
+                (MountedLargeRuntimeProviderPacks.ContainsKey(packPath) && !promotedPackPaths.Contains(packPath)))
+                continue;
+
+            var owners = directProviderPacks.Where(pack => pack.Path.Equals(packPath, StringComparison.OrdinalIgnoreCase))
+                .Select(pack => pack.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (owners.All(SkippedRuntimeProviders.ContainsKey)) continue;
+
+            try
+            {
+                var prepared = PrepareHighPriorityProviderPack(catalog, GlobalWriteSite.A10, packPath);
+                GlobalResourceWrites.CheckMount(GlobalWriteSite.A10, prepared, replaceFiles: true);
+                preparedPromotions.Add(packPath, prepared);
+            }
+            catch (GlobalWriteBlockedException exception) when (skipBlockedProviders)
+            {
+                foreach (var providerId in owners) SkipRuntimeProvider(providerId, exception);
+            }
+        }
+
+        if (SkippedRuntimeProviders.Count != 0)
+        {
+            directProviderPacks = directProviderPacks.Where(pack => !SkippedRuntimeProviders.ContainsKey(pack.ProviderId)).ToArray();
+            selectedPackPaths = directProviderPacks.Select(pack => pack.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            companionOnlyPackPaths = CompanionOnlyPaths();
+            promotedPackPaths.IntersectWith(selectedPackPaths);
+        }
+        beforeMount();
+
+        foreach (var packPath in selectedPackPaths)
+        {
+            if (directProviderPacks.Where(pack => pack.Path.Equals(packPath, StringComparison.OrdinalIgnoreCase))
+                    .All(pack => SkippedRuntimeProviders.ContainsKey(pack.ProviderId)))
+            {
+                promotedPackPaths.Remove(packPath);
+                continue;
+            }
             if (companionOnlyPackPaths.Contains(packPath))
             {
                 // A pack that was promoted while the owner character still used it stays on top of
@@ -7273,7 +7500,7 @@ internal static partial class SkinService
                     continue;
                 }
 
-                if (!SkinChangerPaths.LoadResourcePack(PrepareSelectPortraitSafePack(catalog, packPath), replaceFiles: false))
+                if (!SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A09, PrepareSelectPortraitSafePack(catalog, packPath), replaceFiles: false))
                 {
                     MountedCompanionOnlyProviderPacks.Remove(packPath);
                     ModLog.Warn(
@@ -7289,9 +7516,9 @@ internal static partial class SkinService
             }
 
             var firstMount = !MountedLargeRuntimeProviderPacks.ContainsKey(packPath);
-            if (!MountedLargeRuntimeProviderPacks.ContainsKey(packPath))
+            if (firstMount)
             {
-                using var archive = PckArchive.Open(packPath);
+                using var archive = PckArchive.Open(preparedPromotions[packPath]);
                 MountedLargeRuntimeProviderPacks[packPath] = new MountedProviderPackState(
                     archive.Paths.ToArray());
                 promotedPackPaths.Add(packPath);
@@ -7313,10 +7540,20 @@ internal static partial class SkinService
             // 注意：这里**不能**因为「本次会话已提权过」就跳过。校正覆盖层每次都挂在整包上面，
             // 它会把整包里的规范路径再写一遍；如果不再把整包压回栈顶，像 Orchis 的
             // 原版特效替换这类「靠整包压栈顶生效」的资源就会被游戏原版盖掉（1.0.30.195 的教训）。
-            if (!SkinChangerPaths.LoadResourcePack(PrepareSelectPortraitSafePack(catalog, packPath), replaceFiles: true))
+            try
             {
-                throw new InvalidOperationException(
-                    $"无法直接挂载完整外观资源包：{System.IO.Path.GetFileName(packPath)}");
+                if (!SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A10, preparedPromotions[packPath],
+                        replaceFiles: true, throwOnBlock: true))
+                    throw new InvalidOperationException($"无法直接挂载完整外观资源包：{System.IO.Path.GetFileName(packPath)}");
+            }
+            catch (GlobalWriteBlockedException exception)
+            {
+                if (firstMount) MountedLargeRuntimeProviderPacks.Remove(packPath);
+                promotedPackPaths.Remove(packPath);
+                if (!skipBlockedProviders) throw;
+                foreach (var entry in directProviderPacks.Where(pack => pack.Path.Equals(packPath, StringComparison.OrdinalIgnoreCase)))
+                    SkipRuntimeProvider(entry.ProviderId, exception);
+                continue;
             }
 
             PromotedPackOrder.RemoveAll(path =>
@@ -7374,8 +7611,12 @@ internal static partial class SkinService
                 catalog.GetSelectedScopedMonsterRuntimeProviders(localSelections),
                 StringComparer.OrdinalIgnoreCase)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var selections in selectionSets.Skip(1))
+        foreach (var requested in selectionSets.Skip(1))
         {
+            var selections = requested.Any(pair => catalog.IsSpineSelectionRejected(pair.Key, pair.Value))
+                ? requested.ToDictionary(pair => pair.Key,
+                    pair => catalog.ResolveSpineSelection(pair.Key, pair.Value), StringComparer.OrdinalIgnoreCase)
+                : requested;
             selectedProviders.UnionWith(catalog.GetFullySelectedFullRuntimeProviders(selections));
             selectedProviders.UnionWith(catalog.GetFullySelectedFullRuntimeProvidersIgnoringCompanions(selections));
             selectedProviders.UnionWith(catalog.GetSelectedInteractiveRuntimeProviders(selections));
@@ -7386,6 +7627,7 @@ internal static partial class SkinService
         {
             selectedProviders.UnionWith(scope.RunEnvironmentProviderIds);
         }
+        selectedProviders.ExceptWith(SkippedRuntimeProviders.Keys);
 
         // A pack chosen only through a summon group must not run its DLL. Skin packs are authored for
         // the character: Orchis Necrobinder Skin Mod's `Creature.CreateVisuals` postfix rewrites the
@@ -7430,6 +7672,7 @@ internal static partial class SkinService
         {
             var behaviorProviderId = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
             if (!behaviorProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase) &&
+                !SkippedRuntimeProviders.ContainsKey(behaviorProviderId) &&
                 ProviderAssembliesContain(behaviorProviderId))
             {
                 active.Add(behaviorProviderId);
@@ -7456,6 +7699,7 @@ internal static partial class SkinService
         {
             if (Catalog is not { } catalog ||
                 string.IsNullOrWhiteSpace(providerId) ||
+                SkippedRuntimeProviders.ContainsKey(providerId) ||
                 !ManagedSkinModLoader.HasProviderAssembly(providerId))
             {
                 return false;
@@ -7469,7 +7713,8 @@ internal static partial class SkinService
 
             // 提供者的运行时资源包必须先可见：作者初始化器和它的静态字段会在第一次访问时
             // 直接解析 res:// 私有路径。与重建路径使用同一套幂等挂载。
-            EnsureScopedRuntimeProviderResourcesMounted(catalog, [providerId]);
+            EnsureScopedRuntimeProviderResourcesMounted(catalog, [providerId], skipBlockedProviders: true);
+            if (SkippedRuntimeProviders.ContainsKey(providerId)) return false;
             if (catalog.ProviderUsesManagedGodotScripts(providerId))
             {
                 ManagedSkinModLoader.EnsureProviderGodotScripts(providerId);
@@ -7618,8 +7863,11 @@ internal static partial class SkinService
         // archive. Toggling a tiny provider must not create a new combined copy of every other
         // enabled pack. Unchanged slices reuse MountArchiveOverlay's deterministic cache.
         foreach (var slice in files.GroupBy(pair => pair.Value.Archive))
-            MountArchiveOverlay(slice.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase),
-                "cards", "Godot 拒绝加载生成的卡牌皮肤资源包。");
+        {
+            var delta = slice.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            StripOverlaySharedWrites(catalog.GlobalWriteProtection, delta);
+            MountArchiveOverlay(delta, "cards", "Godot 拒绝加载生成的卡牌皮肤资源包。");
+        }
 
     }
 
@@ -7650,6 +7898,8 @@ internal static partial class SkinService
 
             delta[pair.Key] = pair.Value;
         }
+
+        if (Catalog is { } catalog) StripOverlaySharedWrites(catalog.GlobalWriteProtection, delta);
 
         if (delta.Count == 0)
         {
@@ -7686,6 +7936,20 @@ internal static partial class SkinService
 
         PerfTrace.Report($"覆盖包[{category}] 增量层", 0, delta.Count);
         return delta.Count;
+    }
+
+    private static void StripOverlaySharedWrites(GlobalWriteProtection protection, Dictionary<string, ResourceFile> files)
+    {
+        var excluded = files.Where(pair =>
+                protection.Decide(pair.Key, fromGame: false) != ForbiddenGlobalWrite.None &&
+                !protection.MatchesGameEntry(pair.Value.Archive, pair.Value.Path, pair.Key))
+            .GroupBy(pair => pair.Value.ArchivePath);
+        foreach (var source in excluded.ToArray())
+        {
+            var paths = source.Select(pair => pair.Key).ToArray();
+            foreach (var path in paths) files.Remove(path);
+            GlobalResourceWrites.RecordStripped(GlobalWriteSite.A11, source.Key, paths);
+        }
     }
 
     /// <summary>按 PCK 索引里记录的文件大小估算这一层要写多少字节，只用于单层上限保护。</summary>
@@ -7794,7 +8058,18 @@ internal static partial class SkinService
         // runtime pack without writing another multi-hundred-megabyte copy to disk.
         var mountWatch = Stopwatch.StartNew();
         ModLog.Info($"[资源挂载] 开始 {category}：{System.IO.Path.GetFileName(overlayPath)}；文件={files.Count}。");
-        if (!SkinChangerPaths.LoadResourcePack(overlayPath, replaceFiles: true))
+        bool mounted;
+        try
+        {
+            mounted = SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A11, overlayPath,
+                replaceFiles: true, throwOnBlock: category == "visual");
+        }
+        catch (GlobalWriteBlockedException)
+        {
+            MountedOverlayCache.Remove(signature);
+            throw;
+        }
+        if (!mounted)
         {
             MountedOverlayCache.Remove(signature);
             throw new InvalidOperationException(failureMessage);
@@ -7826,6 +8101,9 @@ internal static partial class SkinService
         {
             return null;
         }
+
+        using var indexed = PckArchive.OpenForAudit(archive.Path);
+        if (indexed.RemovedPaths.Count != 0) return null;
 
         // Mounting the original archive is equivalent to mounting an exact byte-for-byte copy.
         // Baseline overlays still restore any canonical paths after deselection; private provider
@@ -8711,7 +8989,7 @@ internal static partial class SkinService
                     continue;
                 }
 
-                cache.SetAsset(path, scene);
+                GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A19, cache, path, scene);
                 refreshed.Add(path);
             }
             catch (Exception exception)
@@ -8770,7 +9048,7 @@ internal static partial class SkinService
                 SkinChangerPaths.CacheDirectory,
                 $"base_scene_{hash}_{sequence:D3}.pck");
             SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));
-            if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A12, packPath, replaceFiles: true))
             {
                 ModLog.Warn($"恢复原版场景失败（Godot 拒绝加载）：{scenePath}");
                 return;
@@ -8779,14 +9057,16 @@ internal static partial class SkinService
             // 只压包栈是不够的：Godot 的资源缓存按路径长期持有旧皮肤，CreateVisuals 走的是
             // CacheMode.Reuse。Replace 会强制重新从（新的）栈顶读取并覆盖缓存条目，再把结果
             // 写进游戏的 PreloadManager，后续按规范路径取场景才是真正的原版。
-            var forcedScene = ResourceLoader.Load<PackedScene>(
-                scenePath,
+            var forcedScene = GlobalResourceWrites.LoadReplacing<PackedScene>(
+                GlobalWriteSite.A29, scenePath,
                 null,
-                ResourceLoader.CacheMode.Replace);
+                ResourceLoader.CacheMode.Replace, restoring: true);
             if (forcedScene != null)
             {
-                PreloadManager.Cache.SetAsset(scenePath, forcedScene);
-                ModLog.Info($"[原版] 已用 Replace 重读并写回缓存：{scenePath}");
+                if (!files.ContainsKey(remapPath))
+                    GlobalResourceWrites.VerifyOriginalResource(forcedScene, scenePath, scenePath, bytes);
+                if (GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A20, PreloadManager.Cache, scenePath, forcedScene, restoring: true))
+                    ModLog.Info($"[原版] 已用 Replace 重读并写回缓存：{scenePath}");
             }
 
             RefreshCachedCreatureVisualScenes(new[] { scenePath });
@@ -8852,7 +9132,8 @@ internal static partial class SkinService
 
         try
         {
-            PreloadManager.Cache.SetAsset(scenePath, scene);
+            if (!GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A21, PreloadManager.Cache, scenePath, scene, restoring: true))
+                return false;
             ModLog.Info($"[原版] 已把别名场景登记为规范路径缓存：{scenePath}");
             return true;
         }
@@ -8894,7 +9175,7 @@ internal static partial class SkinService
                 $"base_alias_{hash}.pck");
             if (!File.Exists(packPath))
                 SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));
-            if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A13, packPath, replaceFiles: true))
             {
                 ModLog.Warn($"[原版] 别名场景包可能已挂载过，继续尝试读取：{packPath}");
             }
@@ -8906,6 +9187,7 @@ internal static partial class SkinService
                 return null;
             }
 
+            GlobalResourceWrites.VerifyOriginalResource(aliasScene, scenePath, aliasPath, bytes);
             ModLog.Info($"[原版] 别名场景已就绪：{aliasPath} ← {scenePath}（{bytes.Length} B）");
             return aliasScene;
         }
@@ -8947,7 +9229,7 @@ internal static partial class SkinService
                 $"base_alias_{hash}.pck");
             if (!File.Exists(packPath))
                 SkinChangerPaths.WriteCache(packPath, () => PckArchive.Write(packPath, files));
-            if (!SkinChangerPaths.LoadResourcePack(packPath, replaceFiles: true))
+            if (!SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A14, packPath, replaceFiles: true))
             {
                 ModLog.Warn($"[原版] 别名场景包可能已挂载过，继续尝试读取：{packPath}");
             }
@@ -9303,6 +9585,7 @@ internal static partial class SkinService
                 return false;
             }
 
+            var hadPrevious = Config.Selections.TryGetValue(groupId, out var previous);
             try
             {
                 Config.Selections[groupId] = optionId;
@@ -9312,6 +9595,15 @@ internal static partial class SkinService
                 LastError = null;
                 ModLog.Info($"随从分组 {groupId} 独立应用：{optionId}（不影响任何其它分组）。");
                 return true;
+            }
+            catch (GlobalWriteBlockedException exception)
+            {
+                RestoreSelection(groupId, previous, hadPrevious);
+                ClearRuntimeResourceCache(groupId);
+                TryRestoreOverlay(groupId, cardOverlay: false);
+                LastError = exception.Message;
+                ModLog.Warn($"[全局写入] 本次随从切换已撤销：{groupId}。");
+                return false;
             }
             catch (Exception exception)
             {

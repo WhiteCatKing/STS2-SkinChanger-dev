@@ -1,4 +1,5 @@
 using Godot;
+using System.Runtime.CompilerServices;
 using STS2SkinChanger.Pck;
 
 namespace STS2SkinChanger.Core;
@@ -47,10 +48,11 @@ internal static class SkinChangerPaths
     {
         if (!Storage.WriteCache(path, write)) throw new OperationCanceledException("Skin Changer is quitting.");
     }
-    internal static bool LoadResourcePack(string path, bool replaceFiles)
+    internal static bool LoadResourcePack(GlobalWriteSite site, string path, bool replaceFiles,
+        [CallerMemberName] string caller = "", bool throwOnBlock = false)
     {
         Storage.PckBudget.Protect(path);
-        return ProjectSettings.LoadResourcePack(path, replaceFiles);
+        return GlobalResourceWrites.MountPack(site, path, replaceFiles, caller, throwOnBlock);
     }
     public static void Initialize() => _ = Storage;
 }

@@ -2846,7 +2846,7 @@ internal static partial class ContextualSkinControls
         if (scene != null)
         {
             TakeOverCharacterSelectSceneCache(scenePath, scene);
-            PreloadManager.Cache.SetAsset(scenePath, scene);
+            GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A22, PreloadManager.Cache, scenePath, scene);
         }
         else
         {
@@ -2911,8 +2911,8 @@ internal static partial class ContextualSkinControls
         // providers use both loading routes.  The next skin rebuild repeats this operation with
         // its own isolated scene, so the ownership follows the active selection instead of a
         // provider that happened to load first at startup.
-        scene.TakeOverPath(scenePath);
-        PreloadManager.Cache.SetAsset(scenePath, scene);
+        GlobalResourceWrites.TakeOver(GlobalWriteSite.A18, scene, scenePath);
+        GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A23, PreloadManager.Cache, scenePath, scene);
     }
 
     private static void ReplaceCharacterBackground(
@@ -3163,7 +3163,7 @@ internal static partial class ContextualSkinControls
                 SkinService.GetDisplayedSelection(sceneGroupId)) != true)
         {
             var scene = SkinService.LoadRuntimeScene(sceneGroupId, visualsPath);
-            PreloadManager.Cache.SetAsset(visualsPath, scene);
+            GlobalResourceWrites.SetPreloadAsset(GlobalWriteSite.A24, PreloadManager.Cache, visualsPath, scene);
         }
 
         // 置空选中项绕过 SelectMonster 的同项短路；SelectMonster 的 Setup 阶段会重建生物，

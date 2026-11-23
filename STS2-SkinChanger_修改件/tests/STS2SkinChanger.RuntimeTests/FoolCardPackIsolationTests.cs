@@ -225,6 +225,7 @@ internal static class FoolCardPackIsolationTests
                     "真实 fool_card_beauty.pck 经安全过滤后不得残留任何受保护的共享图集或原版卡图导入载荷。");
                 Require(filtered.Contains("res://fool_card_beauty/art/all_is_well.png"),
                     "真实 fool_card_beauty.pck 经安全过滤后应保留其私有卡图文件。");
+                GlobalWriteLedgerTests.AssertSafePack(catalog, GlobalWriteSite.A10, filtered.Path, "fool_card_beauty safe runtime");
             });
 
             var scan = CardArtPackScanner.Scan([beautyRoot, cuteRoot]);
@@ -404,6 +405,8 @@ internal static class FoolCardPackIsolationTests
             var beautyAllIsWellPath = beautyAllIsWell!.Value.ResourcePath;
             var beautyAliasOverlay = catalog.BuildIsolatedCardResources(
                 "fool", "fool_card_beauty", [beautyAllIsWellPath], useSelectedProvider: true, "fool-test/a-001");
+            GlobalWriteLedgerTests.AssertSafeGeneratedPack(catalog, GlobalWriteSite.A01,
+                beautyAliasOverlay.Files, "fool_card_beauty private");
             Require(beautyAliasOverlay.CanonicalDependencyPaths.Count == 0 &&
                     beautyAliasOverlay.Files.Keys.All(path => path.StartsWith("res://sts2_skin_runtime/", StringComparison.OrdinalIgnoreCase)) &&
                     beautyAliasOverlay.ResourcePaths[beautyAllIsWellPath]
@@ -426,6 +429,8 @@ internal static class FoolCardPackIsolationTests
             var cuteAllIsWellPath = cuteAllIsWell!.Value.ResourcePath;
             var cuteAliasOverlay = catalog.BuildIsolatedCardResources(
                 "fool", "CuteFool-Cards", [cuteAllIsWellPath], useSelectedProvider: true, "fool-test/b-001");
+            GlobalWriteLedgerTests.AssertSafeGeneratedPack(catalog, GlobalWriteSite.A01,
+                cuteAliasOverlay.Files, "CuteFool-Cards private");
             Require(cuteAliasOverlay.CanonicalDependencyPaths.Count == 0 &&
                     cuteAliasOverlay.Files.Keys.All(path => path.StartsWith("res://sts2_skin_runtime/", StringComparison.OrdinalIgnoreCase)) &&
                     cuteAliasOverlay.ResourcePaths[cuteAllIsWellPath]

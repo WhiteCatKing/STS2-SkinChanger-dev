@@ -59,17 +59,17 @@ internal static class MerchantVariantScenes
             (assembly != null && HasBlitzContract(assembly)));
         try
         {
-            return SkinService.InstantiateMerchantVariantScene(groupId, scenePath, !supported, node =>
+            return SkinService.InstantiateMerchantVariantScene(groupId, scenePath, !supported, (node, usesSkin) =>
             {
                 if (!MatchesFamily(node, blitz, fake)) throw new InvalidOperationException("皮肤商店场景类型不匹配。");
                 if (blitz) ValidateBlitzScene(node);
-                if (supported && assembly != null) ApplySkinner(assembly, node);
+                if (usesSkin && assembly != null) ApplySkinner(assembly, node);
             });
         }
         catch (Exception error)
         {
             ModLog.Warn("商店皮肤场景不可用，保留原生场景：" + error.GetBaseException().Message);
-            return SkinService.InstantiateMerchantVariantScene(groupId, scenePath, true, node =>
+            return SkinService.InstantiateMerchantVariantScene(groupId, scenePath, true, (node, _) =>
             {
                 if (!MatchesFamily(node, blitz, fake)) throw new InvalidOperationException("原生商店场景类型不匹配。");
                 if (blitz) ValidateBlitzScene(node);

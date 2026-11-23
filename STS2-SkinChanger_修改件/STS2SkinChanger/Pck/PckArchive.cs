@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -17,18 +18,28 @@ internal sealed class PckArchive : IDisposable
     private readonly FileStream _stream;
     private readonly Dictionary<string, PckEntry> _entries;
 
-    private PckArchive(string path, FileStream stream, Dictionary<string, PckEntry> entries)
+    private PckArchive(string path, FileStream stream, Dictionary<string, PckEntry> entries,
+        IReadOnlyCollection<string> removedPaths)
     {
         Path = path;
         _stream = stream;
         _entries = entries;
+        RemovedPaths = removedPaths;
     }
 
     public string Path { get; }
 
     public IReadOnlyCollection<string> Paths => _entries.Keys;
 
-    public static PckArchive Open(string path, uint maxFileCount = 2_000_000)
+    internal IReadOnlyCollection<string> RemovedPaths { get; }
+
+    public static PckArchive Open(string path, uint maxFileCount = 2_000_000) =>
+        Open(path, maxFileCount, removedPaths: null);
+
+    internal static PckArchive OpenForAudit(string path) =>
+        Open(path, 2_000_000, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+    private static PckArchive Open(string path, uint maxFileCount, HashSet<string>? removedPaths)
     {
         // 保持源包在整个游戏会话中稳定，避免 Steam Workshop 更新在切换过程中替换 PCK；
         // 同时允许其它进程删除/替换文件（我们持有的句柄继续读取旧快照）。
@@ -98,19 +109,22 @@ internal sealed class PckArchive : IDisposable
                         path,
                         fileBase,
                         fileCount,
-                        includeFileFlags: true);
+                        includeFileFlags: true,
+                        removedPaths);
                 }
                 catch (Exception exception) when (
                     exception is InvalidDataException or EndOfStreamException or OverflowException)
                 {
                     stream.Position = directoryStart;
+                    removedPaths?.Clear();
                     entries = ReadEntries(
                         reader,
                         stream,
                         path,
                         fileBase,
                         fileCount,
-                        includeFileFlags: false);
+                        includeFileFlags: false,
+                        removedPaths);
                 }
             }
             else
@@ -121,10 +135,11 @@ internal sealed class PckArchive : IDisposable
                     path,
                     fileBase,
                     fileCount,
-                    includeFileFlags: true);
+                    includeFileFlags: true,
+                    removedPaths);
             }
 
-            return new PckArchive(path, stream, entries);
+            return new PckArchive(path, stream, entries, (IReadOnlyCollection<string>?)removedPaths ?? []);
         }
         catch
         {
@@ -139,7 +154,8 @@ internal sealed class PckArchive : IDisposable
         string path,
         ulong fileBase,
         uint fileCount,
-        bool includeFileFlags)
+        bool includeFileFlags,
+        HashSet<string>? removedPaths)
     {
         var entries = new Dictionary<string, PckEntry>(checked((int)fileCount), StringComparer.OrdinalIgnoreCase);
         for (var i = 0U; i < fileCount; i++)
@@ -176,7 +192,9 @@ internal sealed class PckArchive : IDisposable
                 var fileFlags = reader.ReadUInt32();
                 if ((fileFlags & FileRemoval) != 0)
                 {
-                    entries.Remove(NormalizePath(resourcePath));
+                    var removedPath = NormalizePath(resourcePath);
+                    entries.Remove(removedPath);
+                    removedPaths?.Add(removedPath);
                     continue;
                 }
 
@@ -193,7 +211,9 @@ internal sealed class PckArchive : IDisposable
                 throw new InvalidDataException($"{path} 中的资源 {resourcePath} 超出文件范围。");
             }
 
-            entries[NormalizePath(resourcePath)] = new PckEntry(absoluteOffset, size, md5);
+            var normalizedPath = NormalizePath(resourcePath);
+            removedPaths?.Remove(normalizedPath);
+            entries[normalizedPath] = new PckEntry(absoluteOffset, size, md5);
         }
 
         return entries;
@@ -227,6 +247,33 @@ internal sealed class PckArchive : IDisposable
     public ulong GetFileSize(string resourcePath) => _entries[NormalizePath(resourcePath)].Size;
 
     public byte[] GetFileMd5(string resourcePath) => _entries[NormalizePath(resourcePath)].Md5;
+
+    internal byte[] HashFileSha256(string resourcePath)
+    {
+        var entry = _entries[NormalizePath(resourcePath)];
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
+        {
+            lock (_stream)
+            {
+                _stream.Position = checked((long)entry.Offset);
+                var remaining = entry.Size;
+                while (remaining != 0)
+                {
+                    var count = (int)Math.Min(remaining, (ulong)buffer.Length);
+                    _stream.ReadExactly(buffer.AsSpan(0, count));
+                    hash.AppendData(buffer, 0, count);
+                    remaining -= (ulong)count;
+                }
+            }
+            return hash.GetHashAndReset();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
 
     public void CopyFileTo(string resourcePath, Stream destination)
     {
@@ -264,10 +311,12 @@ internal sealed class PckArchive : IDisposable
 
     public static void WriteFromArchives(
         string outputPath,
-        IReadOnlyDictionary<string, (PckArchive Archive, string Path)> files)
+        IReadOnlyDictionary<string, (PckArchive Archive, string Path)> files,
+        IEnumerable<string>? removedPaths = null)
     {
         var orderedFiles = files
             .Select(pair => OutputEntry.FromArchive(NormalizePath(pair.Key), pair.Value.Archive, pair.Value.Path))
+            .Concat((removedPaths ?? []).Select(path => OutputEntry.Removal(NormalizePath(path))))
             .OrderBy(entry => entry.Path, StringComparer.Ordinal)
             .ToArray();
 
@@ -321,7 +370,7 @@ internal sealed class PckArchive : IDisposable
             writer.Write(checked((ulong)entry.Offset));
             writer.Write(checked((ulong)entry.Size));
             writer.Write(entry.Md5);
-            writer.Write(0U);
+            writer.Write(entry.Flags);
         }
 
         PadTo(writer, fileBase);
@@ -389,6 +438,10 @@ internal sealed class PckArchive : IDisposable
         public long Size { get; }
         public byte[] Md5 { get; }
         public long Offset { get; set; }
+        public uint Flags { get; private init; }
+
+        public static OutputEntry Removal(string path) =>
+            new(path, 0, new byte[16], [], null, null) { Flags = FileRemoval };
 
         public static OutputEntry FromBytes(string path, byte[] bytes) =>
             new(path, bytes.LongLength, MD5.HashData(bytes), bytes, null, null);

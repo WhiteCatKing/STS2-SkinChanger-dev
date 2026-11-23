@@ -2198,7 +2198,7 @@ internal static class BackgroundSkinService
                 {
                     if (File.Exists(packPath))
                     {
-                        ProjectSettings.LoadResourcePack(packPath, replaceFiles: false);
+                        GlobalResourceWrites.MountPack(GlobalWriteSite.A15, packPath, replaceFiles: false);
                     }
                 }
             }

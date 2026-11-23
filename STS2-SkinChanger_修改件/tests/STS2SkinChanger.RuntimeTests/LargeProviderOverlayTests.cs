@@ -69,7 +69,7 @@ internal static class LargeProviderOverlayTests
             void Promote(string selected)
             {
                 _selected = selected;
-                promote.Invoke(null, [catalog, affected]);
+                promote.Invoke(null, [catalog, affected, false, (Action)(() => { })]);
             }
 
             Promote("first");

@@ -56,6 +56,7 @@ internal static class CharacterSelectPortraitIsolationTests
             {
                 Require(!projected.Contains(samePayload) && projected.Contains(privateAsset),
                     "A high-priority runtime pack must filter shared vanilla import payloads and retain private files.");
+                GlobalWriteLedgerTests.AssertSafePack(catalog, GlobalWriteSite.A10, projected.Path, "select portrait projection");
             });
             Console.WriteLine("Character select portrait isolation passed: shared mounts, locked/normal aliases and runtime pack filtering.");
         }
@@ -84,9 +85,12 @@ internal static class CharacterSelectPortraitIsolationTests
             using var original = PckArchive.Open(joanPck);
             var root = Directory.CreateTempSubdirectory("sc-hibiki-real-");
             CheckProjection(catalog, joanPck, root.FullName, filtered =>
+            {
                 Require(filtered.Paths.All(path => !catalog.ProtectCanonicalSelectPortraitFile(path)) &&
                         filtered.Paths.Count < original.Paths.Count,
-                    "Real Joan runtime pack must omit base character select portraits."));
+                    "Real Joan runtime pack must omit base character select portraits.");
+                GlobalWriteLedgerTests.AssertSafePack(catalog, GlobalWriteSite.A10, filtered.Path, "Joan select runtime projection");
+            });
 
             // Resolve only the actual character's type and asset declarations. Do not run the
             // provider initializer or call into the engine from the offline package checks.

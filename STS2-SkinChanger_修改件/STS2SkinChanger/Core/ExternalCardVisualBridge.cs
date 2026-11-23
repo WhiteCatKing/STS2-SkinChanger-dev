@@ -313,7 +313,7 @@ internal static class ExternalCardVisualBridge
             // atlas crop/margins and animation. Each live view needs a unique cache path,
             // while the prefix keeps the real card identity even for numbered variants.
             var texture = CreateProviderView(source);
-            texture.ResourcePath = identity[..^4] + "_" + texture.GetInstanceId() + ".png";
+            GlobalResourceWrites.SetResourcePath(GlobalWriteSite.A31, texture, identity[..^4] + "_" + texture.GetInstanceId() + ".png");
             view = new ProviderTextureView(identity, texture);
             ProviderTextureViews.Remove(source);
             ProviderTextureViews.Add(source, view);
