@@ -61,6 +61,7 @@
 1.0.37.4 / 1.0.38 新增（2026-11-22）：
 - **正式版图鉴「切换 / 其他图鉴」入口保护**（`Core/VakuuVanillaArt.cs` 的 `VakuuVanillaArtPatch.Prepare()`）：测试版独有方法 `Vakuu.ConfigureBackgroundScene` 在正式版缺失时由 `Prepare()` 整类跳过，不能仅靠 `TargetMethods()` 空产出，否则 Harmony 抛异常导致整个 `ancient` 模块回滚、图鉴入口消失。测试：`EntryPatchIsolationTests`、`--test-vakuu-vanilla`（`VakuuVanillaArtTests`，需游戏 PCK）。
 - **UI 注入点外层异常隔离**（`Ui/UiInjectionGuard.cs`）：切换器在游戏节点生命周期（`_Ready` / `_EnterTree` / `OnSubmenuOpened`）及界面刷新钩子里注入 UI 时统一经 `UiInjectionGuard.Run` / `RunWhenInTree` 隔离，同点位仅首次记录完整堆栈、后续仅累计次数，绝不向外抛截断同链其他 Mod 回调；`CardPipelineExceptionBoundary` 与 `CombatAppearanceBoundary` 维持各自规则，不套此护栏。测试：`UiInjectionGuardTests`。
+- **提供者补丁四路径精准发现与归属守恒**（`Core/ProviderPatchIndex.cs`、`Core/ManagedSkinModLoader.cs`）：首次激活保留初始化前全量预扫与逐条归属比对（不能删预扫、不能只比总数），动态/懒加载提供者（含 `FoolWaifu` 激活与停用）及蓝图覆盖未确认完整路径保留全量发现；仅在命中完整蓝图的重复激活走「蓝图全观察目标 + 声明式 `[HarmonyPatch]` 目标 + 受管目标固定候选集」精准查询，且命中目标后仍逐条按归属筛选；泄漏校验仅核对本次实际卸载过的目标并在受管列表为空时跳过。测试：`ProviderPatchCaptureTests`（门禁 `provider-patch-capture`）。
 
 ## 改完必须做
 

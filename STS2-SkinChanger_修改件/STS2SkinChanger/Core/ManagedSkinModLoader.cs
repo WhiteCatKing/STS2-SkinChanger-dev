@@ -1145,6 +1145,15 @@ internal static class ManagedSkinModLoader
         var activationStarted = Stopwatch.GetTimestamp();
         var assemblyLoadedAt = activationStarted;
         var initializedAt = activationStarted;
+        var isolationRan = false;
+        var isolationPathLabel = string.Empty;
+        var isolationModeLabel = string.Empty;
+        var isolationScanMs = 0.0;
+        var isolationUnpatchMs = 0.0;
+        var isolationVerifyMs = 0.0;
+        var isolationScannedTargets = 0;
+        var isolationUnpatchedCount = 0;
+        var isolationVerifiedTargets = 0;
         try
         {
             assembly = GetOrLoadProviderAssembly(provider);
@@ -1197,7 +1206,7 @@ internal static class ManagedSkinModLoader
                 : [];
             var skippedInitializer = false;
             var initializerFailed = false;
-            var patchesBeforeInitializer = -1;
+            IReadOnlyList<CapturedProviderPatch>? patchesBeforeInitializer = null;
             if (initializerTypes.Length == 0)
             {
                 // A re-export loaded in its own context must run its own initializer even when the
@@ -1245,7 +1254,9 @@ internal static class ManagedSkinModLoader
                         continue;
                     }
 
-                    patchesBeforeInitializer = CaptureProviderPatches(assembly).Count;
+                    patchesBeforeInitializer = ProviderPatchIndex.CaptureFull(
+                        assembly,
+                        ProviderPatchCapturePath.FirstActivation).RawEntries;
                     try
                     {
                         method.Invoke(null, null);
@@ -1288,7 +1299,14 @@ internal static class ManagedSkinModLoader
                     // skip path installs, unless the initializer had already patched the assembly
                     // before it failed - a second PatchAll would run those callbacks twice.
                     EnsureProviderGodotScripts(providerId);
-                    if (CaptureProviderPatches(assembly).Count == patchesBeforeInitializer)
+                    var postFailureEntries = ProviderPatchIndex.CaptureFull(
+                        assembly,
+                        ProviderPatchCapturePath.InitializerFailure).RawEntries;
+                    var installedBeforeFailure = patchesBeforeInitializer != null &&
+                        ProviderPatchIndex.DidInitializerInstallPatches(
+                            patchesBeforeInitializer,
+                            postFailureEntries);
+                    if (!installedBeforeFailure)
                     {
                         PatchAllTolerant(
                             new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}"),
@@ -1323,7 +1341,11 @@ internal static class ManagedSkinModLoader
                     // all - the node then stays at the vanilla transform and looks like a vanilla
                     // merchant. Re-install tolerantly only when nothing is currently applied.
                     if (providerId.Contains("Merchant", StringComparison.OrdinalIgnoreCase) &&
-                        CaptureProviderPatches(assembly).Count == 0)
+                        ProviderPatchIndex.CaptureForActivation(
+                            assembly,
+                            skippedInitializer: true,
+                            hasProviderBlueprint: ProviderRuntimeBlueprints.ContainsKey(providerId),
+                            isAdoptedGameAssembly: AdoptedGameAssemblies.Contains(assembly)).DistinctPatches.Count == 0)
                     {
                         PatchAllTolerant(
                             new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}"),
@@ -1339,7 +1361,28 @@ internal static class ManagedSkinModLoader
             FrameworkCompatibilityLayer.NotifyProviderActivated(assembly);
             initializedAt = Stopwatch.GetTimestamp();
 
-            var installedPatches = CaptureProviderPatches(assembly);
+            var hasProviderBlueprint = ProviderRuntimeBlueprints.TryGetValue(providerId, out var existingBlueprint);
+            var scanStarted = Stopwatch.GetTimestamp();
+            var discovery = initializerFailed
+                ? ProviderPatchIndex.CaptureFull(assembly, ProviderPatchCapturePath.InitializerFailure)
+                : ProviderPatchIndex.CaptureForActivation(
+                    assembly,
+                    skippedInitializer,
+                    hasProviderBlueprint,
+                    AdoptedGameAssemblies.Contains(assembly),
+                    existingBlueprint == null
+                        ? null
+                        : existingBlueprint.BehaviorPatches
+                            .Concat(existingBlueprint.CharacterPresentationPatches)
+                            .Concat(existingBlueprint.NodeReadyPresentationPatches)
+                            .Select(patch => patch.Target));
+            isolationScanMs = Stopwatch.GetElapsedTime(scanStarted).TotalMilliseconds;
+            isolationScannedTargets = discovery.ScannedTargetCount;
+            isolationPathLabel = discovery.PathLabel;
+            isolationModeLabel = discovery.ModeLabel;
+            isolationRan = true;
+
+            var installedPatches = ToProviderPatches(discovery.DistinctPatches);
             // Keep the complete set of node-ready presentation callbacks.  Existing nodes still
             // replay only postfixes (see ReplaySelectedNodeReadyBehavior), while freshly created
             // visual nodes may safely replay their visual prefixes as well.  Merchant skins such
@@ -1406,24 +1449,48 @@ internal static class ManagedSkinModLoader
                 }
             }
 
-            var isRunWideMonsterProvider =                ScopedMonsterProviderAssemblies.TryGetValue(assembly, out var scopedProviderId) &&
+            var isRunWideMonsterProvider =
+                ScopedMonsterProviderAssemblies.TryGetValue(assembly, out var scopedProviderId) &&
                 scopedProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase);
             var runEnvironmentPatches = isRunWideMonsterProvider
                 ? behaviorPatches.Where(IsRunEnvironmentPatch).ToArray()
                 : [];
-            UnpatchProviderCallbacks(managedPatches);
-            if (!runEnvironmentEnabled)
-            {
-                UnpatchProviderCallbacks(runEnvironmentPatches);
-            }
+            // Only unpatch run-environment patches that are actually installed in this activation
+            // (repeat blueprint activation already skipped installing them when disabled).
+            var runEnvironmentPatchesToUnpatch = isRunWideMonsterProvider && !runEnvironmentEnabled
+                ? installedPatches.Where(patch => !IsManaged(patch) && IsRunEnvironmentPatch(patch)).ToArray()
+                : [];
 
-            var leakedManagedPatches = CaptureProviderPatches(assembly)
-                .Where(IsManaged)
-                .ToArray();
-            if (leakedManagedPatches.Length > 0)
+            var unpatchStarted = Stopwatch.GetTimestamp();
+            UnpatchProviderCallbacks(managedPatches);
+            if (runEnvironmentPatchesToUnpatch.Length > 0)
             {
-                throw new InvalidOperationException(
-                    $"仍有 {leakedManagedPatches.Length} 个资源/选角呈现补丁未能隔离");
+                UnpatchProviderCallbacks(runEnvironmentPatchesToUnpatch);
+            }
+            isolationUnpatchMs = Stopwatch.GetElapsedTime(unpatchStarted).TotalMilliseconds;
+            isolationUnpatchedCount = managedPatches.Length + runEnvironmentPatchesToUnpatch.Length;
+
+            if (managedPatches.Length > 0)
+            {
+                var verifyStarted = Stopwatch.GetTimestamp();
+                var unpatchedManagedTargets = managedPatches
+                    .Select(patch => patch.Target)
+                    .Distinct()
+                    .ToArray();
+                var verifyCapture = ProviderPatchIndex.CaptureOnTargets(
+                    assembly,
+                    unpatchedManagedTargets,
+                    ProviderPatchCapturePath.LeakVerification);
+                isolationVerifyMs = Stopwatch.GetElapsedTime(verifyStarted).TotalMilliseconds;
+                isolationVerifiedTargets = verifyCapture.ScannedTargetCount;
+                var leakedManagedPatches = ToProviderPatches(verifyCapture.DistinctPatches)
+                    .Where(IsManaged)
+                    .ToArray();
+                if (leakedManagedPatches.Length > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"仍有 {leakedManagedPatches.Length} 个资源/选角呈现补丁未能隔离");
+                }
             }
 
             if (isRunWideMonsterProvider)
@@ -1451,6 +1518,20 @@ internal static class ManagedSkinModLoader
                 presentationPatches = restoredBlueprint.CharacterPresentationPatches.ToArray();
                 nodeReadyPresentationPatches = restoredBlueprint.NodeReadyPresentationPatches.ToArray();
             }
+
+            // Record every observed target for this assembly (behavior + managed + presentation +
+            // resolved declarative [HarmonyPatch] targets) so verified repeat activations can use
+            // targeted lookup instead of full-process Harmony deserialization.
+            var allObservedTargets = installedPatches
+                .Concat(behaviorPatches)
+                .Concat(presentationPatches)
+                .Concat(nodeReadyPresentationPatches)
+                .Select(patch => patch.Target);
+            ProviderPatchIndex.RecordBlueprintTargets(
+                assembly,
+                allObservedTargets,
+                markCoverageComplete: discovery.Mode == ProviderPatchCaptureMode.Full && !initializerFailed);
+
             ActiveProviderRuntimes[providerId] = new ActiveProviderRuntime(
                 assembly,
                 behaviorPatches,
@@ -1474,7 +1555,9 @@ internal static class ManagedSkinModLoader
         {
             if (assembly != null)
             {
-                UnpatchProviderCallbacks(CaptureProviderPatches(assembly));
+                ProviderPatchIndex.TryGetRegistry(assembly, out var failedRegistry);
+                failedRegistry?.InvalidateCoverage();
+                UnpatchProviderCallbacks(CaptureProviderPatches(assembly, ProviderPatchCapturePath.InitializerFailure));
             }
 
             ModLog.Warn(
@@ -1497,7 +1580,26 @@ internal static class ManagedSkinModLoader
                 }
             }
 
-            var totalElapsed = Stopwatch.GetElapsedTime(activationStarted);
+            var finishedAt = Stopwatch.GetTimestamp();
+            var totalElapsed = Stopwatch.GetElapsedTime(activationStarted, finishedAt);
+            var isolationElapsed = Stopwatch.GetElapsedTime(initializedAt, finishedAt);
+            if (PerfTrace.Enabled && isolationRan)
+            {
+                var isoLine =
+                    $"[性能] 皮肤代码隔离({provider.Name}) = {isolationElapsed.TotalMilliseconds:F1} ms；" +
+                    $"路径={isolationPathLabel}，模式={isolationModeLabel}，" +
+                    $"扫描={isolationScanMs:F1}ms，卸载={isolationUnpatchMs:F1}ms，校验={isolationVerifyMs:F1}ms，" +
+                    $"扫描目标={isolationScannedTargets}，卸载数={isolationUnpatchedCount}，校验数={isolationVerifiedTargets}";
+                if (isolationElapsed.TotalMilliseconds >= PerfTrace.WarnMilliseconds)
+                {
+                    ModLog.Warn(isoLine);
+                }
+                else
+                {
+                    ModLog.Info(isoLine);
+                }
+            }
+
             if (totalElapsed >= TimeSpan.FromMilliseconds(50))
             {
                 var assemblyElapsed = Stopwatch.GetElapsedTime(
@@ -1506,15 +1608,17 @@ internal static class ManagedSkinModLoader
                 var initializerElapsed = Stopwatch.GetElapsedTime(
                     assemblyLoadedAt,
                     initializedAt);
-                var isolationElapsed = Stopwatch.GetElapsedTime(
-                    initializedAt,
-                    Stopwatch.GetTimestamp());
                 ModLog.Info(
                     $"{provider.Name} 皮肤代码激活耗时：" +
                     $"程序集={assemblyElapsed.TotalMilliseconds:F1} ms，" +
                     $"初始化={initializerElapsed.TotalMilliseconds:F1} ms，" +
                     $"隔离={isolationElapsed.TotalMilliseconds:F1} ms，" +
-                    $"总计={totalElapsed.TotalMilliseconds:F1} ms。");
+                    $"总计={totalElapsed.TotalMilliseconds:F1} ms" +
+                    (isolationRan
+                        ? $"，路径={isolationPathLabel}，模式={isolationModeLabel}，" +
+                          $"扫描={isolationScanMs:F1}ms，卸载={isolationUnpatchMs:F1}ms，校验={isolationVerifyMs:F1}ms，" +
+                          $"扫描目标={isolationScannedTargets}，卸载数={isolationUnpatchedCount}，校验数={isolationVerifiedTargets}。"
+                        : "。"));
             }
         }
     }
@@ -1576,8 +1680,8 @@ internal static class ManagedSkinModLoader
         }
 
         // The author can restore callbacks during a selected run after our activation snapshot.
-        // Include only that provider's known identity callbacks; its independent settings stay put.
-        var restoredIcons = CaptureProviderPatches(assembly)
+        // Keep full discovery on deactivation for dynamic providers such as FoolWaifu.
+        var restoredIcons = CaptureProviderPatches(assembly, ProviderPatchCapturePath.DeactivationFallback)
             .Where(patch => FoolWaifuRuntimeCompat.IsIdentityCallback(patch.Callback));
         UnpatchProviderCallbacks(patches.Concat(restoredIcons)
             .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind)).ToArray());
@@ -1683,43 +1787,37 @@ internal static class ManagedSkinModLoader
         }
     }
 
-    private static IReadOnlyList<ProviderPatch> CaptureProviderPatches(Assembly assembly) =>
+    private static IReadOnlyList<ProviderPatch> CaptureProviderPatches(
+        Assembly assembly,
+        ProviderPatchCapturePath path = ProviderPatchCapturePath.FirstActivation) =>
         // 游戏自己加载并自己打过补丁的程序集：这些补丁不归我们管，既不算“我们的补丁”，
         // 也绝不在切换皮肤时被 UnpatchProviderCallbacks 卸掉。
         AdoptedGameAssemblies.Contains(assembly)
             ? Array.Empty<ProviderPatch>()
-            : Harmony.GetAllPatchedMethods()
-                .SelectMany(target => EnumerateProviderPatches(target, Harmony.GetPatchInfo(target), assembly))
-                .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind))
-                .ToArray();
+            : ToProviderPatches(ProviderPatchIndex.CaptureFull(assembly, path).DistinctPatches);
 
-    private static IEnumerable<ProviderPatch> EnumerateProviderPatches(
-        MethodBase target,
-        Patches? patches,
-        Assembly assembly)
+    private static ProviderPatch[] ToProviderPatches(IReadOnlyList<CapturedProviderPatch> captured)
     {
-        if (patches == null)
+        if (captured.Count == 0)
         {
-            yield break;
+            return [];
         }
 
-        foreach (var entry in patches.Prefixes.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Prefix))
-                     .Concat(patches.Postfixes.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Postfix)))
-                     .Concat(patches.Transpilers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Transpiler)))
-                     .Concat(patches.Finalizers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Finalizer))))
+        var result = new ProviderPatch[captured.Count];
+        for (var i = 0; i < captured.Count; i++)
         {
-            if (ReferenceEquals(entry.Patch.PatchMethod.Module.Assembly, assembly))
-            {
-                yield return new ProviderPatch(
-                    target,
-                    entry.Patch.PatchMethod,
-                    entry.Kind,
-                    entry.Patch.priority,
-                    entry.Patch.before,
-                    entry.Patch.after,
-                    entry.Patch.debug);
-            }
+            var entry = captured[i];
+            result[i] = new ProviderPatch(
+                entry.Target,
+                entry.Callback,
+                (ProviderPatchKind)entry.Kind,
+                entry.Priority,
+                entry.Before,
+                entry.After,
+                entry.Debug);
         }
+
+        return result;
     }
 
     /// <summary>

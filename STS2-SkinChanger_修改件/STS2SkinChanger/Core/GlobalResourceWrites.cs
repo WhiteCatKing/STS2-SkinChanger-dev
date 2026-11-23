@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Godot;
 using HarmonyLib;
@@ -59,6 +60,16 @@ internal static class GlobalResourceWrites
     private static long _violations;
     private static long _incomplete;
     private static int _summarized;
+
+    [ThreadStatic]
+    private static PackAuditPerfScope? _activePackAuditPerf;
+
+    internal static PackAuditPerfScope BeginPackAuditPerfScope()
+    {
+        var scope = new PackAuditPerfScope(_activePackAuditPerf);
+        _activePackAuditPerf = scope;
+        return scope;
+    }
 
     internal static bool MountPack(GlobalWriteSite site, string path, bool replaceFiles,
         [CallerMemberName] string caller = "", bool throwOnBlock = false) =>
@@ -282,6 +293,7 @@ internal static class GlobalResourceWrites
 
     private static Observation ObservePack(string path, bool replaceFiles, GlobalWriteProtection? protection)
     {
+        var perf = _activePackAuditPerf;
         var file = new FileInfo(path);
         var key = new PackKey(file.FullName, file.Length, file.LastWriteTimeUtc.Ticks, replaceFiles);
         lock (Sync)
@@ -290,24 +302,54 @@ internal static class GlobalResourceWrites
             {
                 PackObservations.Clear();
                 _cachedProtection = protection;
+                if (perf != null) perf.CacheResets++;
             }
-            if (PackObservations.TryGetValue(key, out var cached)) return cached;
+            if (PackObservations.TryGetValue(key, out var cached))
+            {
+                if (perf != null)
+                {
+                    perf.Calls++;
+                    perf.CacheHits++;
+                    perf.TotalFiles += cached.ArchiveEntries;
+                    perf.LastCacheSize = PackObservations.Count;
+                }
+                return cached;
+            }
         }
 
+        var openStarted = perf != null ? Stopwatch.GetTimestamp() : 0;
         using var archive = PckArchive.OpenForAudit(path);
+        if (perf != null) perf.OpenElapsed += Stopwatch.GetElapsedTime(openStarted);
+
+        var observeStarted = perf != null ? Stopwatch.GetTimestamp() : 0;
         var removals = archive.RemovedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var archiveEntries = archive.Paths.Count + removals.Count;
         var observation = Observe(archive.Paths.Concat(removals).Distinct(StringComparer.OrdinalIgnoreCase), protection,
             replaceFiles ? GlobalWriteKind.PackReplace : GlobalWriteKind.PackFill,
             isOriginal: (source, canonical) => protection?.MatchesGameEntry(archive, source, canonical) == true,
-            removals: removals);
+            removals: removals) with
+        {
+            ArchiveEntries = archiveEntries
+        };
+        if (perf != null) perf.ObserveElapsed += Stopwatch.GetElapsedTime(observeStarted);
 
         lock (Sync)
         {
             if (ReferenceEquals(protection, _cachedProtection) && !PackObservations.ContainsKey(key))
             {
                 if (PackObservations.Count == PackCacheLimit)
+                {
                     PackObservations.Remove(PackObservations.Keys.First());
+                    if (perf != null) perf.CacheEvictions++;
+                }
                 PackObservations.Add(key, observation);
+            }
+            if (perf != null)
+            {
+                perf.Calls++;
+                perf.CacheMisses++;
+                perf.TotalFiles += archiveEntries;
+                perf.LastCacheSize = PackObservations.Count;
             }
         }
         return observation;
@@ -410,10 +452,39 @@ internal static class GlobalResourceWrites
 
     private sealed record Observation(string[] Paths, int Count, string[] OriginalPaths, int OriginalCount,
         (string Path, ForbiddenGlobalWrite Rule)[] ForbiddenPaths, int ForbiddenCount,
-        (string Path, ForbiddenGlobalWrite Rule)? FirstBlock, bool Incomplete, string? ReadError = null)
+        (string Path, ForbiddenGlobalWrite Rule)? FirstBlock, bool Incomplete, string? ReadError = null,
+        int ArchiveEntries = 0)
     {
         internal bool Blocked => FirstBlock.HasValue;
         internal static readonly Observation Unknown = new([], 0, [], 0, [], 0, null, true);
+    }
+
+    internal sealed class PackAuditPerfScope : IDisposable
+    {
+        private readonly PackAuditPerfScope? _previous;
+        private bool _disposed;
+
+        internal PackAuditPerfScope(PackAuditPerfScope? previous)
+        {
+            _previous = previous;
+        }
+
+        internal int Calls { get; set; }
+        internal int CacheHits { get; set; }
+        internal int CacheMisses { get; set; }
+        internal int CacheResets { get; set; }
+        internal int CacheEvictions { get; set; }
+        internal int LastCacheSize { get; set; }
+        internal int TotalFiles { get; set; }
+        internal TimeSpan OpenElapsed { get; set; }
+        internal TimeSpan ObserveElapsed { get; set; }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _activePackAuditPerf = _previous;
+        }
     }
 }
 

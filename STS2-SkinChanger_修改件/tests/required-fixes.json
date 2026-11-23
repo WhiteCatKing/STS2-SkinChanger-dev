@@ -444,5 +444,19 @@
       { "suite": "Runtime", "name": "GlobalWriteFallbackTests", "args": "--test-global-write-fallback" },
       { "suite": "Runtime", "name": "GlobalWritePackAudit", "args": "--audit-global-write-packs", "requiresExternalPack": true }
     ]
+  },
+  {
+    "id": "provider-patch-capture",
+    "title": "提供者补丁按四路径精准/全量发现与隔离计时：首次/动态/失败保留全量及初始化前归属预扫，重复激活走蓝图与受管目标精准查询，泄漏校验仅查已卸载目标",
+    "since": "switch-ab",
+    "symbols": [
+      "ProviderPatchIndex.CaptureForActivation",
+      "ProviderPatchIndex.CaptureFull",
+      "ProviderPatchIndex.CaptureOnTargets",
+      "ProviderPatchIndex.DidInitializerInstallPatches"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "ProviderPatchCaptureTests", "args": "" }
+    ]
   }
 ]

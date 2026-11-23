@@ -6933,7 +6933,18 @@ internal static partial class SkinService
 
         var largeProviderMountPlan = MountSelectedLargeRuntimeProviderPacks(catalog, groups, skipBlockedProviders, () =>
         {
+            var preflight = _lastLargeProviderPreflightPerf;
+            _lastLargeProviderPreflightPerf = null;
+            Mark("提权包预检");
+            var refreshSkippedStarted = Stopwatch.GetTimestamp();
+            var skippedBeforeRefresh = skippedCount;
             RefreshSkippedProviders();
+            var refreshSkippedMs = Stopwatch.GetElapsedTime(refreshSkippedStarted).TotalMilliseconds;
+            var refreshSkippedRan = skippedBeforeRefresh != skippedCount;
+            if (preflight != null)
+            {
+                ReportLargeProviderPreflightPerf(preflight, refreshSkippedMs, refreshSkippedRan);
+            }
             ManagedSkinModLoader.ActivateSelectedProviders(
                 activeRuntimeProviders.Where(FrameworkRegistryCooperation.IsNativeProvider));
             Mark("激活原生提供者");
@@ -7392,8 +7403,19 @@ internal static partial class SkinService
         return output;
     }
 
-    private static string PrepareHighPriorityProviderPack(SkinCatalog catalog, GlobalWriteSite site, string source)
+    [ThreadStatic]
+    private static HighPriorityPackPreparePerf? _activeHighPriorityPackPreparePerf;
+
+    [ThreadStatic]
+    private static LargeProviderPreflightPerf? _lastLargeProviderPreflightPerf;
+
+    private static string PrepareHighPriorityProviderPack(
+        SkinCatalog catalog,
+        GlobalWriteSite site,
+        string source)
     {
+        var perf = _activeHighPriorityPackPreparePerf;
+        var openStarted = perf != null ? Stopwatch.GetTimestamp() : 0;
         PckArchive archive;
         try
         {
@@ -7401,12 +7423,34 @@ internal static partial class SkinService
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or OverflowException)
         {
+            if (perf != null)
+            {
+                perf.OpenElapsed += Stopwatch.GetElapsedTime(openStarted);
+                perf.ReadErrorPacks++;
+            }
             GlobalResourceWrites.CheckMount(site, source, replaceFiles: true);
             throw;
         }
+        if (perf != null)
+        {
+            perf.OpenElapsed += Stopwatch.GetElapsedTime(openStarted);
+            perf.PackCount++;
+            perf.TotalFiles += archive.Paths.Count + archive.RemovedPaths.Count;
+        }
         using var sourceArchive = archive;
+        var inspectStarted = perf != null ? Stopwatch.GetTimestamp() : 0;
         var projection = GlobalResourceWrites.InspectHighPriorityPack(archive, catalog.GlobalWriteProtection);
-        if (projection.Stripped.Count == 0) return source;
+        if (perf != null)
+        {
+            perf.InspectElapsed += Stopwatch.GetElapsedTime(inspectStarted);
+            perf.StrippedFiles += projection.Stripped.Count;
+            perf.OriginalVerifiedFiles += projection.OriginalCount;
+        }
+        if (projection.Stripped.Count == 0)
+        {
+            if (perf != null) perf.CleanPacks++;
+            return source;
+        }
 
         var info = new FileInfo(source);
         var fingerprint = source + "\n" + info.Length + "\n" + info.LastWriteTimeUtc.Ticks + "\n" +
@@ -7415,6 +7459,7 @@ internal static partial class SkinService
         var output = System.IO.Path.Combine(SkinChangerPaths.CacheDirectory, $"global_safe_{key}.pck");
         if (!File.Exists(output))
         {
+            var writeStarted = perf != null ? Stopwatch.GetTimestamp() : 0;
             var files = archive.Paths.Where(path => !projection.Stripped.ContainsKey(path))
                 .ToDictionary(path => path, path => (archive, path), StringComparer.OrdinalIgnoreCase);
             var removals = archive.RemovedPaths.Where(path => !projection.Stripped.ContainsKey(path));
@@ -7427,8 +7472,19 @@ internal static partial class SkinService
                     throw;
                 }
             });
+            if (perf != null)
+            {
+                perf.WriteElapsed += Stopwatch.GetElapsedTime(writeStarted);
+                perf.SafePackCacheWrites++;
+            }
         }
+        else if (perf != null)
+        {
+            perf.SafePackCacheHits++;
+        }
+        var recordStarted = perf != null ? Stopwatch.GetTimestamp() : 0;
         GlobalResourceWrites.RecordStripped(site, source, projection.Stripped.Keys.ToArray());
+        if (perf != null) perf.RecordElapsed += Stopwatch.GetElapsedTime(recordStarted);
         return output;
     }
 
@@ -7522,6 +7578,8 @@ internal static partial class SkinService
         bool skipBlockedProviders,
         Action beforeMount)
     {
+        var preflightStarted = Stopwatch.GetTimestamp();
+        var selectStarted = preflightStarted;
         var selectedOptions = catalog.Groups
             .Select(group =>
             {
@@ -7575,32 +7633,81 @@ internal static partial class SkinService
             .Where(pack => affectedGroups.Contains(pack.GroupId))
             .Select(pack => pack.Path)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectElapsed = Stopwatch.GetElapsedTime(selectStarted);
 
         var preparedPromotions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        // Check the entire promotion plan before mounting any high-priority pack. One rejected
-        // member must not leave half a provider's packs on the permanent Godot stack.
-        foreach (var packPath in selectedPackPaths)
+        var preparePerf = PerfTrace.Enabled ? new HighPriorityPackPreparePerf() : null;
+        var prepareTotalElapsed = TimeSpan.Zero;
+        var checkMountTotalElapsed = TimeSpan.Zero;
+        var alreadyMountedSkipped = 0;
+        var skippedOwnerSkipped = 0;
+        var blockedCount = 0;
+        var checkedPackNames = new List<string>();
+        GlobalResourceWrites.PackAuditPerfScope? auditPerf = null;
+        if (PerfTrace.Enabled)
         {
-            if (companionOnlyPackPaths.Contains(packPath) ||
-                (MountedLargeRuntimeProviderPacks.ContainsKey(packPath) && !promotedPackPaths.Contains(packPath)))
-                continue;
-
-            var owners = directProviderPacks.Where(pack => pack.Path.Equals(packPath, StringComparison.OrdinalIgnoreCase))
-                .Select(pack => pack.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            if (owners.All(SkippedRuntimeProviders.ContainsKey)) continue;
-
-            try
+            auditPerf = GlobalResourceWrites.BeginPackAuditPerfScope();
+        }
+        try
+        {
+            // Check the entire promotion plan before mounting any high-priority pack. One rejected
+            // member must not leave half a provider's packs on the permanent Godot stack.
+            foreach (var packPath in selectedPackPaths)
             {
-                var prepared = PrepareHighPriorityProviderPack(catalog, GlobalWriteSite.A10, packPath);
-                GlobalResourceWrites.CheckMount(GlobalWriteSite.A10, prepared, replaceFiles: true);
-                preparedPromotions.Add(packPath, prepared);
-            }
-            catch (GlobalWriteBlockedException exception) when (skipBlockedProviders)
-            {
-                foreach (var providerId in owners) SkipRuntimeProvider(providerId, exception);
+                if (companionOnlyPackPaths.Contains(packPath))
+                {
+                    continue;
+                }
+                if (MountedLargeRuntimeProviderPacks.ContainsKey(packPath) && !promotedPackPaths.Contains(packPath))
+                {
+                    alreadyMountedSkipped++;
+                    continue;
+                }
+
+                var owners = directProviderPacks.Where(pack => pack.Path.Equals(packPath, StringComparison.OrdinalIgnoreCase))
+                    .Select(pack => pack.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                if (owners.All(SkippedRuntimeProviders.ContainsKey))
+                {
+                    skippedOwnerSkipped++;
+                    continue;
+                }
+
+                checkedPackNames.Add(System.IO.Path.GetFileName(packPath));
+                try
+                {
+                    var previousPreparePerf = _activeHighPriorityPackPreparePerf;
+                    _activeHighPriorityPackPreparePerf = preparePerf;
+                    string prepared;
+                    var prepareStarted = Stopwatch.GetTimestamp();
+                    try
+                    {
+                        prepared = PrepareHighPriorityProviderPack(catalog, GlobalWriteSite.A10, packPath);
+                    }
+                    finally
+                    {
+                        prepareTotalElapsed += Stopwatch.GetElapsedTime(prepareStarted);
+                        _activeHighPriorityPackPreparePerf = previousPreparePerf;
+                    }
+
+                    var checkStarted = Stopwatch.GetTimestamp();
+                    GlobalResourceWrites.CheckMount(GlobalWriteSite.A10, prepared, replaceFiles: true);
+                    checkMountTotalElapsed += Stopwatch.GetElapsedTime(checkStarted);
+
+                    preparedPromotions.Add(packPath, prepared);
+                }
+                catch (GlobalWriteBlockedException exception) when (skipBlockedProviders)
+                {
+                    blockedCount++;
+                    foreach (var providerId in owners) SkipRuntimeProvider(providerId, exception);
+                }
             }
         }
+        finally
+        {
+            auditPerf?.Dispose();
+        }
 
+        var skipFilterStarted = Stopwatch.GetTimestamp();
         if (SkippedRuntimeProviders.Count != 0)
         {
             directProviderPacks = directProviderPacks.Where(pack => !SkippedRuntimeProviders.ContainsKey(pack.ProviderId)).ToArray();
@@ -7608,7 +7715,35 @@ internal static partial class SkinService
             companionOnlyPackPaths = CompanionOnlyPaths();
             promotedPackPaths.IntersectWith(selectedPackPaths);
         }
-        beforeMount();
+        var skipFilterElapsed = Stopwatch.GetElapsedTime(skipFilterStarted);
+        var preflightTotalElapsed = Stopwatch.GetElapsedTime(preflightStarted);
+
+        var preflightPerf = new LargeProviderPreflightPerf(
+            preflightTotalElapsed,
+            selectElapsed,
+            selectedPackPaths.Length,
+            promotedPackPaths.Count,
+            companionOnlyPackPaths.Count,
+            alreadyMountedSkipped,
+            skippedOwnerSkipped,
+            checkedPackNames.Count,
+            blockedCount,
+            prepareTotalElapsed,
+            preparePerf,
+            checkMountTotalElapsed,
+            auditPerf,
+            skipFilterElapsed,
+            checkedPackNames);
+        var previousPreflight = _lastLargeProviderPreflightPerf;
+        _lastLargeProviderPreflightPerf = preflightPerf;
+        try
+        {
+            beforeMount();
+        }
+        finally
+        {
+            _lastLargeProviderPreflightPerf = previousPreflight;
+        }
 
         foreach (var packPath in selectedPackPaths)
         {
@@ -7882,7 +8017,8 @@ internal static partial class SkinService
 
         // A deselection can mount no language files at all. It still changes which provider
         // tables the game is allowed to merge, so never skip this check for an empty file delta.
-        var signature = BuildActiveLocalizationSignature();
+        var snapshot = BuildActiveLocalizationSnapshot();
+        var signature = snapshot.Signature;
 
         try
         {
@@ -7910,18 +8046,24 @@ internal static partial class SkinService
             if (LocalizationStateCache.TryGetValue(cacheKey, out var cached) &&
                 SetLanguageInternalMethod != null)
             {
+                var stepStarted = Stopwatch.GetTimestamp();
                 SetLanguageInternalMethod.Invoke(
                     manager,
                     [language, cached.Tables, cached.OverridesActive, cached.ValidationErrors.ToList()]);
+                var stepMs = Stopwatch.GetElapsedTime(stepStarted).TotalMilliseconds;
                 _mountedLocalizationSignature = signature;
                 ModLog.Info($"已复用 {language} 本地化状态缓存。");
+                ReportLocalizationPerf(language, "缓存复用", stepMs, snapshot);
                 return;
             }
 
+            var reloadStarted = Stopwatch.GetTimestamp();
             manager.SetLanguage(language);
+            var reloadMs = Stopwatch.GetElapsedTime(reloadStarted).TotalMilliseconds;
             _mountedLocalizationSignature = signature;
             CaptureLocalizationState(manager, signature, language);
             ModLog.Info($"已刷新 {language} 本地化缓存。");
+            ReportLocalizationPerf(language, "整套重载", reloadMs, snapshot);
         }
         catch (Exception exception)
         {
@@ -7930,12 +8072,124 @@ internal static partial class SkinService
         }
     }
 
-    private static string BuildActiveLocalizationSignature()
+    private static void ReportLargeProviderPreflightPerf(
+        LargeProviderPreflightPerf preflight,
+        double refreshSkippedMs,
+        bool refreshSkippedRan)
+    {
+        if (!PerfTrace.Enabled)
+        {
+            return;
+        }
+
+        var prep = preflight.PreparePerf;
+        var audit = preflight.AuditPerf;
+        var prepText = prep == null
+            ? $"安全过滤={preflight.PrepareTotalElapsed.TotalMilliseconds:F1}ms(包={preflight.CheckedPackCount})"
+            : $"安全过滤={preflight.PrepareTotalElapsed.TotalMilliseconds:F1}ms(" +
+              $"包={prep.PackCount}/免滤={prep.CleanPacks}/开包={prep.OpenElapsed.TotalMilliseconds:F1}ms/" +
+              $"扫描={prep.InspectElapsed.TotalMilliseconds:F1}ms/写包={prep.WriteElapsed.TotalMilliseconds:F1}ms/" +
+              $"记账={prep.RecordElapsed.TotalMilliseconds:F1}ms/文件={prep.TotalFiles}/" +
+              $"原版校验={prep.OriginalVerifiedFiles}/剔除={prep.StrippedFiles}/" +
+              $"缓存命中={prep.SafePackCacheHits}/新写={prep.SafePackCacheWrites})";
+        var checkText = audit == null
+            ? $"CheckMount={preflight.CheckMountTotalElapsed.TotalMilliseconds:F1}ms"
+            : $"CheckMount={preflight.CheckMountTotalElapsed.TotalMilliseconds:F1}ms(" +
+              $"次={audit.Calls}/命中={audit.CacheHits}/未命中={audit.CacheMisses}/" +
+              $"驱逐={audit.CacheEvictions}/重置={audit.CacheResets}/缓存数={audit.LastCacheSize}/" +
+              $"开包={audit.OpenElapsed.TotalMilliseconds:F1}ms/审计={audit.ObserveElapsed.TotalMilliseconds:F1}ms/" +
+              $"文件={audit.TotalFiles})";
+        var checkedNames = preflight.CheckedPackNames.Count == 0
+            ? "无"
+            : preflight.CheckedPackNames.Count <= 4
+                ? string.Join(",", preflight.CheckedPackNames)
+                : string.Join(",", preflight.CheckedPackNames.Take(4)) + $"+{preflight.CheckedPackNames.Count - 4}";
+        var totalMs = preflight.TotalElapsed.TotalMilliseconds;
+        var line =
+            $"[性能] 提权包预检明细 = {totalMs:F1} ms；" +
+            $"选包={preflight.SelectElapsed.TotalMilliseconds:F1}ms(" +
+            $"选中包={preflight.SelectedPackCount}/拟提权={preflight.PromotedPackCount}/" +
+            $"仅随从={preflight.CompanionOnlyPackCount}/已挂跳过={preflight.AlreadyMountedSkipped}/" +
+            $"已略跳过={preflight.SkippedOwnerSkipped}/待检={preflight.CheckedPackCount}/拦截={preflight.BlockedCount})，" +
+            $"{prepText}，{checkText}，" +
+            $"跳过重筛={preflight.SkipFilterElapsed.TotalMilliseconds:F1}ms，" +
+            $"刷新跳过={refreshSkippedMs:F1}ms(执行={(refreshSkippedRan ? 1 : 0)})，" +
+            $"受检包={checkedNames}";
+        if (totalMs >= PerfTrace.WarnMilliseconds)
+        {
+            ModLog.Warn(line);
+        }
+        else
+        {
+            ModLog.Info(line);
+        }
+    }
+
+    private sealed class HighPriorityPackPreparePerf
+    {
+        internal int PackCount;
+        internal int CleanPacks;
+        internal int ReadErrorPacks;
+        internal int TotalFiles;
+        internal int StrippedFiles;
+        internal int OriginalVerifiedFiles;
+        internal int SafePackCacheHits;
+        internal int SafePackCacheWrites;
+        internal TimeSpan OpenElapsed;
+        internal TimeSpan InspectElapsed;
+        internal TimeSpan WriteElapsed;
+        internal TimeSpan RecordElapsed;
+    }
+
+    private sealed record LargeProviderPreflightPerf(
+        TimeSpan TotalElapsed,
+        TimeSpan SelectElapsed,
+        int SelectedPackCount,
+        int PromotedPackCount,
+        int CompanionOnlyPackCount,
+        int AlreadyMountedSkipped,
+        int SkippedOwnerSkipped,
+        int CheckedPackCount,
+        int BlockedCount,
+        TimeSpan PrepareTotalElapsed,
+        HighPriorityPackPreparePerf? PreparePerf,
+        TimeSpan CheckMountTotalElapsed,
+        GlobalResourceWrites.PackAuditPerfScope? AuditPerf,
+        TimeSpan SkipFilterElapsed,
+        IReadOnlyList<string> CheckedPackNames);
+
+    // Times only our own call into the game's language switch. The game's internals (SetLocale,
+    // subscribers, GC) are deliberately not hooked: Skin Changer does not patch game mechanisms.
+    private static void ReportLocalizationPerf(
+        string language,
+        string modeLabel,
+        double totalMs,
+        LocalizationSignatureSnapshot snapshot)
+    {
+        if (!PerfTrace.Enabled)
+        {
+            return;
+        }
+
+        var line =
+            $"[性能] 本地化({language}) = {totalMs:F1} ms；" +
+            $"方式={modeLabel}，触发={snapshot.TriggerSkins}，语言文件={snapshot.ActiveFileCount}";
+        if (totalMs >= PerfTrace.WarnMilliseconds)
+        {
+            ModLog.Warn(line);
+        }
+        else
+        {
+            ModLog.Info(line);
+        }
+    }
+
+    private static LocalizationSignatureSnapshot BuildActiveLocalizationSnapshot()
     {
         var catalog = Catalog;
         if (catalog == null)
         {
-            return string.Empty;
+            return new LocalizationSignatureSnapshot(string.Empty, 0, "无");
         }
 
         var visualSelections = GetVisualSelections();
@@ -7946,11 +8200,22 @@ internal static partial class SkinService
         var activeFiles = MountedLocalizationFiles
             .Where(pair => activePaths.Contains(pair.Key))
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
-        return BuildOverlaySignature(activeFiles, "localization") + "\n" + string.Join(
+        var selectedProviders = catalog.GetSelectedLocalizationProviderIds(visualSelections)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var signature = BuildOverlaySignature(activeFiles, "localization") + "\n" + string.Join(
             "\n",
-            catalog.GetSelectedLocalizationProviderIds(visualSelections)
-                .Order(StringComparer.OrdinalIgnoreCase));
+            selectedProviders);
+        var triggerSkins = selectedProviders.Length == 0
+            ? "无(默认)"
+            : string.Join(",", selectedProviders);
+        return new LocalizationSignatureSnapshot(signature, activeFiles.Count, triggerSkins);
     }
+
+    private readonly record struct LocalizationSignatureSnapshot(
+        string Signature,
+        int ActiveFileCount,
+        string TriggerSkins);
 
     public static IEnumerable<string> FilterModdedLocalizationTables(
         IEnumerable<string> localizationPaths)

@@ -790,6 +790,12 @@ if (args.Length == 1 && args[0] == "--test-animator-discovery")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-provider-patch-capture")
+{
+    ProviderPatchCaptureTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-character-catalog")
 {
     CharacterCatalogOwnershipTests.Run();
@@ -905,6 +911,7 @@ Gate.Run("RequiredFixesManifestTests", () => RequiredFixesManifestTests.Run());
 Gate.Run("GlobalWriteLedgerTests", () => GlobalWriteLedgerTests.Run());
 Gate.Run("UiInjectionGuardTests", () => UiInjectionGuardTests.Run());
 Gate.Run("VanillaIntegritySelfCheckTests", () => VanillaIntegritySelfCheckTests.Run());
+Gate.Run("ProviderPatchCaptureTests", () => ProviderPatchCaptureTests.Run());
 Gate.Run("FoolWaifuIdentityTests", () => FoolWaifuIdentityTests.Run());
 Gate.Run("LateTakeoverGuardTests", () => LateTakeoverGuardTests.Run());
 Gate.Run("OrchisRoomCallbackTests", () => OrchisRoomCallbackTests.Run());
