@@ -1,3 +1,10 @@
+## 1.0.41（2026-11-24，工坊正式版）
+小红帽本体与下拉第一次进战斗不同步：下拉选了「原皮 / 女仆」，第一场战斗里本体却按皮肤包自己保存的旧档出图，要再动一次下拉才对上。
+- 根因：小红帽的提供者在自己的初始化里读它保存的外观档（日志 `Loaded: skin=maid`），我们的下拉选择在首个战斗角色挂载之后才生效，于是首帧用的是它那份旧档。
+- 改法：新增 `Core/RedHoodCompanionCompat.ApplyInitialLocalAppearance(string providerId)`——分组 `necrobinder`、运行时提供者确为 `RedHoodNecrobinder`、且下拉显示值与配置一致时，调 `ManualCharacterVariantBridge.ApplyLocalChoice("necrobinder")`；调用点在 `Core/ManagedSkinModLoader.cs` 的 `runEnvironmentEnabled` 之后、完整视觉会话日志之前，保证首个战斗角色挂载前已生效。之后切换仍与作者面板双向同步。
+- 本版包含 1.0.40 与 1.0.39 的全部内容：1.0.40 修奥尔莱亚（奥斯提 / 魄罗）独立换肤时串出原版蓝火（`Core/Features/Character/OptionalCharacterVfx.cs`、`Core/PoroVariantBridge.cs`、`Ui/ContextualSkinControls.cs`）。这两版发布时只写了工坊改动说明、没补这里，逐项记录见 `工坊补发结果_20261124.md`。
+- 门禁：Release 3,781,632 B / `A73ADFBAA875AD77`，ReleaseBeta 3,987,456 B / `03660A11`，0 警告 0 错误；LogicTests、完整 RuntimeTests（116 行）、`--test-poro-pack`、`check-dual-branch`（双端同 DLL，`Branch ABI passed: 9d417b39-1d40-4fc7-b993-28acdc29e151`）与四项受保护门禁全过；`--test-protected-characters` 因本机没有贞德两包未执行。
+- 工坊：2026-11-24 00:42(+08) 上线，包 3,799,719 B（`Gurio.SkinChanger.dll` + `SkinChanger.json` + `thunninoiSkinManager.dll`），15 语言简介只同步版本字段，公告段保持删除。
 ## 1.0.38.12（2026-11-22，内测）
 修上一版「魄罗两项又不见了」：探测资源时看错了地方。
 - 根因：上一版按**磁盘目录**找提供者的 `scripts/spine_factory.gd` 与 `spine42/*`，但工坊包的资源在 `.pck` 里，没被选中的包根本不会解包出目录 → 探测恒为空 → 两项不出现，进战斗也不生效。

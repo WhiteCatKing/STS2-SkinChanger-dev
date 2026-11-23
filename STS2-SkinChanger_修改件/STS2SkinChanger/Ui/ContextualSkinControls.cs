@@ -887,7 +887,7 @@ internal static partial class ContextualSkinControls
     // A provider that switches appearance through its own argument-taking entry point lists the two
     // choices in a menu of its own; reuse those words so both menus read the same. The provider menu
     // only exists while its own skin is active, so the words are remembered per language.
-    internal static void ApplyProviderVariantLabels(OptionButton dropdown, SkinGroup group, Control? screen)
+    internal static void ApplyProviderVariantLabels(OptionButton dropdown, SkinGroup group, Control? screen, bool allowRetry = true)
     {
         if (screen == null || !GodotObject.IsInstanceValid(dropdown)) return;
         var variants = group.Options
@@ -918,15 +918,15 @@ internal static partial class ContextualSkinControls
         else
         {
             // The provider builds its menu from its own character-select hook, which may run after this
-            // rebuild; retry once at the end of the frame instead of keeping the ordinal labels.
-            var pending = dropdown.HasMeta(VariantLabelRetryMeta);
+            // rebuild; retry once at the end of the frame instead of keeping the ordinal labels. The retry
+            // itself must never retry again, or the frame would keep re-deferring forever.
+            if (!allowRetry || dropdown.HasMeta(VariantLabelRetryMeta)) return;
             dropdown.SetMeta(VariantLabelRetryMeta, true);
-            if (pending) return;
             Callable.From(() =>
             {
                 if (!GodotObject.IsInstanceValid(dropdown) || !GodotObject.IsInstanceValid(screen)) return;
                 dropdown.RemoveMeta(VariantLabelRetryMeta);
-                ApplyProviderVariantLabels(dropdown, group, screen);
+                ApplyProviderVariantLabels(dropdown, group, screen, allowRetry: false);
             }).CallDeferred();
             return;
         }

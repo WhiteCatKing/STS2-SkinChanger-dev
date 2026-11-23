@@ -12,6 +12,17 @@ internal static class RedHoodCompanionCompat
     private const string Provider = "RedHoodNecrobinder";
     private static readonly Harmony Patcher = new(Entry.ModId + ".redhood-companion");
 
+    internal static void ApplyInitialLocalAppearance(string providerId)
+    {
+        const string groupId = "necrobinder";
+        if (providerId.Equals(Provider, StringComparison.OrdinalIgnoreCase) &&
+            SkinService.GetSelectedRuntimeProvider(groupId) == providerId &&
+            SkinService.GetDisplayedSelection(groupId) == SkinService.Config.GetSelection(groupId))
+        {
+            ManualCharacterVariantBridge.ApplyLocalChoice(groupId);
+        }
+    }
+
     internal static void Prepare(Assembly assembly)
     {
         if (assembly.GetName().Name != Provider) return;

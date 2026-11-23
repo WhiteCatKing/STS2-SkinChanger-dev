@@ -1459,6 +1459,9 @@ internal static class ManagedSkinModLoader
                 runEnvironmentPatches,
                 runEnvironmentControllers,
                 runEnvironmentEnabled);
+            // Red Hood's initializer reads its own saved palette. Apply the local dropdown
+            // choice before the first combat actor is attached (godot.log Loaded: skin=maid).
+            RedHoodCompanionCompat.ApplyInitialLocalAppearance(providerId);
             ModLog.Info(
                 $"已按当前选择启用 {provider.Name} 的完整视觉会话：" +
                 $"所需资源已由本 Mod 挂载，{managedPatches.Length} 个资源/选角呈现入口已交由本 Mod 接管，" +
