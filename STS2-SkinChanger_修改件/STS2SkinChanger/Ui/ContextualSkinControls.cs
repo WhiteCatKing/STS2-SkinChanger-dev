@@ -3333,6 +3333,13 @@ internal static partial class ContextualSkinControls
                 visualsPath,
                 () => RuntimeMonsterVisualModeBridge.ApplySelected(group.Id));
             var copied = ManagedSceneCompatibility.CopyMissingUniqueNodes(result, replacement);
+            var selection = SkinService.GetDisplayedSelection(sceneGroupId);
+            var providerId = SkinService.Catalog?.ResolveVisualProviderId(selection) ?? selection;
+            if (NativeCreatureEffects.SuppressesOstyFlame(group.Id, providerId) &&
+                replacement.GetNodeOrNull<Node>("%Visuals") is { } body)
+            {
+                NativeCreatureEffects.HideOstyFlame(body);
+            }
             if (copied > 0)
             {
                 ModLog.Info($"已为 {modelId} 的替换场景补齐 {copied} 个游戏必需节点。");
