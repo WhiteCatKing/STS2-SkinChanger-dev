@@ -3282,8 +3282,29 @@ internal static class ManagedAncientStaticBackground
 
     internal static void Fit(Node sceneRoot)
     {
-        if (sceneRoot is not Control root ||
-            !root.HasMeta(ManagedRootMeta) ||
+        if (sceneRoot is not Control root)
+        {
+            return;
+        }
+
+        // The AncientWaifus background is authored in viewport coordinates. Its cache
+        // callback normally installs AbsoluteLayoutEnforcer, which managed scene loading skips.
+        if (root.GetParent() is NAncientBgContainer waifuContainer &&
+            root.GetNodeOrNull<TextureRect>("TextureRect")?.Texture?.ResourcePath.Contains(
+                "/waifu_assets/neow/animations/backgrounds/neow/neow_background.png",
+                StringComparison.OrdinalIgnoreCase) == true &&
+            !root.HasNode("AbsoluteLayoutEnforcer"))
+        {
+            var viewport = root.GetViewportRect();
+            var parentScale = waifuContainer.GetGlobalTransform().Scale;
+            var artworkScale = Mathf.Max(1f, viewport.Size.Aspect() / (2560f / 1080f));
+            root.ClipContents = false;
+            root.Scale = new Vector2(artworkScale / parentScale.X, artworkScale / parentScale.Y);
+            root.GlobalPosition = viewport.GetCenter() - root.Size * (artworkScale * 0.5f);
+            return;
+        }
+
+        if (!root.HasMeta(ManagedRootMeta) ||
             !root.GetMeta(ManagedRootMeta).AsBool())
         {
             return;
