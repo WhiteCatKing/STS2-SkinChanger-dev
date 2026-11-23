@@ -76,13 +76,16 @@ internal static class BestiaryEntranceSwitcher
     internal static void RememberReleased(NClickableControl control)
     {
         _lastReleased = control;
-        Callable.From(() =>
+        // [延迟调度/Critical] 原触发时机：按钮 Released 时立即入队清空 _lastReleased；最早可执行帧：入队同帧末 idle；
+        // 顺序依赖：Critical，必须在同帧 TryRedirectBestiaryOpen 之后、下一帧点击之前清空，绝不可推迟；
+        // 能否合并：不可合并（按具体 control 实例原位直排）；重试上限：1 次；取消条件：!ReferenceEquals(_lastReleased, control)。
+        DeferredDispatch.CallDeferred("BestiaryEntranceSwitcher.ClearLastReleased", control, () =>
         {
             if (ReferenceEquals(_lastReleased, control))
             {
                 _lastReleased = null;
             }
-        }).CallDeferred();
+        });
     }
 
     internal static bool TryRedirectBestiaryOpen(NSubmenuStack stack, NSubmenu screen)
@@ -120,14 +123,17 @@ internal static class BestiaryEntranceSwitcher
 
         _scanScheduled = true;
         _scanAttempts++;
-        Callable.From(() =>
+        // [延迟调度] 原触发时机：ScanCompendium 末尾重试扫描图鉴里的怪物图鉴入口；最早可执行帧：本帧末/下一帧；
+        // 顺序依赖：等待其他 UI Mod 晚注入的按钮入树；能否合并：可合并（_scanScheduled 防重）；
+        // 重试上限：16 次（_scanAttempts >= 16）；取消条件：!IsInstanceValid(compendium) 或达上限。
+        DeferredDispatch.CallDeferred("BestiaryEntranceSwitcher.ScanCompendium", compendium, () =>
         {
             _scanScheduled = false;
             if (GodotObject.IsInstanceValid(compendium))
             {
                 ScanCompendium(compendium);
             }
-        }).CallDeferred();
+        });
     }
 
     private static bool IsBestiaryEntrance(NClickableControl control)

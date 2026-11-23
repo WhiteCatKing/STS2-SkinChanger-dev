@@ -148,7 +148,10 @@ internal static partial class VanillaIntegritySelfCheck
 
         try
         {
-            Callable.From(BeginOnMainThread).CallDeferred();
+            // [延迟调度] 原触发时机：主菜单首次 _Ready 触发 ScheduleOnce()；最早可执行帧：本帧末 idle；
+            // 顺序依赖：需在主线程抓取 ModManager.Mods 与内存覆盖快照；能否合并：一次性（CAS 防重）；
+            // 重试上限：1 次；取消条件：已执行或异常跳过。
+            DeferredDispatch.CallDeferred("VanillaIntegritySelfCheck.Begin", "global", BeginOnMainThread);
         }
         catch (Exception exception)
         {
@@ -394,7 +397,10 @@ internal static partial class VanillaIntegritySelfCheck
                         snapshotFrames,
                         selfOverlayPaths,
                         selfOverlayComplete);
-                    Callable.From(runtimeState.StepOnMainThread).CallDeferred();
+                    // [延迟调度] 原触发时机：后台 Task.Run 完成磁盘 PCK 预扫后从工作线程切回主线程；最早可执行帧：切回后下一 idle 帧；
+                    // 顺序依赖：线程安全入队，必须在主线程访问 Godot VFS；能否合并：单次交接不可合并；
+                    // 重试上限：由下游 ConfirmSession 按候选条数有界分帧收敛；取消条件：全部条目核验完毕或异常释放。
+                    DeferredDispatch.CallDeferred("VanillaIntegritySelfCheck.Step", runtimeState, runtimeState.StepOnMainThread);
                 }
                 catch (Exception exception)
                 {
@@ -1428,7 +1434,10 @@ internal static partial class VanillaIntegritySelfCheck
 
                 if (!completed)
                 {
-                    Callable.From(StepOnMainThread).CallDeferred();
+                    // [延迟调度] 原触发时机：单帧 2.5 ms / 2 MiB 预算用尽且仍有剩余待检项；最早可执行帧：下一帧；
+                    // 顺序依赖：主线程单链串行推进同一 ConfirmSession；能否合并：单链串行无需合并；
+                    // 重试上限：按待检条目总数有界收敛；取消条件：completed == true 或异常释放 _session。
+                    DeferredDispatch.CallDeferred("VanillaIntegritySelfCheck.Step", this, StepOnMainThread);
                     return;
                 }
 

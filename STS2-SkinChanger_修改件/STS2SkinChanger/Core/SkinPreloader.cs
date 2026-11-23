@@ -209,9 +209,19 @@ internal static class SkinPreloader
                 return;
             }
 
+            // [延迟调度/Timer] 原触发时机：预加载队列非空时经 SceneTreeTimer(0.15s) 周期唤醒；
+            // 最早可执行帧：入队后 0.15 秒到期帧；顺序依赖：需等游戏 Common 预加载结束且未 Paused 才派发单路后台加载；
+            // 能否合并：_timerRunning 保证单定时器串行驱动；重试上限：最多 48 项（启动门禁 60 秒兜底，单项失败不重试）；
+            // 取消条件：Pending 与 InFlight 均清空或 _cancelled。
+            var enqueueFrame = DeferredDispatch.CurrentFrame();
             _timerRunning = true;
             var timer = tree.CreateTimer(TickSeconds);
-            timer.Timeout += Tick;
+            timer.Timeout += DeferredDispatch.WrapCallback(
+                "SkinPreloader.Tick",
+                "global",
+                Tick,
+                DeferredDispatchRisk.Normal,
+                enqueueFrame);
         }
         catch (Exception exception)
         {

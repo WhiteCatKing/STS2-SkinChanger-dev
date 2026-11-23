@@ -138,8 +138,18 @@ internal static class DeferredProviderActivator
                 return;
             }
 
+            // [延迟调度/Timer] 原触发时机：启动重建将非首屏提供者入队后由 SceneTreeTimer(0.12s) 周期唤醒；
+            // 最早可执行帧：入队后 0.12 秒到期帧；顺序依赖：主线程单定时器串行执行，单 tick 超 12 ms 让出剩余项；
+            // 能否合并：_timerRunning 保证单定时器；重试上限：按待初始化队列数收敛（单项失败不重试）；
+            // 取消条件：队列清空、进入真实场景 Cancel() 或 Reset()。
+            var enqueueFrame = DeferredDispatch.CurrentFrame();
             var timer = tree.CreateTimer(TickSeconds);
-            timer.Timeout += Tick;
+            timer.Timeout += DeferredDispatch.WrapCallback(
+                "DeferredProviderActivator.Tick",
+                "global",
+                Tick,
+                DeferredDispatchRisk.Normal,
+                enqueueFrame);
         }
         catch (Exception exception)
         {
@@ -172,7 +182,12 @@ internal static class DeferredProviderActivator
             var failure = false;
             try
             {
-                activated = SkinService.TryActivateDeferredProvider(providerId);
+                // [延迟调度/HighRisk] 激活第三方提供者 DLL 初始化器与 Harmony 补丁，具原生闪退风险，执行前先落盘 ENTER 面包屑。
+                DeferredDispatch.RunTracked(
+                    "DeferredProviderActivator.Activate",
+                    providerId,
+                    () => activated = SkinService.TryActivateDeferredProvider(providerId),
+                    DeferredDispatchRisk.HighRisk);
             }
             catch (Exception exception)
             {

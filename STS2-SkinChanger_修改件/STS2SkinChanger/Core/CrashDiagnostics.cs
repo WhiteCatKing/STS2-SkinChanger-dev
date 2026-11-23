@@ -7,6 +7,8 @@ namespace STS2SkinChanger.Core;
 
 internal static class CrashDiagnostics
 {
+    internal const string BreadcrumbFileName = "deferred-breadcrumbs.log";
+
     private static int _started;
     private static string? _report;
     private static System.Threading.Timer? _notifications;
@@ -15,6 +17,8 @@ internal static class CrashDiagnostics
     private static Process? _observer;
     private static int _readyReported;
     private static DateTime _observerLaunched;
+
+    internal static string? SessionDirectory => _report;
 
     internal static void Start()
     {
@@ -30,6 +34,7 @@ internal static class CrashDiagnostics
             Directory.CreateDirectory(_report);
             AppDomain.CurrentDomain.UnhandledException += (_, e) => RecordManaged(
                 e.IsTerminating ? "terminating" : "unhandled", SafeExceptionText(e.ExceptionObject));
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => DeferredDispatch.FlushBreadcrumbs();
             TaskScheduler.UnobservedTaskException += (_, e) => RecordManaged("unobserved-task (not necessarily fatal)", SafeExceptionText(e.Exception));
             // Never SetObserved, swallow exceptions, close the game or interfere with crash handling.
             if (!OperatingSystem.IsWindows())
@@ -113,14 +118,48 @@ internal static class CrashDiagnostics
 
     internal static void MarkNativeQuitCompleted()
     {
+        DeferredDispatch.FlushBreadcrumbs();
         try { if (_report != null) File.WriteAllText(Path.Combine(_report, "quit-complete"), DateTime.UtcNow.ToString("O")); }
         catch { }
     }
 
     internal static void MarkForcedShutdown()
     {
+        DeferredDispatch.FlushBreadcrumbs();
         try { if (_report != null) File.WriteAllText(Path.Combine(_report, "forced-exit"), "Existing quit watchdog timed out after native Quit returned."); }
         catch { }
+    }
+
+    internal static string FormatRecentBreadcrumbsSection(string? reportDirectory, int maxLines = 20)
+    {
+        if (string.IsNullOrWhiteSpace(reportDirectory) || maxLines <= 0)
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var path = Path.Combine(reportDirectory, BreadcrumbFileName);
+            if (!File.Exists(path))
+            {
+                return string.Empty;
+            }
+
+            var lines = File.ReadAllLines(path, Encoding.UTF8)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .TakeLast(maxLines)
+                .ToArray();
+            if (lines.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            return $"\n延迟任务面包屑（最近 {lines.Length} 条）：\n" + string.Join("\n", lines);
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static string SafeExceptionText(object? error)
@@ -141,8 +180,10 @@ internal static class CrashDiagnostics
                 $"{DateTime.UtcNow:O} [{kind}] {detail}\n", new UTF8Encoding(false));
             if (kind == "terminating")
             {
+                DeferredDispatch.FlushBreadcrumbs();
+                var breadcrumbs = FormatRecentBreadcrumbsSection(_report, 20);
                 File.WriteAllText(Path.Combine(_report, "diagnostic.txt"),
-                    "[SkinChanger.CrashDiagnostics] 托管未处理异常（进程终止）：\n" + detail, new UTF8Encoding(false));
+                    "[SkinChanger.CrashDiagnostics] 托管未处理异常（进程终止）：\n" + detail + breadcrumbs, new UTF8Encoding(false));
                 File.WriteAllText(Path.Combine(_report, "pending-recovery"), "Terminating managed exception; awaiting observer annotation.");
             }
         }

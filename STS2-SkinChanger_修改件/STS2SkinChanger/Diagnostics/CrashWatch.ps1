@@ -125,6 +125,16 @@ try {
     if ($sessionOffset -ge 0) { $tail = $tail.Substring($sessionOffset) }
     $eventsPath = Join-Path $report 'managed-events.log'
     $managed = if ([IO.File]::Exists($eventsPath)) { [IO.File]::ReadAllText($eventsPath, $utf8) } else { '' }
+    $breadcrumbsPath = Join-Path $report 'deferred-breadcrumbs.log'
+    $breadcrumbSection = ''
+    if ([IO.File]::Exists($breadcrumbsPath)) {
+        try {
+            $bcLines = @([IO.File]::ReadAllLines($breadcrumbsPath, $utf8) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 20)
+            if ($bcLines.Count -gt 0) {
+                $breadcrumbSection = "`n延迟任务面包屑（最近 $($bcLines.Count) 条）：`n" + ($bcLines -join "`n")
+            }
+        } catch { }
+    }
     $quitComplete = [IO.File]::Exists((Join-Path $report 'quit-complete'))
     $forced = [IO.File]::Exists((Join-Path $report 'forced-exit'))
     $shutdown = $tail -match 'Steamworks shutdown succeeded|Steamworks shutdown succeeded!'
@@ -160,7 +170,7 @@ try {
 版本：$($cfg.ModVersion)；疑似卡死=$hangSeen；其后恢复响应=$hangRecovered；已完成退出入口=$quitComplete。
 转储：$(if ($dump) {$dump} else {'未获得（进程退出后无法补抓；没有转储不代表未发生崩溃）'})
 系统事件（仅按当前 PID 匹配，可能尚未写入）：$moduleEvent
-托管异常：$managed
+托管异常：$managed$breadcrumbSection
 说明：此信息是检测证据，不自动认定皮肤切换器或其他某个 Mod 是根因；普通 ERROR 和退出资源泄漏警告不单独判为崩溃。
 [SkinChanger.CrashDiagnostics] ===== 诊断结束 =====
 "@

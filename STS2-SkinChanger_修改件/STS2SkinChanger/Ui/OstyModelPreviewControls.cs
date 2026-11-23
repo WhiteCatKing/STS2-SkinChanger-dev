@@ -828,7 +828,11 @@ internal partial class OstyModelPreviewPanel : Control
     private void ScheduleFit()
     {
         _fitAttempts++;
-        Callable.From(() =>
+        // [延迟调度/HighRisk] 原触发时机：ScheduleFit 多帧等待 Spine 骨架异步建好并取包围盒；最早可执行帧：下一帧；
+        // 顺序依赖：需在预览节点入树后逐帧重试并周期触发原生 Spine update_skeleton（具原生闪退风险，先落盘 ENTER 面包屑）；
+        // 能否合并：同预览控件单链串行；重试上限：30 次（超限改用保守默认缩放）；
+        // 取消条件：!Alive() || _spine == null || !IsInstanceValid(_spine) 或 FitModel() 成功。
+        DeferredDispatch.CallDeferred("OstyModelPreview.FitModel", this, () =>
         {
             if (!Alive() || _spine == null || !GodotObject.IsInstanceValid(_spine))
             {
@@ -865,7 +869,7 @@ internal partial class OstyModelPreviewPanel : Control
             catch
             {
             }
-        }).CallDeferred();
+        }, DeferredDispatchRisk.HighRisk);
     }
 
     private static void TryCall(Node2D spine, string method, params Variant[] args)

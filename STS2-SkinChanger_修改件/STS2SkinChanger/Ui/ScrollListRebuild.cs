@@ -1,4 +1,5 @@
 using Godot;
+using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger.Ui;
 
@@ -54,7 +55,10 @@ internal static class ScrollListRebuild
         content.MoveChild(scroll, content.GetChildCount() - 1);
         var generation = scroll.GetMeta(GenerationMeta, 0L).AsInt64();
         var position = scroll.GetMeta(PositionMeta, 0).AsInt32();
-        Callable.From(() =>
+        // [延迟调度/Critical] 原触发时机：PlaceAfterHeader 调序后立即入队；最早可执行帧：本帧末 idle；
+        // 顺序依赖：必须先执行 QueueSort() 再排第二跳；能否合并：不可按同名跨跳合并（以 GenerationMeta 淘汰过期）；
+        // 重试上限：1 次；取消条件：!IsInstanceValid(scroll) 或 GenerationMeta 变化。
+        DeferredDispatch.CallDeferred("ScrollListRebuild.QueueSort", scroll, () =>
         {
             if (!GodotObject.IsInstanceValid(scroll) ||
                 scroll.GetMeta(GenerationMeta, 0L).AsInt64() != generation)
@@ -65,14 +69,17 @@ internal static class ScrollListRebuild
             // range. Restoring on the following idle step avoids Godot clamping the retained value
             // to zero while the newly-added rows still report an empty range.
             scroll.QueueSort();
-            Callable.From(() =>
+            // [延迟调度/Critical] 原触发时机：第一跳 QueueSort() 后嵌套入队；最早可执行帧：第一跳之后的下一 idle 步；
+            // 顺序依赖：必须严格晚于第一跳 QueueSort()；能否合并：不可与第一跳合并；
+            // 重试上限：1 次；取消条件：!IsInstanceValid(scroll) 或 GenerationMeta 变化。
+            DeferredDispatch.CallDeferred("ScrollListRebuild.RestoreScroll", scroll, () =>
             {
                 if (GodotObject.IsInstanceValid(scroll) &&
                     scroll.GetMeta(GenerationMeta, 0L).AsInt64() == generation)
                 {
                     scroll.ScrollVertical = position;
                 }
-            }).CallDeferred();
-        }).CallDeferred();
+            });
+        });
     }
 }

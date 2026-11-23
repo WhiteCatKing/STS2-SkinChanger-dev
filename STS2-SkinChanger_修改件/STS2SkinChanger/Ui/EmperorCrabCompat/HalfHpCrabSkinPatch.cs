@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Vfx.Backgrounds;
+using STS2SkinChanger.Core;
 using FileAccess = Godot.FileAccess;
 
 namespace STS2SkinChanger.Ui.EmperorCrabCompat
@@ -518,7 +519,12 @@ namespace STS2SkinChanger.Ui.EmperorCrabCompat
 
             _retryTree = tree;
             _retryFrames = 0;
+            var retrySubscribedFrame = DeferredDispatch.CurrentFrame();
 
+            // [延迟调度/ProcessFrame] 原触发时机：皮肤行为 DLL 未加载时订阅 ProcessFrame 每 60 帧检查一次；
+            // 最早可执行帧：订阅后第 60 帧（其后每 60 帧一次）；顺序依赖：主线程扫程序集并装补丁，无同帧穿插要求；
+            // 能否合并：单例重试（_retryTree != null 防重）；重试上限：300 次（18000 帧 / 约 5 分钟放弃）；
+            // 取消条件：_halfHpPrefixInstalled || _halfHpPrefixMissing || _retryFrames >= 18000 或异常 StopInstallRetry()。
             _retryHandler = () =>
             {
                 try
@@ -534,7 +540,12 @@ namespace STS2SkinChanger.Ui.EmperorCrabCompat
                         return;
                     }
 
-                    TryInstallHalfHpPrefix();
+                    DeferredDispatch.RunTracked(
+                        "HalfHpCrabSkinPatch.InstallRetry",
+                        "EmperorCrabCompat",
+                        TryInstallHalfHpPrefix,
+                        DeferredDispatchRisk.Normal,
+                        retrySubscribedFrame);
 
                     // 5 分钟还没等到皮肤行为 DLL 就放弃，避免常驻。
                     if (_retryFrames >= 18000)

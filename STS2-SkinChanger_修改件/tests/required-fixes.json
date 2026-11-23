@@ -458,5 +458,20 @@
     "tests": [
       { "suite": "Runtime", "name": "ProviderPatchCaptureTests", "args": "" }
     ]
+  },
+  {
+    "id": "deferred-dispatch-records",
+    "title": "延迟回调与轮询经 DeferredDispatch 记录执行帧、连续重入告警与崩溃面包屑（高风险任务先落盘 ENTER），不改变原有排队位置与异常语义",
+    "since": "mech1-step1",
+    "symbols": [
+      "DeferredDispatch.CallDeferred",
+      "DeferredDispatch.WrapCallback",
+      "DeferredDispatch.RunTracked",
+      "DeferredDispatch.FlushBreadcrumbs",
+      "CrashDiagnostics.FormatRecentBreadcrumbsSection"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "DeferredDispatchTests", "args": "" }
+    ]
   }
 ]

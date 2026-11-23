@@ -364,14 +364,17 @@ internal static class AncientCompendiumEntry
 
         state.DeferredScheduled = true;
         state.DeferredAttempts++;
-        Callable.From(() =>
+        // [延迟调度] 原触发时机：Attach 在图鉴锚点按钮/宿主容器尚未可见时延迟重试；最早可执行帧：本帧末 idle/下一帧；
+        // 顺序依赖：需等图鉴子界面完成 _Ready 并可见；能否合并：可合并（state.DeferredScheduled 防重）；
+        // 重试上限：12 次（state.DeferredAttempts >= 12）；取消条件：!IsInstanceValid(compendium) 或挂载成功。
+        DeferredDispatch.CallDeferred("AncientCompendium.Attach", compendium, () =>
         {
             state.DeferredScheduled = false;
             if (GodotObject.IsInstanceValid(compendium))
             {
                 Attach(compendium);
             }
-        }).CallDeferred();
+        });
     }
 
     private static NCompendiumBottomButton? FindOwnButton(Node root) =>
