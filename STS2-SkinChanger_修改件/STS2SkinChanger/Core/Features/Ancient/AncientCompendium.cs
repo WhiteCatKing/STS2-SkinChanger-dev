@@ -2118,16 +2118,20 @@ internal partial class AncientCompendiumScreen : NSubmenu
         if (!dropdown.Visible) return;
 
         var groupId = FakeMerchantEventFrame.GroupId;
-        var current = FakeMerchantEventFrame.SelectedProvider;
+        var current = SkinService.GetEventOverrideSelection(groupId);
         var label = ModLocalization.Get(ModText.Background);
         dropdown.Clear();
-        dropdown.AddItem($"{label} · {ModLocalization.Get(ModText.GameDefault)}");
-        dropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
+        dropdown.AddItem(ModLocalization.Get(ModText.FollowCategory));
+        dropdown.SetItemMetadata(0, SkinService.InheritEventSelectionId);
+        dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
+        dropdown.SetItemMetadata(1, SkinCatalog.BaseOptionId);
         var group = SkinService.Catalog?.Groups.FirstOrDefault(candidate => candidate.Id == groupId);
-        var selectedIndex = 0;
+        var selectedIndex = current == SkinService.InheritEventSelectionId ? 0 : 1;
         if (group != null)
         {
-            foreach (var option in group.Options)
+            var (options, priority) = SkinService.GetSkinListForDisplay(groupId, group.Options);
+            SkinChoiceDimming.Bind(dropdown, priority);
+            foreach (var option in options)
             {
                 var index = dropdown.ItemCount;
                 dropdown.AddItem($"{label} · {ModLocalization.DisplayOptionName(option.Name)}");
@@ -2156,6 +2160,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             PopulateFakeMerchantBackgroundDropdown();
             return;
         }
+        PopulateFakeMerchantBackgroundDropdown();
         if (_otherPreviewInstance is NFakeMerchant screen && GodotObject.IsInstanceValid(screen))
             FakeMerchantEventFrame.RefreshPreview(screen);
     }

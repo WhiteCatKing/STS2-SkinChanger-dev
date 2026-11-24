@@ -1139,6 +1139,7 @@ if (validateIndex >= 0)
                             .ToHashSet(StringComparer.OrdinalIgnoreCase);
                         var expectedPackagePaths = providerArchive.Paths
                             .Where(path => !IsProviderProjectControlFile(path))
+                            .Where(path => !catalog.ProtectGlobalCanonicalPackFile(path))
                             .Where(path => !independentlySelectableCardFiles.Contains(
                                 SkinCatalog.NormalizeTakeoverPath(path)))
                             .Where(path => !isolatedRelicProviderPaths.Contains(

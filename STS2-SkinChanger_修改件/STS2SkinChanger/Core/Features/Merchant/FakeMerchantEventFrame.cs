@@ -52,13 +52,8 @@ internal static class FakeMerchantEventFrame
     internal const string GroupId = EventSkinPolicy.Prefix + "fake_merchant_sale_background";
     internal const string WorkshopProviderId = "NSFW-Event";
 
-    internal static string SelectedProvider =>
-        SkinService.Config.Selections.TryGetValue(GroupId, out var selection)
-            ? selection
-            : SkinService.Catalog?.Groups.Any(group => group.Id == GroupId &&
-                group.Options.Any(option => option.Id == WorkshopProviderId)) == true
-                ? WorkshopProviderId
-                : STS2SkinChanger.Catalog.SkinCatalog.BaseOptionId;
+    private static string SelectedProvider => SkinService.GetDisplayedSelection(GroupId);
+
     private const string ScenePath = "res://scenes/events/custom/fake_merchant.tscn";
     private static WeakReference<NFakeMerchant>? _current;
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<NFakeMerchant, FakeMerchant> Models = new();
@@ -139,7 +134,7 @@ internal static class FakeMerchantEventFrame
                     if (index >= 0)
                     {
                         var canonical = "res://" + resource.ResourcePath[index..];
-                        if (provider == WorkshopProviderId)
+                        if (provider != STS2SkinChanger.Catalog.SkinCatalog.BaseOptionId)
                         {
                             // Workshop 3765802910 replaces the atlas pages only. Load the
                             // native skeleton with those pages in the provider's isolated pack.

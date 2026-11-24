@@ -14,6 +14,8 @@ using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
+using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Runs;
@@ -217,6 +219,7 @@ internal static partial class ContextualSkinControls
         var selector = EnsureCharacterSelector(screen);
         selector.SetMeta("sc_workshop_target", character.Id.Entry.ToLowerInvariant());
         ProviderModeSelectOverlayBridge.RegisterScreenLifecycle(screen);
+        CharacterSelectUiScope.Observe(screen, character);
         ProviderModeSelectOverlayBridge.SyncExclusiveScreenPollers(screen);
         var group = FindGroup(character.Id.Entry);
         if (group != null)
@@ -315,7 +318,7 @@ internal static partial class ContextualSkinControls
         Callable.From(() =>
         {
             if (!GodotObject.IsInstanceValid(screen) ||
-                !screen.IsInsideTree() ||
+                !screen.IsInsideTree() || CharacterSelectUiScope.IsLeaving(screen) ||
                 screen.GetMeta(CharacterRefreshGenerationMeta, 0L).AsInt64() != generation)
             {
                 return;
@@ -2650,6 +2653,9 @@ internal static partial class ContextualSkinControls
         string groupId)
     {
         var providerId = SkinService.GetSelectedCreatureRuntimeProvider(groupId);
+        // Orchis selects its portrait animation with the character, independently of Osty.
+        if (providerId == null && SkinService.GetSelectedRuntimeProvider(groupId) == OrchisSkinFixCompat.ProviderId)
+            providerId = OrchisSkinFixCompat.ProviderId;
         if (providerId == null)
         {
             return;
@@ -2661,6 +2667,7 @@ internal static partial class ContextualSkinControls
         var button = FindCharacterButton(screen, character);
         if (button != null)
         {
+            using var selectUi = CharacterSelectUiScope.Capture(screen);
             ManagedSkinModLoader.ReplaySelectedCharacterPresentation(
                 providerId,
                 screen,
@@ -2944,7 +2951,8 @@ internal static partial class ContextualSkinControls
         }
 
         background.Name = character.Id.Entry + "_bg";
-        container.AddChildSafely(background);
+        using (CharacterSelectUiScope.Capture(screen, background))
+            container.AddChildSafely(background);
 
         if (background.IsInsideTree())
         {
@@ -3826,6 +3834,38 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    internal static void RefreshContinueRunPortrait(NContinueRunInfo info, SerializableRun save)
+    {
+        if (save.Players.Count == 0 || save.Players[0].CharacterId is not { } characterId ||
+            info.GetNodeOrNull<TextureRect>("%CharacterIcon") is not { } destination)
+            return;
+
+        Control? avatar = null;
+        try
+        {
+            var character = ModelDb.GetById<CharacterModel>(characterId);
+            // Match NTopBarPortrait by asking the same getter, including the selected
+            // provider's icon scene and the current variant's portrait override.
+            avatar = character.Icon;
+            var textures = EnumerateTextureRects(avatar)
+                .Where(rect => rect.Visible && rect.Texture != null)
+                .Select(rect => rect.Texture!)
+                .Distinct()
+                .Take(2)
+                .ToArray();
+            if (textures.Length == 1) destination.Texture = textures[0];
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新继续游戏提示框头像失败：" + exception.GetBaseException().Message);
+        }
+        finally
+        {
+            if (avatar != null && GodotObject.IsInstanceValid(avatar) && avatar.GetParent() == null)
+                avatar.Free();
+        }
+    }
+
     private static IEnumerable<TextureRect> EnumerateTextureRects(Node root)
     {
         if (root is TextureRect rect)
@@ -4179,6 +4219,7 @@ internal static class SingleplayerEmbarkSkinSelectorPatch
 {
     private static void Prefix(Control __instance)
     {
+        CharacterSelectUiScope.Leave(__instance);
         try
         {
             var groupId = ContextualSkinControls.GetLocalLobbyCharacter(CharacterSelectScreenAccess.Lobby(__instance)).Id.Entry.ToLowerInvariant();
@@ -4209,6 +4250,7 @@ internal static class MultiplayerEmbarkSkinSelectorPatch
 {
     private static void Prefix(Control __instance)
     {
+        CharacterSelectUiScope.Leave(__instance);
         try
         {
             var groupId = ContextualSkinControls.GetLocalLobbyCharacter(CharacterSelectScreenAccess.Lobby(__instance)).Id.Entry.ToLowerInvariant();
@@ -4473,6 +4515,14 @@ internal static class CharacterSelectLockedIconResultPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
         ContextualSkinControls.ReplaceCharacterSelectTexture(__instance, locked: true, ref __result);
+}
+
+[HarmonyPatch(typeof(NContinueRunInfo), "ShowInfo")]
+internal static class ContinueRunPortraitPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NContinueRunInfo __instance, SerializableRun __0) =>
+        ContextualSkinControls.RefreshContinueRunPortrait(__instance, __0);
 }
 
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.Icon), MethodType.Getter)]

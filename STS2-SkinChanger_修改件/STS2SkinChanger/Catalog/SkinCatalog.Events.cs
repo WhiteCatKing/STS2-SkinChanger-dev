@@ -173,9 +173,27 @@ internal sealed partial class SkinCatalog
     public bool HasFakeMerchantEventImage(string providerId) => _cosmeticIndexes.Any(index =>
         index.Mod.Id == providerId && index.TryBuildAsset(FakeMerchantEventArtPolicy.EventImage) != null);
 
-    private static void AddFakeMerchantBackgroundProviders(IEnumerable<PckResourceIndex> indexes,
-        IDictionary<string, SkinGroup> groups)
+    private static bool IsFakeMerchantSaleBackground(string path) =>
+        path.Equals(FakeMerchantEventArtPolicy.EventImage, StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith(FakeMerchantTentRoot, StringComparison.OrdinalIgnoreCase);
+
+    private static bool ChangesFakeMerchantSaleBackground(ResourceAsset asset,
+        IReadOnlyList<PckResourceIndex> baselines)
     {
+        var baseline = baselines.Select(index => index.TryBuildAsset(asset.SourcePath))
+            .FirstOrDefault(candidate => candidate != null);
+        return asset.Files.Any(file =>
+            !file.Path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) &&
+            !file.Path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) &&
+            (baseline == null || !baseline.Files.Any(file.HasSameContentAs)));
+    }
+
+    private static void AddFakeMerchantBackgroundProviders(IEnumerable<PckResourceIndex> indexes,
+        IReadOnlyList<PckResourceIndex> baselines, IDictionary<string, SkinGroup> groups)
+    {
+        var saleGroup = FakeMerchantEventFrame.GroupId;
+        if (!groups.ContainsKey(saleGroup)) groups[saleGroup] = new SkinGroup(saleGroup, DisplayName("fake_merchant"));
+
         foreach (var index in indexes)
         {
             var assets = index.Archive.Paths.Where(path => IsFakeMerchantEventPresentationPath(path) || FakeMerchantEventArtPolicy.IsRedrawnArtPath(path))
@@ -185,13 +203,12 @@ internal sealed partial class SkinCatalog
             if (assets.Count == 0) continue;
             foreach (var id in new[] { FakeMerchantEventArtPolicy.MonsterGroupId, FakeMerchantEventFrame.GroupId })
             {
-                if (id == FakeMerchantEventFrame.GroupId && index.Mod.Id != FakeMerchantEventFrame.WorkshopProviderId)
-                    continue;
                 var groupAssets = id == FakeMerchantEventFrame.GroupId
-                    ? assets.Where(pair => IsFakeMerchantEventPresentationPath(pair.Key))
+                    ? assets.Where(pair => IsFakeMerchantSaleBackground(pair.Key))
                         .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
                     : assets;
-                if (groupAssets.Count == 0) continue;
+                if (groupAssets.Count == 0 || id == FakeMerchantEventFrame.GroupId &&
+                    !groupAssets.Values.Any(asset => ChangesFakeMerchantSaleBackground(asset, baselines))) continue;
                 if (!groups.TryGetValue(id, out var group)) groups[id] = group = new SkinGroup(id, DisplayName(id));
                 var position = group.Options.FindIndex(option => option.Id == index.Mod.Id);
                 if (position < 0) group.Options.Add(new SkinOption(index.Mod.Id, index.Mod.Name, groupAssets));

@@ -176,7 +176,7 @@ dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c ReleaseBeta -p:Optimize=t
 
 ```powershell
 ./tools/Test-BuildEnvironment.ps1
-dotnet run --project tests/STS2SkinChanger.LogicTests/STS2SkinChanger.LogicTests.csproj -c Release
+dotnet run --project tests/STS2SkinChanger.LogicTests/STS2SkinChanger.LogicTests.csproj -c Release -p:GameAssemblyDir=C:/sts2refs/stable
 dotnet run --project tests/STS2SkinChanger.RuntimeTests/STS2SkinChanger.RuntimeTests.csproj -c Release
 dotnet run --project tests/STS2SkinChanger.RuntimeTests/STS2SkinChanger.RuntimeTests.csproj -c ReleaseBeta -p:Optimize=true "-p:GameAssemblyDir=D:/Programs/Steam/steamapps/common/Slay the Spire 2/data_sts2_windows_x86_64"
 dotnet publish tools/WorkshopPublisher/WorkshopPublisher.csproj -c Release

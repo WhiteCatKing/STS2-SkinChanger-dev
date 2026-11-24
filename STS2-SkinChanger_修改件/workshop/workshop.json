@@ -4,7 +4,7 @@
   "title": "Skin Changer",
   "statementHeading": "Statement",
   "version": "1.0.41",
-  "internalTestVersion": "1.0.41.10",
+  "internalTestVersion": "1.0.41.16",
   "featureUpdate": "\n[h2]1.0.41[/h2]\n\nRed Hood body follows the dropdown on the first combat: initial entry no longer uses the provider's own saved palette, and later switches stay in sync. Everything 1.0.40 included.",
   "cardPriorityUpdate": "",
   "multiplayerUpdate": "",

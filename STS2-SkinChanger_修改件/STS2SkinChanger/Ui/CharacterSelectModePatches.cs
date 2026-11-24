@@ -13,6 +13,8 @@ internal static class CharacterSelectModePatches
         {
             var type = AccessTools.TypeByName(name);
             if (type == null) continue;
+            Bind("OnSubmenuOpened", typeof(CharacterSelectUiOpenPatch), null, "Postfix");
+            Bind("OnSubmenuClosed", typeof(CharacterSelectUiClosePatch), "Prefix", null);
             Bind("OnSubmenuOpened", typeof(RandomCharacterLobbySkinPatch), "Prefix", null);
             Bind("SelectCharacter", typeof(CharacterSelectionSkinPatch), "Prefix", "Postfix");
             Bind("AfterInitialized", typeof(MultiplayerSkinLobbyAttachPatch), null, "Postfix");

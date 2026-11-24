@@ -55,6 +55,17 @@ internal static class FrameworkModelPreview
                 ContextualSkinControls.ApplySelectedCreatureVisualPostfix(player.Creature, ref previewed);
                 visuals = previewed ?? visuals;
             }
+            if (groupId == "necrobinder" && SkinService.GetSelectedRuntimeProvider(groupId) ==
+                OrchisSkinFixCompat.ProviderId)
+            {
+                // The author's combat callback removes the vanilla head attachment. The fix
+                // DLL can bypass that callback, so give the menu preview the same head layout.
+                if (visuals.FindChild("HeadBoneNode", recursive: true, owned: false) is Node2D nativeHead)
+                {
+                    nativeHead.GetParent()?.RemoveChild(nativeHead);
+                    nativeHead.Free();
+                }
+            }
             staged = new FrameworkPreviewSurface { Name = "SkinChangerPendingPreview" };
             // Keep the complete fresh model: extracting/duplicating only a node named Visuals
             // discards sibling sprites, model offsets and animation controllers, and leaks the root.

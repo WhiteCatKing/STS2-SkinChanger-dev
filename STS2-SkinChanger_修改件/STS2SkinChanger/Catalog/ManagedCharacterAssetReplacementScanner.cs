@@ -190,7 +190,7 @@ internal static class ManagedCharacterAssetReplacementScanner
         // field-level data-flow analysis instead of assigning one profile to every target.
         if (characterEntries.Count != 1 || providerPathsByProperty.Count == 0)
         {
-            return ScanButtonIcon(assemblyPath);
+            return ScanTipheraGetterRoutes(reader, peReader) ?? ScanButtonIcon(assemblyPath);
         }
 
         var targetGroupId = NormalizeToken(characterEntries.Single());
@@ -207,6 +207,64 @@ internal static class ManagedCharacterAssetReplacementScanner
         return mappedPaths.Count == 0
             ? null
             : new ManagedCharacterAssetReplacement(targetGroupId, mappedPaths);
+    }
+
+    // TipheraSkin 1.0.5 routes private assets through Paths.Override, guarded by Entry.Want.
+    // Binding only verified literal routes makes these resources visible to both the early
+    // provider probe and the normal isolated character catalogue.
+    private static ManagedCharacterAssetReplacement? ScanTipheraGetterRoutes(MetadataReader reader, PEReader pe)
+    {
+        const string providerNamespace = "TipheraSkin";
+        const string target = "necrobinder";
+        var guardedTarget = reader.TypeDefinitions
+            .Select(reader.GetTypeDefinition)
+            .Where(type => reader.GetString(type.Namespace) == providerNamespace &&
+                reader.GetString(type.Name) == "Entry")
+            .SelectMany(type => type.GetMethods())
+            .Where(handle => reader.GetString(reader.GetMethodDefinition(handle).Name) == "Want" &&
+                reader.GetMethodDefinition(handle).RelativeVirtualAddress != 0)
+            .Any(handle => ReadIconInstructions(reader, pe, handle).Any(instruction =>
+            {
+                if (instruction.Op != OpCodes.Isinst) return false;
+                var token = MetadataTokens.EntityHandle(instruction.Token);
+                if (token.Kind != HandleKind.TypeReference) return false;
+                var type = reader.GetTypeReference((TypeReferenceHandle)token);
+                return reader.GetString(type.Namespace) == "MegaCrit.Sts2.Core.Models.Characters" &&
+                    reader.GetString(type.Name) == "Necrobinder";
+            }));
+        if (!guardedTarget) return null;
+
+        var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var type in reader.TypeDefinitions.Select(reader.GetTypeDefinition)
+                     .Where(type => reader.GetString(type.Namespace) == providerNamespace))
+        {
+            foreach (var method in type.GetMethods())
+            {
+                var definition = reader.GetMethodDefinition(method);
+                if (definition.RelativeVirtualAddress == 0 || reader.GetString(definition.Name) != "Pre")
+                    continue;
+                var instructions = ReadIconInstructions(reader, pe, method);
+                for (var i = 3; i < instructions.Count; i++)
+                {
+                    var call = instructions[i];
+                    if (call.Op != OpCodes.Call || call.Text != "Override" ||
+                        ResolveDeclaringTypeName(reader, MetadataTokens.EntityHandle(call.Token)) != "Paths" ||
+                        instructions[i - 3].Op != OpCodes.Ldstr || instructions[i - 2].Op != OpCodes.Ldstr ||
+                        instructions[i - 1].Op != OpCodes.Ldarg_1 ||
+                        instructions[i - 2].Text is not { } path ||
+                        !path.StartsWith("res://tiphera_skin/", StringComparison.Ordinal))
+                        continue;
+
+                    var property = instructions[i - 3].Text;
+                    var canonical = GetCanonicalPath(property == "CharacterSelectBg" ? "CharacterSelectBgPath" : property!, target);
+                    if (canonical != null) paths[NormalizeResourcePath(path)] = canonical;
+                }
+            }
+        }
+
+        return paths.ContainsValue(GetCanonicalPath("VisualsPath", target)!)
+            ? new ManagedCharacterAssetReplacement(target, paths)
+            : null;
     }
 
     // CznCore profiles declare the target with typeof(T), then pass the combat skeleton

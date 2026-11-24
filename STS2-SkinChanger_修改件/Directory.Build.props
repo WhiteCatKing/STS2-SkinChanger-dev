@@ -9,6 +9,7 @@
 
     <!-- Compile releases against the lowest supported game version. Beta references must
          be selected explicitly with -p:GameAssemblyDir, including in child projects. -->
+    <GameAssemblyDir Condition="'$(GameAssemblyDir)' == '' and '$(OS)' == 'Windows_NT' and '$(Configuration)' != 'ReleaseBeta' and Exists('C:/sts2refs/stable/sts2.dll') and Exists('C:/sts2refs/stable/GodotSharp.dll')">C:/sts2refs/stable</GameAssemblyDir>
     <GameAssemblyDir Condition="'$(GameAssemblyDir)' == '' and '$(OS)' == 'Windows_NT'">D:/Programs/Steam/steamapps/content/app_2868840/depot_2868841/data_sts2_windows_x86_64</GameAssemblyDir>
     <GameAssemblyDir Condition="'$(GameAssemblyDir)' == ''">/mnt/d/Programs/Steam/steamapps/content/app_2868840/depot_2868841/data_sts2_windows_x86_64</GameAssemblyDir>
   </PropertyGroup>

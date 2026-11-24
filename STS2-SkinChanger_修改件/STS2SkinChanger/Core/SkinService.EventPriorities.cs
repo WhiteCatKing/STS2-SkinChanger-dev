@@ -15,13 +15,24 @@ internal static partial class SkinService
         {
             var managed = Catalog.Groups.Where(g => EventSkinPolicy.IsEventGroup(g.Id) && g.Options.Count > 0)
                 .Select(g => g.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var regions = EventRegionPolicy.Group(ModelDb.AllEvents.Select(e => e.Id.Entry),
+            var regions = EventRegionPolicy.Group(ModelDb.AllEvents.Select(e => e.Id.Entry).Append("FAKE_MERCHANT"),
                 ActCatalog.All.ToDictionary(a => a.Id.Entry, a => a.AllEvents.Select(e => e.Id.Entry)),
                 ModelDb.AllSharedEvents.Select(e => e.Id.Entry));
             var registered = regions.ToDictionary(p => p.Key,
-                    p => p.Value.Select(EventSkinPolicy.GroupId).Where(managed.Contains).ToList(), StringComparer.OrdinalIgnoreCase)
+                    p => p.Value.Select(id => id.Equals("FAKE_MERCHANT", StringComparison.OrdinalIgnoreCase)
+                            ? FakeMerchantEventFrame.GroupId : EventSkinPolicy.GroupId(id))
+                        .Where(id => id == FakeMerchantEventFrame.GroupId || managed.Contains(id)).ToList(), StringComparer.OrdinalIgnoreCase)
                 .Where(p => p.Value.Count > 0).ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
-            if (!ChangeEventPriorityConfiguration(() => Config.EventSkinPriorities.Register(registered, Config.Selections)))
+            if (!ChangeEventPriorityConfiguration(() =>
+                {
+                    var priorities = Config.EventSkinPriorities;
+                    var groupId = FakeMerchantEventFrame.GroupId;
+                    // 1.0.41.10 had a manual selector, including an explicit vanilla choice.
+                    if (!priorities.KnownGroups.Contains(groupId, StringComparer.OrdinalIgnoreCase) &&
+                        Config.Selections.ContainsKey(groupId))
+                        priorities.ManualGroups.Add(groupId);
+                    priorities.Register(registered, Config.Selections);
+                }))
                 ModLog.Warn("初始化事件地区优先级失败：" + LastError);
         }
         catch (Exception exception)

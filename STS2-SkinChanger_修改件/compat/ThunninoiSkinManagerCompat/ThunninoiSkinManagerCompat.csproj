@@ -21,4 +21,8 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+  <Target Name="CheckGameAssemblyReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(GameAssemblyDir)/sts2.dll') or !Exists('$(GameAssemblyDir)/GodotSharp.dll')"
+           Text="Game assemblies missing from '$(GameAssemblyDir)'. Pass -p:GameAssemblyDir=&lt;directory containing sts2.dll and GodotSharp.dll&gt;." />
+  </Target>
 </Project>
