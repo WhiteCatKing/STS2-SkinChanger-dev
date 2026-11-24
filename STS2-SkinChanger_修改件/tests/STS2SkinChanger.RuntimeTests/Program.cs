@@ -17,6 +17,20 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args is ["--test-pack-selection-cache"])
+{
+    try { PackSelectionCacheTests.Run(); }
+    catch (Exception error) { Console.Error.WriteLine(error); System.Environment.ExitCode = 1; }
+    return;
+}
+
+if (args.Length >= 4 && args[0] == "--bench-pack-selection")
+{
+    try { PackSelectionCacheTests.Benchmark(args[1], args[2], args[3..]); }
+    catch (Exception error) { Console.Error.WriteLine(error); System.Environment.ExitCode = 1; }
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--test-poro-pack")
 {
     PoroPackTests.Run(args[1]);

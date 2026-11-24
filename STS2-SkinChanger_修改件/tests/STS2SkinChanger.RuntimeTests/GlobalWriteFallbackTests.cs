@@ -80,7 +80,7 @@ internal static class GlobalWriteFallbackTests
                 harmony.Patch(AccessTools.Method(typeof(ModLog), level),
                     prefix: new HarmonyMethod(typeof(GlobalWriteFallbackTests), nameof(Warn)) { priority = Priority.First });
             Patch(typeof(ProjectSettings), nameof(ProjectSettings.LoadResourcePack), nameof(Mount));
-            Patch(typeof(SkinCatalog), "GetProviderResourcePackPaths", nameof(PackPaths));
+            Patch(typeof(SkinCatalog), "GetIndexedProviderResourcePackPaths", nameof(PackPaths));
             Patch(typeof(SkinCatalog), "ProviderUsesScopedMonsterRuntime", nameof(Scoped));
             Patch(typeof(SkinCatalog), "ProviderRequiresCoherentRuntimePackage", nameof(Coherent));
             Patch(typeof(SkinCatalog), nameof(SkinCatalog.BuildOverlay), nameof(BuildOverlay));

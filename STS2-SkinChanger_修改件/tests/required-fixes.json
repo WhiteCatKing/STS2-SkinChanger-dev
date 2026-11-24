@@ -1,5 +1,14 @@
 [
   {
+    "id": "pack-selection-cache",
+    "title": "提权选包避免重复解析提供者和查磁盘，选择、包状态及重新扫描后刷新",
+    "since": "1.0.38.13",
+    "symbols": ["SkinCatalog.SelectProviderPacks", "ProviderPackFileCache"],
+    "tests": [
+      { "suite": "Runtime", "name": "PackSelectionCacheTests", "args": "--test-pack-selection-cache" }
+    ]
+  },
+  {
     "id": "large-provider-overlay-ownership",
     "title": "完整视觉包挂载后保留路径归属，避免大包反复重写触发闪退",
     "since": "1.0.35",

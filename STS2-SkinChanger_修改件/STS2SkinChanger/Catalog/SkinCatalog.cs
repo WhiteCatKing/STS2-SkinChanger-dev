@@ -804,6 +804,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 right.Name,
                 StringComparison.CurrentCultureIgnoreCase));
             _cosmeticIndexes.Add(index);
+            _providerPackFiles.Clear();
             index = null;
             return true;
         }
@@ -832,6 +833,7 @@ internal sealed partial class SkinCatalog : IDisposable
                      StringComparison.OrdinalIgnoreCase)).ToArray())
         {
             _cosmeticIndexes.Remove(index);
+            _providerPackFiles.Clear();
             index.Dispose();
         }
         _groups.RemoveAll(group => group.Options.Count == 0);
@@ -2361,14 +2363,17 @@ internal sealed partial class SkinCatalog : IDisposable
             : path;
 
     public IReadOnlyList<string> GetProviderResourcePackPaths(string optionId) =>
-        _cosmeticIndexes
-            .Where(index => index.Mod.Id.Equals(
-                ResolveVisualProviderId(optionId),
-                StringComparison.OrdinalIgnoreCase))
+        GetIndexedProviderResourcePackPaths(optionId).Where(File.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    internal IReadOnlyList<string> GetIndexedProviderResourcePackPaths(string optionId)
+    {
+        var providerId = ResolveVisualProviderId(optionId);
+        return _cosmeticIndexes
+            .Where(index => index.Mod.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase))
             .Select(index => index.Archive.Path)
-            .Where(File.Exists)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
 
     public IReadOnlyList<string> GetRuntimeProviderGroups(string optionId)
     {

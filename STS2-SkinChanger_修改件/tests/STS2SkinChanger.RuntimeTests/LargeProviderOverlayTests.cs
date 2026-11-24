@@ -32,7 +32,7 @@ internal static class LargeProviderOverlayTests
             harmony.Patch(AccessTools.PropertyGetter(typeof(SkinChangerPaths), "Storage"),
                 prefix: new HarmonyMethod(typeof(LargeProviderOverlayTests), nameof(Storage)));
             Patch(service, "GetVisualSelection", nameof(Selection));
-            Patch(typeof(SkinCatalog), "GetProviderResourcePackPaths", nameof(PackPaths));
+            Patch(typeof(SkinCatalog), "GetIndexedProviderResourcePackPaths", nameof(PackPaths));
             Patch(typeof(SkinCatalog), "ProviderRequiresCoherentRuntimePackage", nameof(Coherent));
             Patch(typeof(SkinChangerPaths), "LoadResourcePack", nameof(Mount));
             PckArchive.WriteOutput = null;

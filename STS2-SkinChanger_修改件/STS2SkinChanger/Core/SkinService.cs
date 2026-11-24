@@ -7580,59 +7580,8 @@ internal static partial class SkinService
     {
         var preflightStarted = Stopwatch.GetTimestamp();
         var selectStarted = preflightStarted;
-        var selectedOptions = catalog.Groups
-            .Select(group =>
-            {
-                var selection = GetVisualSelection(group.Id);
-                var option = group.Options.FirstOrDefault(option =>
-                    option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase) &&
-                    option.IsRuntimeProvider);
-                return (GroupId: group.Id, Option: option);
-            })
-            .Where(selection => selection.Option != null)
-            .ToArray();
-        var selectionSnapshot = selectedOptions.ToDictionary(
-            selection => selection.GroupId,
-            selection => selection.Option!.Id,
-            StringComparer.OrdinalIgnoreCase);
-        foreach (var group in catalog.Groups.Where(group => !selectionSnapshot.ContainsKey(group.Id)))
-        {
-            selectionSnapshot[group.Id] = GetVisualSelection(group.Id);
-        }
-
-        var directProviderPacks = selectedOptions
-            .SelectMany(selection =>
-            {
-                var providerId = selection.Option!.EffectiveProviderId;
-                var requiresCoherentPackage =
-                    catalog.ProviderRequiresCoherentRuntimePackage(providerId);
-                var companionOnly = catalog.IsCompanionOnlyProviderSelection(
-                    providerId,
-                    selectionSnapshot);
-                return catalog.GetProviderResourcePackPaths(providerId)
-                    .Select(System.IO.Path.GetFullPath)
-                    .Where(path =>
-                        requiresCoherentPackage ||
-                        new FileInfo(path).Length >= DirectRuntimeProviderPackThresholdBytes)
-                    .Select(path => (selection.GroupId, Path: path, CompanionOnly: companionOnly, ProviderId: providerId));
-            })
-            .ToArray();
-        var selectedPackPaths = directProviderPacks
-            .Select(pack => pack.Path)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        // A pack shared by a summon group and a real group (same provider) must stay promoted for
-        // the real group; only packs used exclusively by summon selections are demoted.
-        HashSet<string> CompanionOnlyPaths() => directProviderPacks
-            .GroupBy(pack => pack.Path, StringComparer.OrdinalIgnoreCase)
-            .Where(packs => packs.All(pack => pack.CompanionOnly))
-            .Select(packs => packs.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var companionOnlyPackPaths = CompanionOnlyPaths();
-        var promotedPackPaths = directProviderPacks
-            .Where(pack => affectedGroups.Contains(pack.GroupId))
-            .Select(pack => pack.Path)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var (directProviderPacks, selectedPackPaths, companionOnlyPackPaths, promotedPackPaths) =
+            catalog.SelectProviderPacks(GetVisualSelection, affectedGroups, DirectRuntimeProviderPackThresholdBytes);
         var selectElapsed = Stopwatch.GetElapsedTime(selectStarted);
 
         var preparedPromotions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -7712,7 +7661,7 @@ internal static partial class SkinService
         {
             directProviderPacks = directProviderPacks.Where(pack => !SkippedRuntimeProviders.ContainsKey(pack.ProviderId)).ToArray();
             selectedPackPaths = directProviderPacks.Select(pack => pack.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            companionOnlyPackPaths = CompanionOnlyPaths();
+            companionOnlyPackPaths = ProviderPackMountSelection.CompanionOnlyPaths(directProviderPacks);
             promotedPackPaths.IntersectWith(selectedPackPaths);
         }
         var skipFilterElapsed = Stopwatch.GetElapsedTime(skipFilterStarted);
