@@ -89,3 +89,14 @@
 - 定位新旧问题用 A/B：保留上一版 DLL，换回去让用户只看几个点；判断某份日志属于哪个构建，用日志里能区分构建的特征（例如"保留 N 个原作者行为补丁"），不要只看文件时间。部署时保留最近两版即可。
 - 同一程序集名的两个不同 Mod 不能同时运行（如 Raven 与狐猎nsfw 都叫 `SilentSkinMod`）；功能不全时先查这个。
 - 怀疑某个第三方包本身坏了：用 `ModApiScan` 扫它调用的游戏接口和补丁参数（工具源码由 yuinn 一方提供，需要时向其索取）。
+
+## 工坊发布（2026-11-24 白猫要求）
+- 工坊发的那一套，就是「这次修好后打包给本地用」的同一版本、同一产物：修好 → 双引用构建 → 部署本地（两份安装包 + 游戏 `mods`）→ 作者自测 → 直接把同一份产物上传工坊。**不许为发布另起一套构建。**
+- **更新日志**：以同一工坊条目上一次实际发布的包为基线，对照本次包、提交和验收记录，逐项覆盖期间所有实际发布的新增、调整和修复（含漏发后本次入包的改动）。中英双语只写工坊「改动说明」，简介不放版本公告。
+- 发布前逐项核对，任何一项对不上就停下来查：
+  - 版本号四处一致：`STS2SkinChanger.csproj` 四字段、`Entry.InternalTestVersion`、`SkinChanger.json`、`workshop/workshop.json`。
+  - 三个文件与上传目录逐字节一致：`Gurio.SkinChanger.dll`、`thunninoiSkinManager.dll`、`SkinChanger.json`（比 SHA256，不比大小）。
+  - 包内 `SkinChanger.json` `version` 与工坊文案的 `version` 是同一个号。
+- 注意 DLL 同尺寸不代表同版本：PE 对齐会把只改版本号的产物压成相同字节数（1.0.40 与 1.0.41 都是 3,781,632 B，哈希不同），只能比 SHA256 或直接读包内 `SkinChanger.json`。
+- **严禁回旧提交挑一套发布**：发现问题就在当前版本上修，不许 checkout 历史提交、拿它的产物顶替，也不许拿旧 DLL 配新文案。
+- `thunninoiSkinManager.dll` 是本 Mod 自带的行为隔离兼容层（`compat/ThunninoiSkinManagerCompat`，产物名与第三方框架同名），必须随包发布。它缺失不会让本 Mod 报错（`FrameworkCompatibilityLayer` 只记一条 warn 后返回），但依赖 thunninoi 框架的皮肤包会失去内置接口、交回游戏加载器；玩家没装原版管理器时这些包就不生效。

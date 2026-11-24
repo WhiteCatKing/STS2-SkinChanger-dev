@@ -15,5 +15,7 @@
 
 - 只改与任务相关的文件；不批量改编码与换行（统一 LF）。
 - 构建、测试、部署步骤只在源码树里执行，产物部署到四处：两份安装包 / `STS2_Work\workshop_content_1.0.20` / 游戏 `mods\STS2皮肤切换器_mod测试版安装包`。
+- 工坊发布直接用「每次修好并打包供本地使用」的同一版本、同一产物，不另起一套发布构建；发布前核对版本号与 `Gurio.SkinChanger.dll`、`thunninoiSkinManager.dll`、`SkinChanger.json` 的 SHA256。
+- 工坊改动说明以同一条目上一次实际发布包为起点，核对并写齐到本次发布包之间实际入包的新增、调整和修复。中英双语写在「改动说明」，不放简介。细则见 [maintenance-rules.md](STS2-SkinChanger_修改件/docs/agents/maintenance-rules.md) 的「工坊发布」。
 - 不启动游戏做实机测试；游戏内验证由作者本人完成。
 - 提交信息用中文。
