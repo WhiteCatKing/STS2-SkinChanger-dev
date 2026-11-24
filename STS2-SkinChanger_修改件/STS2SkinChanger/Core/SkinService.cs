@@ -1226,6 +1226,8 @@ internal static partial class SkinService
                 ResetCardPortraitSession();
                 BaselineRelicAtlasCache.Clear();
                 BaselineRelicIconCache.Clear();
+                ClearRelicBundleResidency();
+                DisplayedRelicSlices.Clear();
                 IsolatedCardOverlayCache.Clear();
                 CharacterPreviewSelections.Clear();
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
@@ -1594,24 +1596,8 @@ internal static partial class SkinService
                     includeProviderDependencies: true);
                 prepared++;
 
-                var selected = group.Options.FirstOrDefault(option => option.Id.Equals(
-                    selection,
-                    StringComparison.OrdinalIgnoreCase));
-                if (selected != null)
-                {
-                    var relicPaths = catalog.GetProviderRelicSpritePaths(group.Id, selected);
-                    if (relicPaths.Count > 0)
-                    {
-                        _ = GetOrPrepareRuntimeOverlay(
-                            catalog,
-                            group.Id,
-                            selection,
-                            relicPaths,
-                            includeProviderDependencies: false,
-                            isolateRelicCanonicalPaths: true);
-                        preparedRelicBundles++;
-                    }
-                }
+                if (PrepareSelectedRelicBundle(catalog, group.Id, selection) != null)
+                    preparedRelicBundles++;
             }
 
             if (prepared > 0)
@@ -4901,16 +4887,12 @@ internal static partial class SkinService
                 return GetBaselineRelicIcon(catalog, resourcePath);
             }
 
-            var cacheKey = RuntimeResourceKey(groupId, resourcePath);
-            if (!RuntimeResourceCache.TryGetValue(cacheKey, out var cached) ||
-                !GodotObject.IsInstanceValid(cached))
-            {
-                LoadSelectedRelicBundle(catalog, groupId);
-                cached = RuntimeResourceCache.GetValueOrDefault(cacheKey);
-            }
+            if (LoadingRelicBundles.Contains(groupId)) return null;
+            var texture = GetSelectedRelicTexture(catalog, groupId, resourcePath);
+            if (texture is AtlasTexture sprite && !DisplayedRelicSlices.TryGetValue(sprite, out _))
+                DisplayedRelicSlices.Add(sprite, new(groupId, resourcePath));
 
-            return cached as Texture2D ?? throw new InvalidOperationException(
-                $"隔离的遗物图标不是贴图：{resourcePath}");
+            return texture ?? throw new InvalidOperationException($"隔离的遗物图标不是贴图：{resourcePath}");
         }
     }
 
@@ -4933,15 +4915,7 @@ internal static partial class SkinService
                 return null;
             }
 
-            var cacheKey = RuntimeResourceKey(groupId, bigIconPath);
-            if (!RuntimeResourceCache.TryGetValue(cacheKey, out var cached) ||
-                !GodotObject.IsInstanceValid(cached))
-            {
-                LoadSelectedRelicBundle(catalog, groupId);
-                cached = RuntimeResourceCache.GetValueOrDefault(cacheKey);
-            }
-
-            return cached as Texture2D;
+            return GetSelectedRelicTexture(catalog, groupId, bigIconPath);
         }
     }
 
@@ -5129,46 +5103,77 @@ internal static partial class SkinService
         return result;
     }
 
-    private static void LoadSelectedRelicBundle(SkinCatalog catalog, string groupId)
+    private static PreparedRuntimeOverlay? PrepareSelectedRelicBundle(SkinCatalog catalog,
+        string groupId, string selection)
     {
-        var group = catalog.Groups.First(group => group.Id.Equals(
-            groupId,
-            StringComparison.OrdinalIgnoreCase));
+        var option = catalog.Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option => option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+        if (option == null || selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase)) return null;
+        var paths = catalog.GetProviderRelicResourcePaths(groupId, option);
+        return paths.Count == 0 ? null : GetOrPrepareRuntimeOverlay(catalog, groupId, selection, paths,
+            includeProviderDependencies: false, isolateRelicCanonicalPaths: true, relicOption: option);
+    }
+
+    private static Texture2D? GetSelectedRelicTexture(SkinCatalog catalog, string groupId, string resourcePath)
+    {
+        if (LoadingRelicBundles.Contains(groupId)) return null;
         var selection = Config.GetSelection(groupId);
-        var selected = group.Options.First(option => option.Id.Equals(
-            selection,
-            StringComparison.OrdinalIgnoreCase));
-        var relicResourcePaths = catalog.GetProviderRelicResourcePaths(groupId, selected);
-        if (relicResourcePaths.Count == 0)
+        var path = SkinCatalog.NormalizeTakeoverPath(resourcePath);
+        if (RelicBundles.TryGetValue(groupId, out var cached))
         {
-            return;
+            if (cached.Prepared.IsRelicCatalog(catalog) &&
+                selection.Equals(cached.Selection, StringComparison.OrdinalIgnoreCase))
+            {
+                try { RequireRelicBundleSources(cached.Prepared); }
+                catch
+                {
+                    RelicBundles.Remove(groupId);
+                    throw;
+                }
+                var resource = cached.Resources.GetValueOrDefault(path);
+                if (resource == null || GodotObject.IsInstanceValid(resource))
+                {
+                    cached.LastUse = Stopwatch.GetTimestamp();
+                    return resource as Texture2D;
+                }
+            }
+            RelicBundles.Remove(groupId);
         }
+        LoadingRelicBundles.Add(groupId);
+        try
+        {
+            return LoadSelectedRelicBundle(catalog, groupId, selection)?.Resources.GetValueOrDefault(path) as Texture2D;
+        }
+        finally
+        {
+            LoadingRelicBundles.Remove(groupId);
+        }
+    }
 
-        var spritePaths = relicResourcePaths
-            .Where(SkinCatalog.IsRelicAtlasSpritePath)
-            .ToArray();
-        var bigIconPaths = relicResourcePaths
-            .Where(SkinCatalog.IsRelicBigIconPath)
-            .ToArray();
-
+    private static RelicBundle? LoadSelectedRelicBundle(SkinCatalog catalog, string groupId, string selection)
+    {
         var started = Stopwatch.GetTimestamp();
-        var prepared = GetOrPrepareRuntimeOverlay(
-            catalog,
-            groupId,
-            selection,
-            relicResourcePaths,
-            includeProviderDependencies: false,
-            isolateRelicCanonicalPaths: true);
-
+        var previousPreparedCount = _sessionPreparedCount;
+        var prepared = PrepareSelectedRelicBundle(catalog, groupId, selection);
+        if (prepared == null) return null;
+        var built = _sessionPreparedCount - previousPreparedCount;
+        var mountStarted = Stopwatch.GetTimestamp();
         if (prepared.OverlayPath != null &&
             !SkinChangerPaths.LoadResourcePack(GlobalWriteSite.A05, prepared.OverlayPath, replaceFiles: true))
         {
             throw new InvalidOperationException("Godot 拒绝加载遗物皮肤资源包。");
         }
 
+        var decodeStarted = Stopwatch.GetTimestamp();
+        var decodeElapsed = TimeSpan.Zero;
+        var restoreStarted = decodeStarted;
         var loaded = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
         try
         {
+            // Rewritten slices resolve an immutable private texture. Let Godot reuse the
+            // atlas we load here when it resolves each slice's external dependency.
+            var atlasCacheMode = prepared.RewrittenRelicUids > 0
+                ? ResourceLoader.CacheMode.Reuse : ResourceLoader.CacheMode.IgnoreDeep;
             var providerAtlases = prepared.ResourcePaths
                 .Where(pair => SkinCatalog.IsRelicAtlasTexturePath(pair.Key))
                 .ToDictionary(
@@ -5176,7 +5181,7 @@ internal static partial class SkinService
                     pair => ResourceLoader.Load<Texture2D>(
                                 pair.Value,
                                 null,
-                                ResourceLoader.CacheMode.IgnoreDeep) ??
+                                atlasCacheMode) ??
                             throw new InvalidOperationException(
                                 $"无法加载遗物皮肤私有图集：{pair.Value}"),
                     StringComparer.OrdinalIgnoreCase);
@@ -5203,7 +5208,7 @@ internal static partial class SkinService
                 return loadedTexture;
             }
 
-            foreach (var relicPath in spritePaths)
+            foreach (var relicPath in prepared.RelicRoots.Where(SkinCatalog.IsRelicAtlasSpritePath))
             {
                 if (!prepared.ResourcePaths.TryGetValue(relicPath, out var alias))
                 {
@@ -5256,7 +5261,7 @@ internal static partial class SkinService
                 loaded[relicPath] = texture;
             }
 
-            foreach (var bigIconPath in bigIconPaths)
+            foreach (var bigIconPath in prepared.RelicRoots.Where(SkinCatalog.IsRelicBigIconPath))
             {
                 if (loaded.ContainsKey(bigIconPath) ||
                     !prepared.ResourcePaths.TryGetValue(bigIconPath, out var bigAlias))
@@ -5269,21 +5274,35 @@ internal static partial class SkinService
         }
         finally
         {
+            restoreStarted = Stopwatch.GetTimestamp();
+            decodeElapsed = Stopwatch.GetElapsedTime(decodeStarted, restoreStarted);
             var restoreGroups = prepared.RestoreGroups
                 .Append(groupId)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             MountOverlay(restoreGroups, skipBlockedProviders: true);
         }
 
-        foreach (var resource in loaded)
-        {
-            RuntimeResourceCache[RuntimeResourceKey(groupId, resource.Key)] = resource.Value;
-        }
+        var publishStarted = Stopwatch.GetTimestamp();
+        // A provider may re-enter selection handling while the original overlay is restored.
+        if (!ReferenceEquals(catalog, Catalog) ||
+            !selection.Equals(Config.GetSelection(groupId), StringComparison.OrdinalIgnoreCase))
+            throw new AppearanceResourceUnavailableException("遗物外观请求已过期。");
+        RequireRelicBundleSources(prepared, fresh: true);
+        var bundle = new RelicBundle(selection, prepared, loaded);
+        StoreRelicBundle(groupId, bundle);
+        var publishEnded = Stopwatch.GetTimestamp();
 
         ModLog.Info(
             $"已一次性加载 {groupId} 的 {loaded.Count} 个遗物皮肤资源；" +
             $"运行包={prepared.FileCount} 个文件/{prepared.FileSize / 1024d:F1} KiB，" +
-            $"耗时={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} ms。");
+            $"耗时={Stopwatch.GetElapsedTime(started, publishEnded).TotalMilliseconds:F1} ms。" +
+            $" 建包={built} 准备={Stopwatch.GetElapsedTime(started, mountStarted).TotalMilliseconds:F1}ms" +
+            $" 挂载={Stopwatch.GetElapsedTime(mountStarted, decodeStarted).TotalMilliseconds:F1}ms" +
+            $" 资源创建={decodeElapsed.TotalMilliseconds:F1}ms" +
+            $" 恢复覆盖={Stopwatch.GetElapsedTime(restoreStarted, publishStarted).TotalMilliseconds:F1}ms" +
+            $" 回写缓存={Stopwatch.GetElapsedTime(publishStarted, publishEnded).TotalMilliseconds:F1}ms" +
+            $" 纹理字节={prepared.EstimatedBytes} 清理UID={prepared.RewrittenRelicUids}");
+        return bundle;
     }
 
     public static bool IsRuntimeProviderSelected(string groupId)
@@ -6524,7 +6543,8 @@ internal static partial class SkinService
         string selection,
         IReadOnlyCollection<string> resourcePaths,
         bool includeProviderDependencies,
-        bool isolateRelicCanonicalPaths = false)
+        bool isolateRelicCanonicalPaths = false,
+        SkinOption? relicOption = null)
     {
         var normalizedPaths = resourcePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -6562,12 +6582,17 @@ internal static partial class SkinService
             key += "\nstage\n" + stageSource.Key;
         }
         if (PreparedRuntimeOverlays.TryGetValue(key, out var cached) &&
+            (relicOption == null || cached.IsRelicCatalog(catalog)) &&
             (cached.OverlayPath == null || File.Exists(cached.OverlayPath)))
         {
+            if (relicOption != null) RequireRelicBundleSources(cached);
             LastPreparedRuntimeOverlays[groupId] = cached;
             return cached;
         }
 
+        var relicSources = relicOption == null ? [] : CaptureRelicBundleSources(catalog, relicOption);
+        if (!relicSources.All(RelicSourceChecks.IsCurrent))
+            throw new AppearanceResourceUnavailableException("遗物皮肤资源包已变更，等待重新扫描。");
         if (cached?.StageResidencyKey is { } obsolete) StageRuntimeBundles.Forget(obsolete);
         else RuntimeResourceBundles.Remove(key);
 
@@ -6588,6 +6613,13 @@ internal static partial class SkinService
                 includeProviderDependencies,
                 reuseMountedPrivateDependencies);
         overlay = StripRuntimeSharedWrites(catalog.GlobalWriteProtection, overlay, groupId, selection);
+        var rewrittenRelicUids = 0;
+        if (relicOption != null)
+        {
+            var files = overlay.Files.ToDictionary(StringComparer.OrdinalIgnoreCase);
+            rewrittenRelicUids = RewritePrivateRelicSliceUids(overlay, files);
+            overlay = overlay with { Files = files };
+        }
         var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
             groupId,
             overlay.CanonicalDependencyPaths);
@@ -6628,7 +6660,11 @@ internal static partial class SkinService
         {
             StageSource = stageSource,
             SpinePages = overlay.SpinePages,
-            RelicSpriteTextures = overlay.RelicSpriteTextures
+            RelicSpriteTextures = overlay.RelicSpriteTextures,
+            RelicCatalog = relicOption == null ? null : new(catalog),
+            RelicSources = relicSources,
+            RelicRoots = relicOption == null ? [] : normalizedPaths,
+            RewrittenRelicUids = rewrittenRelicUids
         };
         PreparedRuntimeOverlays[key] = prepared;
         LastPreparedRuntimeOverlays[groupId] = prepared;
@@ -8631,6 +8667,12 @@ internal static partial class SkinService
         internal StageBundleSource? StageSource { get; init; }
         internal string? StageResidencyKey => StageSource == null ? null : Key + "\n" + AliasToken;
         internal IReadOnlyList<string> SpinePages { get; init; } = [];
+        internal WeakReference<SkinCatalog>? RelicCatalog { get; init; }
+        internal bool IsRelicCatalog(SkinCatalog catalog) =>
+            RelicCatalog?.TryGetTarget(out var owner) == true && ReferenceEquals(owner, catalog);
+        internal CardFileStamp[] RelicSources { get; init; } = [];
+        internal string[] RelicRoots { get; init; } = [];
+        internal int RewrittenRelicUids { get; init; }
         internal IReadOnlyDictionary<string, string> RelicSpriteTextures { get; init; } =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
@@ -8669,6 +8711,8 @@ internal static partial class SkinService
     {
         var prefix = groupId + "\n";
         RestoreCachedRelicTexturesToBaseline(groupId, prefix);
+        RelicBundles.Remove(groupId);
+        RelicSourceChecks.Clear();
         foreach (var key in RuntimeResourceCache.Keys
                      .Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                      .ToArray())
@@ -8688,10 +8732,8 @@ internal static partial class SkinService
 
     private static void RestoreCachedRelicTexturesToBaseline(string groupId, string cachePrefix)
     {
-        if (Catalog == null)
-        {
-            return;
-        }
+        var catalog = Catalog;
+        if (catalog == null) return;
 
         var restored = 0;
         foreach (var pair in RuntimeResourceCache.Where(pair =>
@@ -8706,17 +8748,25 @@ internal static partial class SkinService
 
             var resourcePath = pair.Key[(pathStart + 1)..];
             if (!SkinCatalog.IsRelicAtlasSpritePath(resourcePath) ||
-                pair.Value is not AtlasTexture existing)
-            {
-                continue;
-            }
+                pair.Value is not AtlasTexture existing) continue;
+            Restore(resourcePath, existing);
+        }
 
+        foreach (var (sprite, origin) in DisplayedRelicSlices.ToArray())
+        {
+            if (!origin.GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase)) continue;
+            DisplayedRelicSlices.Remove(sprite);
+            if (GodotObject.IsInstanceValid(sprite)) Restore(origin.ResourcePath, sprite);
+        }
+
+        if (restored > 0)
+            ModLog.Info($"已将 {groupId} 的 {restored} 个存量遗物图标恢复到游戏图集。");
+
+        void Restore(string resourcePath, AtlasTexture existing)
+        {
             try
             {
-                if (GetBaselineRelicIcon(Catalog, resourcePath) is not AtlasTexture baseline)
-                {
-                    continue;
-                }
+                if (GetBaselineRelicIcon(catalog, resourcePath) is not AtlasTexture baseline) return;
 
                 // TextureRect nodes can keep the old AtlasTexture object after the character
                 // selection changes. Mutate that still-referenced object back to the game's
@@ -8735,11 +8785,6 @@ internal static partial class SkinService
                     $"回退 {resourcePath} 的遗物图集缓存失败，将在下次创建图标时恢复：" +
                     exception.GetBaseException().Message);
             }
-        }
-
-        if (restored > 0)
-        {
-            ModLog.Info($"已将 {groupId} 的 {restored} 个存量遗物图标恢复到游戏图集。");
         }
     }
 

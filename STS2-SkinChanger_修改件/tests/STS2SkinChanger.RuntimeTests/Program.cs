@@ -24,9 +24,23 @@ if (args is ["--test-pack-selection-cache"])
     return;
 }
 
+if (args is ["--test-relic-bundle-residency"])
+{
+    try { RelicBundleResidencyTests.Run(); }
+    catch (Exception error) { Console.Error.WriteLine(error); System.Environment.ExitCode = 1; }
+    return;
+}
+
 if (args.Length >= 4 && args[0] == "--bench-pack-selection")
 {
     try { PackSelectionCacheTests.Benchmark(args[1], args[2], args[3..]); }
+    catch (Exception error) { Console.Error.WriteLine(error); System.Environment.ExitCode = 1; }
+    return;
+}
+
+if (args is ["--audit-relic-bundle-residency", var relicGame, var relicMod])
+{
+    try { RelicBundleResidencyTests.Audit(relicGame, relicMod); }
     catch (Exception error) { Console.Error.WriteLine(error); System.Environment.ExitCode = 1; }
     return;
 }

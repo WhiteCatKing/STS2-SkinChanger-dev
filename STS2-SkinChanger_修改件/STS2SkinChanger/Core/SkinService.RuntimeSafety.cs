@@ -1,6 +1,11 @@
 using Godot;
+using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Pck;
 using STS2SkinChanger.Ui;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace STS2SkinChanger.Core;
 
@@ -29,6 +34,7 @@ internal static partial class SkinService
             // Release optional cache ownership only. Active scenes retain their own resources.
             RuntimeResourceBundles.Clear();
             StageRuntimeBundles.TrimForPressure();
+            ClearRelicBundleResidency();
             RuntimeResourceCache.Clear();
             GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
         }
@@ -70,6 +76,146 @@ internal static partial class SkinService
         }
         // Standalone icon/scene lookups also retain references outside bundles.
         while (RuntimeResourceCache.Count > 256) RuntimeResourceCache.Remove(RuntimeResourceCache.Keys.First());
+    }
+
+    // Every graph that passes the existing single-graph limit fits on its own. Keep a separate
+    // bounded pool for these complete graphs, away from the standalone resource lookup cap.
+    private const long RelicBundleBudget = RuntimeLoadSafety.MaximumSingleLoadBytes;
+    private static readonly Dictionary<string, RelicBundle> RelicBundles = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConditionalWeakTable<AtlasTexture, RelicSliceOrigin> DisplayedRelicSlices = new();
+    private static readonly HashSet<string> LoadingRelicBundles = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly CardSourceCheckCache RelicSourceChecks =
+        new(static stamp => stamp.IsCurrent(), static () => System.Environment.TickCount64);
+
+    private sealed record RelicBundle(
+        string Selection, PreparedRuntimeOverlay Prepared,
+        Dictionary<string, Resource> Resources)
+    {
+        internal long LastUse { get; set; } = Stopwatch.GetTimestamp();
+    }
+
+    private sealed record RelicSliceOrigin(string GroupId, string ResourcePath);
+
+    private static void ClearRelicBundleResidency()
+    {
+        RelicBundles.Clear(); // The native view still owns any resource already assigned to it.
+        RelicSourceChecks.Clear();
+    }
+
+    private static void StoreRelicBundle(string groupId, RelicBundle bundle)
+    {
+        RelicBundles[groupId] = bundle;
+        var bytes = RelicBundles.Values.Sum(entry => entry.Prepared.EstimatedBytes);
+        foreach (var entry in RelicBundles.OrderBy(entry => entry.Value.LastUse).ToArray())
+        {
+            if (RelicBundles.Count <= RuntimeLoadSafety.BundleLimit && bytes <= RelicBundleBudget) break;
+            if (entry.Key.Equals(groupId, StringComparison.OrdinalIgnoreCase)) continue;
+            RelicBundles.Remove(entry.Key);
+            bytes -= entry.Value.Prepared.EstimatedBytes;
+        }
+    }
+
+    private static CardFileStamp[] CaptureRelicBundleSources(SkinCatalog catalog, SkinOption option)
+    {
+        var sources = new Dictionary<string, CardFileStamp>(StringComparer.OrdinalIgnoreCase);
+        foreach (var asset in option.Assets.Values)
+            foreach (var file in asset.Files)
+                if (file.SourceStamp is { } stamp) sources.TryAdd(stamp.PhysicalPath, stamp);
+
+        // Relics can be in an auxiliary pack whose files are absent from the character's asset
+        // list. Prefer the directory's registered stamps, then observe unregistered session packs.
+        if (_workshopGamePack is { } game && File.Exists(game))
+        {
+            using var stream = File.OpenRead(game);
+            var stamp = CardFileStamp.From(stream);
+            sources.TryAdd(stamp.PhysicalPath, stamp);
+        }
+        var providers = option.IsComposition ? option.CompositionSourceProviderIds : [option.EffectiveProviderId];
+        foreach (var provider in providers)
+        {
+            var paths = catalog.GetProviderResourcePackPaths(provider)
+                .Concat(_workshopDescriptors.Where(mod => mod.Id.Equals(provider, StringComparison.OrdinalIgnoreCase))
+                    .Select(mod => mod.PckPath).OfType<string>());
+            foreach (var path in paths)
+            {
+                var full = System.IO.Path.GetFullPath(path);
+                if (sources.ContainsKey(full)) continue;
+                if (_workshopSourceStamps.TryGetValue(path, out var registered))
+                    sources.Add(full, new(full, registered.Length, registered.Modified.Ticks));
+                else if (File.Exists(full))
+                {
+                    using var stream = File.OpenRead(full);
+                    sources.Add(full, CardFileStamp.From(stream));
+                }
+            }
+        }
+        return sources.Values.OrderBy(stamp => stamp.PhysicalPath, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static void RequireRelicBundleSources(PreparedRuntimeOverlay prepared, bool fresh = false)
+    {
+        if (prepared.RelicSources.All(stamp => fresh ? stamp.IsCurrent() : RelicSourceChecks.IsCurrent(stamp))) return;
+        if (PreparedRuntimeOverlays.TryGetValue(prepared.Key, out var current) && ReferenceEquals(current, prepared))
+            PreparedRuntimeOverlays.Remove(prepared.Key);
+        foreach (var entry in LastPreparedRuntimeOverlays.Where(entry => ReferenceEquals(entry.Value, prepared)).ToArray())
+            LastPreparedRuntimeOverlays.Remove(entry.Key);
+        throw new AppearanceResourceUnavailableException("遗物皮肤资源包已变更，等待重新扫描。");
+    }
+
+    private static readonly Regex RelicRemapTarget = new(@"(?m)^[ \t]*path(?:\.[a-zA-Z0-9_]+)?[ \t]*=[ \t]*""(?<path>res://[^""]+)""",
+        RegexOptions.CultureInvariant);
+
+    // Only rewrite the binary copies emitted into our private relic PCK. Every fallback path
+    // must already resolve inside the same overlay. Unrecognized encodings retain their bytes.
+    internal static int RewritePrivateRelicSliceUids(RuntimeResourceOverlay overlay, Dictionary<string, byte[]> files)
+    {
+        var rewritten = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (source, alias) in overlay.ResourcePaths)
+        {
+            if (!SkinCatalog.IsRelicAtlasSpritePath(source)) continue;
+            var payload = alias;
+            if (files.TryGetValue(alias + ".remap", out var redirect))
+            {
+                var target = RelicRemapTarget.Match(Encoding.UTF8.GetString(redirect));
+                if (!target.Success) continue;
+                payload = target.Groups["path"].Value;
+            }
+            if (!payload.StartsWith("res://sts2_skin_runtime/", StringComparison.Ordinal) ||
+                rewritten.Contains(payload) || !files.TryGetValue(payload, out var bytes)) continue;
+            try
+            {
+                var binary = CardBinaryResource.Parse(bytes);
+                if (binary?.RootType != "AtlasTexture") continue;
+                var dependencies = binary.Dependencies(source).ToArray();
+                if (dependencies.Length == 0 || !dependencies.All(IsPrivateDependency)) continue;
+                files[payload] = binary.Rewrite(source, overlay.SourceAliases, overlay.PayloadAliases);
+                rewritten.Add(payload);
+            }
+            catch (Exception error) when (error is InvalidDataException or EndOfStreamException or OverflowException
+                or NotSupportedException)
+            {
+                // The existing loader still has its original UID/text path fallback.
+            }
+        }
+        return rewritten.Count;
+
+        bool IsPrivateDependency(string path)
+        {
+            var extension = System.IO.Path.GetExtension(path).ToLowerInvariant();
+            if (extension is not (".png" or ".ctex" or ".webp" or ".jpg" or ".jpeg")) return false;
+            var local = overlay.SourceAliases.GetValueOrDefault(path) ?? overlay.PayloadAliases.GetValueOrDefault(path);
+            if (local == null || !local.StartsWith("res://sts2_skin_runtime/", StringComparison.Ordinal))
+                return false;
+            var redirect = files.GetValueOrDefault(local + ".import") ?? files.GetValueOrDefault(local + ".remap");
+            if (redirect == null) return files.ContainsKey(local);
+            var targets = RelicRemapTarget.Matches(Encoding.UTF8.GetString(redirect));
+            return targets.Count > 0 && targets.All(target =>
+            {
+                var targetPath = target.Groups["path"].Value;
+                return targetPath.StartsWith("res://sts2_skin_runtime/", StringComparison.Ordinal) &&
+                    files.ContainsKey(targetPath);
+            });
+        }
     }
 
     private static Resource LoadCheckedRuntimeResource(string path, bool sharedDependencies, long estimatedBytes)

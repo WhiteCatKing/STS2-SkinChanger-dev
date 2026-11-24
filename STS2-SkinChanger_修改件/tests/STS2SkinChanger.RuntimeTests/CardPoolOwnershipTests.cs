@@ -196,7 +196,7 @@ internal static class CardPoolOwnershipTests
         return bytes;
     }
 
-    private static byte[] MakeBinaryPortrait(string texturePath, bool compress)
+    internal static byte[] MakeBinaryPortrait(string texturePath, bool compress)
     {
         using var buffer = new MemoryStream();
         using var writer = new BinaryWriter(buffer);
