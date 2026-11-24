@@ -301,7 +301,9 @@ internal static class ProviderSettingsVariantOptions
     /// (clothing) behaviour, and letting it win made that behaviour disappear from its sibling.
     /// Returns the assembly path of the fuller sibling, or null when this one already is the fullest.
     /// </summary>
-    internal static string? FindRicherSiblingAssemblyPath(string assemblyPath)
+    internal static string? FindRicherSiblingAssemblyPath(
+        string assemblyPath,
+        Func<string, bool>? isEligiblePath = null)
     {
         try
         {
@@ -319,6 +321,7 @@ internal static class ProviderSettingsVariantOptions
                 var candidatePath = slot.Contract.AssemblyPath;
                 if (candidatePath.Equals(assemblyPath, StringComparison.OrdinalIgnoreCase) ||
                     !File.Exists(candidatePath) ||
+                    (isEligiblePath != null && !isEligiblePath(candidatePath)) ||
                     !SharesContractShape(mine, slot.Contract))
                 {
                     continue;

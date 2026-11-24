@@ -19,6 +19,8 @@ internal static class FakeMerchantBattleFigure
     private static string? _selection;
     private static string? _spineSkin;
 
+    internal static bool HasPendingShopFigure => _shopFigure != null;
+
     internal static void Capture(NFakeMerchant __instance)
     {
         _shopFigure?.Free();
@@ -89,6 +91,11 @@ internal static class FakeMerchantBattleFigure
             host.AddChild(preview);
             var button = ((NFakeMerchant)preview).MerchantButton;
             var native = button.GetNodeOrNull<Node2D>("%MerchantVisual");
+            // [延迟调度/ProcessFrame] 原触发时机：战斗内换假商人皮肤后拉起隐藏预览并逐帧轮询最终售货精灵；
+            // 最早可执行帧：入队下一 ProcessFrame 起每帧一次；顺序依赖：须等隐藏预览内第三方房间回调替换完骨骼后再复制；
+            // 能否合并：由 creature.Visuals 与 selection 校验淘汰旧选择；重试上限：30 帧；
+            // 取消条件：!IsInstanceValid(creature) || !creature.IsInsideTree() || creature.Visuals != visuals || selection 变更 || !NeedsShopFigure(creature) 或已安装完成。
+            var startFrame = DeferredDispatch.CurrentFrame();
             for (var frame = 0; frame < 30; frame++)
             {
                 await host.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
@@ -96,18 +103,33 @@ internal static class FakeMerchantBattleFigure
                     creature.Visuals != visuals || selection != SkinService.GetDisplayedSelection(
                         MerchantRuntimeAppearance.FakeMerchantGroupId) || !NeedsShopFigure(creature)) return;
 
-                var figure = FindShopFigure(button);
-                if (figure == null) continue;
-                if (figure.GetClass() == "SpineSprite" && HasNativeCombatClips(new MegaSprite(figure)))
-                    return;
-                if (ReferenceEquals(native, figure) && frame < 29 &&
-                    SkinService.GetSelectedRuntimeProvider(MerchantRuntimeAppearance.FakeMerchantGroupId) != null)
-                    continue;
-                var result = CopyArtwork(figure);
-                if (result == null) continue;
-                Attach(creature, result, ReadSkin(figure));
-                installed = true;
-                return;
+                var done = false;
+                DeferredDispatch.RunTrackedPoll(
+                    "FakeMerchantBattleFigure.ProbeStep",
+                    creature,
+                    () =>
+                    {
+                        var figure = FindShopFigure(button);
+                        if (figure == null) return false;
+                        if (figure.GetClass() == "SpineSprite" && HasNativeCombatClips(new MegaSprite(figure)))
+                        {
+                            done = true;
+                            return true;
+                        }
+
+                        if (ReferenceEquals(native, figure) && frame < 29 &&
+                            SkinService.GetSelectedRuntimeProvider(MerchantRuntimeAppearance.FakeMerchantGroupId) != null)
+                            return false;
+                        var result = CopyArtwork(figure);
+                        if (result == null) return false;
+                        Attach(creature, result, ReadSkin(figure));
+                        installed = true;
+                        done = true;
+                        return true;
+                    },
+                    DeferredDispatchRisk.Normal,
+                    startFrame);
+                if (done) return;
             }
         }
         catch (Exception error)
@@ -172,18 +194,31 @@ internal static class FakeMerchantBattleFigure
         if (figure.GetClass() == "SpineSprite")
         {
             var spine = new MegaSprite(figure);
+            // [延迟调度/HighRiskEnterOnly] 原触发时机：Attach 挂上复制出的假商人 SpineSprite 后经 RunWhenSpineReady 等待骨架就绪；
+            // 最早可执行帧：Spine 骨架就绪帧；顺序依赖：须待原生 Spine 建骨完成后设皮肤/待机动作并按包围盒缩放（仅落盘 ENTER）；
+            // 能否合并：单实例单次回调；重试上限：1 次（由游戏 RunWhenSpineReady 驱动）；
+            // 取消条件：skeleton == null 或节点失效。
+            var enqueueFrame = DeferredDispatch.CurrentFrame();
             figure.RunWhenSpineReady(spine, state =>
             {
-                var skeleton = spine.GetSkeleton();
-                if (skeleton == null) return;
-                if (!string.IsNullOrEmpty(skinName))
-                {
-                    skeleton.SetSkinByName(skinName);
-                    skeleton.SetSlotsToSetupPose();
-                }
-                var idle = new[] { "idle_loop", "idle", "relaxed_loop" }.FirstOrDefault(spine.HasAnimation);
-                if (idle != null) state.SetAnimation(idle, loop: true);
-                FitAndFloat(figure, body, skeleton.GetBounds(), targetHeight);
+                DeferredDispatch.RunTracked(
+                    "FakeMerchantBattleFigure.AttachSpineReady",
+                    creature,
+                    () =>
+                    {
+                        var skeleton = spine.GetSkeleton();
+                        if (skeleton == null) return;
+                        if (!string.IsNullOrEmpty(skinName))
+                        {
+                            skeleton.SetSkinByName(skinName);
+                            skeleton.SetSlotsToSetupPose();
+                        }
+                        var idle = new[] { "idle_loop", "idle", "relaxed_loop" }.FirstOrDefault(spine.HasAnimation);
+                        if (idle != null) state.SetAnimation(idle, loop: true);
+                        FitAndFloat(figure, body, skeleton.GetBounds(), targetHeight);
+                    },
+                    DeferredDispatchRisk.HighRiskEnterOnly,
+                    enqueueFrame);
             });
         }
         else if (figure is Sprite2D image)
@@ -228,7 +263,17 @@ internal static class FakeMerchantBattleFigure
 [HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant.FoulPotionThrown))]
 internal static class FakeMerchantBattleFigureCapturePatch
 {
-    private static void Prefix(NFakeMerchant __instance) => FakeMerchantBattleFigure.Capture(__instance);
+    private static void Prefix(NFakeMerchant __instance)
+    {
+        try
+        {
+            FakeMerchantBattleFigure.Capture(__instance);
+        }
+        catch (Exception error)
+        {
+            CombatAppearanceBoundary.Warn("假商人售货骨骼抓取", error);
+        }
+    }
 }
 
 [FeaturePatch(FeatureIds.Merchant)]
@@ -236,5 +281,20 @@ internal static class FakeMerchantBattleFigureCapturePatch
 internal static class FakeMerchantBattleFigureReadyPatch
 {
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NCreature __instance) => FakeMerchantBattleFigure.Apply(__instance);
+    private static void Postfix(NCreature __instance)
+    {
+        if (!FakeMerchantBattleFigure.HasPendingShopFigure)
+        {
+            return;
+        }
+
+        try
+        {
+            FakeMerchantBattleFigure.Apply(__instance);
+        }
+        catch (Exception error)
+        {
+            CombatAppearanceBoundary.Warn("假商人战斗外观", error);
+        }
+    }
 }

@@ -925,12 +925,16 @@ internal static partial class ContextualSkinControls
             // itself must never retry again, or the frame would keep re-deferring forever.
             if (!allowRetry || dropdown.HasMeta(VariantLabelRetryMeta)) return;
             dropdown.SetMeta(VariantLabelRetryMeta, true);
-            Callable.From(() =>
+            // [延迟调度/CallDeferred] 原触发时机：首次渲染带双变体下拉时未找到提供者自身 OptionButton 且缓存无词条；
+            // 最早可执行帧：本帧末 idle；顺序依赖：须晚于提供者选角钩子挂载 {providerId}Options 面板；
+            // 能否合并：VariantLabelRetryMeta 防止同控件重复入队；重试上限：1 次（allowRetry: false）；
+            // 取消条件：!IsInstanceValid(dropdown) || !IsInstanceValid(screen) || !allowRetry。
+            DeferredDispatch.CallDeferred("ContextualSkinControls.ApplyProviderVariantLabels", dropdown, () =>
             {
                 if (!GodotObject.IsInstanceValid(dropdown) || !GodotObject.IsInstanceValid(screen)) return;
                 dropdown.RemoveMeta(VariantLabelRetryMeta);
                 ApplyProviderVariantLabels(dropdown, group, screen, allowRetry: false);
-            }).CallDeferred();
+            }, DeferredDispatchRisk.Normal);
             return;
         }
         for (var index = 0; index < dropdown.ItemCount; index++)
@@ -3624,7 +3628,8 @@ internal static partial class ContextualSkinControls
         if (groupId == null ||
             IsCreatureVisualScenePath(resourcePath) ||
             IsCharacterSelectBackgroundPath(resourcePath) ||
-            ShouldSkipExternalRuntimeRedirect(groupId))
+            ShouldSkipExternalRuntimeRedirect(groupId) ||
+            !ShouldReplaceCachedScene(groupId, resourcePath, result))
         {
             return;
         }
@@ -3637,6 +3642,28 @@ internal static partial class ContextualSkinControls
         {
             ModLog.Error($"最终接管场景 {resourcePath} 失败：{exception}");
         }
+    }
+
+    internal static bool ShouldReplaceCachedScene(
+        string groupId,
+        string resourcePath,
+        PackedScene? currentResult)
+    {
+        if (currentResult == null)
+        {
+            return false;
+        }
+
+        if (EventSkinPolicy.IsEventGroup(groupId))
+        {
+            return EventSkinRuntime.ShouldUseIsolatedVisuals(groupId) &&
+                   SkinService.Catalog?.HasEventResource(
+                       groupId,
+                       SkinService.GetDisplayedSelection(groupId),
+                       resourcePath) == true;
+        }
+
+        return true;
     }
 
     private static bool IsCharacterSelectBackgroundPath(string resourcePath)
@@ -3654,7 +3681,9 @@ internal static partial class ContextualSkinControls
         try
         {
             var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
-            if (groupId == null || ShouldSkipExternalRuntimeRedirect(groupId)) return;
+            if (groupId == null ||
+                ShouldSkipExternalRuntimeRedirect(groupId) ||
+                (EventSkinPolicy.IsEventGroup(groupId) && !EventSkinRuntime.ShouldUseIsolatedVisuals(groupId))) return;
 
             var replacement = SkinService.GetOrLoadRuntimeResource(groupId, resourcePath) as Texture2D ??
                               throw new InvalidOperationException($"独立皮肤资源不是贴图：{resourcePath}");
@@ -3836,7 +3865,8 @@ internal static partial class ContextualSkinControls
 
     internal static void RefreshContinueRunPortrait(NContinueRunInfo info, SerializableRun save)
     {
-        if (save.Players.Count == 0 || save.Players[0].CharacterId is not { } characterId ||
+        if (info == null || save?.Players == null || save.Players.Count == 0 ||
+            save.Players[0]?.CharacterId is not { } characterId ||
             info.GetNodeOrNull<TextureRect>("%CharacterIcon") is not { } destination)
             return;
 
@@ -4302,14 +4332,8 @@ internal static class BestiarySelectionSkinPatch
 {
     private static void Prefix(NBestiaryEntry entry)
     {
-        try
-        {
-            ContextualSkinControls.PrepareInstanceAnimatedBestiarySkin(entry);
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn($"准备图鉴皮肤动画失败：{exception.GetBaseException().Message}");
-        }
+        UiInjectionGuard.Run("BestiarySelectionSkinPatch.Prefix", () =>
+            ContextualSkinControls.PrepareInstanceAnimatedBestiarySkin(entry));
     }
 
     private static void Postfix(NBestiary __instance, NBestiaryEntry entry)
@@ -4329,20 +4353,21 @@ internal static class BestiarySelectionSkinPatch
 internal static class BestiaryRuntimeProviderScopePatch
 {
     [HarmonyPostfix]
-    private static void Postfix()
-    {
-        if (NRun.Instance != null)
+    private static void Postfix() =>
+        UiInjectionGuard.Run("BestiaryRuntimeProviderScopePatch.Postfix", () =>
         {
-            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
-                reason: "关闭局内怪物图鉴", refreshCurrentRoom: true);
-            return;
-        }
+            if (NRun.Instance != null)
+            {
+                CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+                    reason: "关闭局内怪物图鉴", refreshCurrentRoom: true);
+                return;
+            }
 
-        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
-            [],
-            runEnvironmentProviderIds: [],
-            reason: "关闭怪物图鉴");
-    }
+            SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                [],
+                runEnvironmentProviderIds: [],
+                reason: "关闭怪物图鉴");
+        });
 }
 
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CreateVisuals))]
@@ -4527,7 +4552,8 @@ internal static class ContinueRunPortraitPatch
 {
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NContinueRunInfo __instance, SerializableRun __0) =>
-        ContextualSkinControls.RefreshContinueRunPortrait(__instance, __0);
+        UiInjectionGuard.Run("ContinueRunPortraitPatch.Postfix", () =>
+            ContextualSkinControls.RefreshContinueRunPortrait(__instance, __0));
 }
 
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.Icon), MethodType.Getter)]

@@ -216,7 +216,7 @@ internal static class SkinPreloader
             var enqueueFrame = DeferredDispatch.CurrentFrame();
             _timerRunning = true;
             var timer = tree.CreateTimer(TickSeconds);
-            timer.Timeout += DeferredDispatch.WrapCallback(
+            timer.Timeout += DeferredDispatch.WrapPollCallback(
                 "SkinPreloader.Tick",
                 "global",
                 Tick,
@@ -230,7 +230,7 @@ internal static class SkinPreloader
         }
     }
 
-    private static void Tick()
+    private static bool Tick()
     {
         _timerRunning = false;
 
@@ -238,7 +238,7 @@ internal static class SkinPreloader
         {
             // 重建外观期间不派发：主线程马上要同步读资源，此时后台再加载会和它互相等待。
             EnsureTimer();
-            return;
+            return false;
         }
 
         if (!_gamePreloadSettled)
@@ -252,18 +252,23 @@ internal static class SkinPreloader
             else
             {
                 EnsureTimer();
-                return;
+                return false;
             }
         }
 
         var tickWatch = System.Diagnostics.Stopwatch.StartNew();
+        var didWork = false;
         try
         {
-            CompleteFinishedRequests();
+            if (CompleteFinishedRequests())
+            {
+                didWork = true;
+            }
 
             // 串行：上一个请求取回之前不发下一个。缓存命中的路径不占名额，可以在同一 tick 连续跳过。
             while (!_cancelled && CharacterPackPrefetch.CanSpeculateNow && InFlight.Count < MaxInFlight && Pending.Count > 0)
             {
+                didWork = true;
                 var path = Pending.Dequeue();
                 if (InFlight.Contains(path))
                 {
@@ -291,12 +296,14 @@ internal static class SkinPreloader
         }
         catch (AppearanceResourceUnavailableException exception)
         {
+            didWork = true;
             Pending.Clear();
             Known.Clear();
             ModLog.Warn("[性能] 内存不足，已丢弃尚未派发的预加载：" + exception.Message);
         }
         catch (Exception exception)
         {
+            didWork = true;
             if (!_reportedFailure)
             {
                 _reportedFailure = true;
@@ -312,6 +319,7 @@ internal static class SkinPreloader
             }
             else
             {
+                didWork = true;
                 ModLog.Info(
                     $"[性能] 预加载完成：成功 {_loaded}，失败 {_failed}，" +
                     $"调度累计 {_scheduledTotalMs:F0} ms（主线程只付发起请求的开销）。");
@@ -321,10 +329,13 @@ internal static class SkinPreloader
                 Known.Clear();
             }
         }
+
+        return didWork;
     }
 
-    private static void CompleteFinishedRequests()
+    private static bool CompleteFinishedRequests()
     {
+        var completed = false;
         foreach (var path in InFlight.ToArray())
         {
             var status = ResourceLoader.LoadThreadedGetStatus(path);
@@ -336,6 +347,7 @@ internal static class SkinPreloader
                     ResourceLoader.LoadThreadedGet(path);
                     InFlight.Remove(path);
                     _loaded++;
+                    completed = true;
                     break;
                 }
                 case ResourceLoader.ThreadLoadStatus.Failed:
@@ -343,10 +355,13 @@ internal static class SkinPreloader
                 {
                     InFlight.Remove(path);
                     _failed++;
+                    completed = true;
                     break;
                 }
             }
         }
+
+        return completed;
     }
 }
 

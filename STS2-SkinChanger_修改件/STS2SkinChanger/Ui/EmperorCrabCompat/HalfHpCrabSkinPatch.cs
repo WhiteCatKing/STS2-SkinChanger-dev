@@ -6,6 +6,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Vfx.Backgrounds;
 using STS2SkinChanger.Core;
@@ -36,6 +37,7 @@ namespace STS2SkinChanger.Ui.EmperorCrabCompat
         private const string HurtDataPath = "res://animations/monsters/kaiser_crab/kaiser_crab_skeleton_data_hurt.tres";
         private const string AppliedMeta = "EmperorCrabSkinFix.HalfHpApplied";
         private const string NoHalfHpResourcesMeta = "EmperorCrabSkinFix.NoHalfHpResources";
+        private const string TargetModToken = "erowatcher";
         private const string HalfHpPatchTypeName = "erowatcher.script.patch.MonsterHurtSpinePatch";
         private const string HalfHpSettingsTypeName = "erowatcher.script.card.WatcherCardArtSettings";
         private const string SkinChangerAssemblyName = "Gurio.SkinChanger";
@@ -63,8 +65,98 @@ namespace STS2SkinChanger.Ui.EmperorCrabCompat
             _animControllerField = AccessTools.Field(typeof(NKaiserCrabBossBackground), "_animController");
             InstallAnimationGuards();
             TryInstallHalfHpPrefix();
-            StartInstallRetry();
+            if (!_halfHpPrefixInstalled && !_halfHpPrefixMissing)
+            {
+                if (IsTargetModLoaded())
+                {
+                    StartInstallRetry();
+                }
+                else
+                {
+                    GD.Print("[EmperorCrabSkinFix] 未检测到目标 Mod（erowatcher），跳过半血爆衣 5 分钟重试");
+                }
+            }
         }
+
+        internal static bool IsTargetModLoaded(
+            IEnumerable<string> loadedAssemblyNames = null,
+            IEnumerable<string> loadedModTokens = null,
+            bool? hasPatchType = null)
+        {
+            if (hasPatchType ?? (FindType(HalfHpPatchTypeName) != null))
+            {
+                return true;
+            }
+
+            if (loadedAssemblyNames != null)
+            {
+                if (MatchesTargetToken(loadedAssemblyNames))
+                {
+                    return true;
+                }
+            }
+            else
+            {
+                foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    if (IsTargetModToken(assembly.GetName().Name))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (loadedModTokens != null)
+            {
+                return MatchesTargetToken(loadedModTokens);
+            }
+
+            try
+            {
+                FieldInfo modAssemblyField = AccessTools.Field(typeof(Mod), "assembly");
+                foreach (Mod mod in ModManager.Mods)
+                {
+                    // Mods later in the load order are still ModLoadState.None when this initializer runs;
+                    // only an explicitly disabled mod is "not installed".
+                    if (mod == null || mod.state == ModLoadState.Disabled)
+                    {
+                        continue;
+                    }
+
+                    Assembly modAssembly = modAssemblyField?.GetValue(mod) as Assembly;
+                    if (IsTargetModToken(mod.manifest?.id) ||
+                        IsTargetModToken(mod.manifest?.name) ||
+                        IsTargetModToken(mod.path) ||
+                        IsTargetModToken(modAssembly?.GetName().Name))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // ModManager 尚未初始化或离线测试无宿主环境，按未加载处理。
+            }
+
+            return false;
+        }
+
+        private static bool MatchesTargetToken(IEnumerable<string> tokens)
+        {
+            foreach (string token in tokens)
+            {
+                if (IsTargetModToken(token))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsTargetModToken(string token) =>
+            !string.IsNullOrWhiteSpace(token) &&
+            token.IndexOf(TargetModToken, StringComparison.OrdinalIgnoreCase) >= 0;
 
         // ===================== 动画安全阀 =====================
 
@@ -540,10 +632,14 @@ namespace STS2SkinChanger.Ui.EmperorCrabCompat
                         return;
                     }
 
-                    DeferredDispatch.RunTracked(
+                    DeferredDispatch.RunTrackedPoll(
                         "HalfHpCrabSkinPatch.InstallRetry",
                         "EmperorCrabCompat",
-                        TryInstallHalfHpPrefix,
+                        () =>
+                        {
+                            TryInstallHalfHpPrefix();
+                            return _halfHpPrefixInstalled || _halfHpPrefixMissing;
+                        },
                         DeferredDispatchRisk.Normal,
                         retrySubscribedFrame);
 

@@ -144,7 +144,7 @@ internal static class DeferredProviderActivator
             // 取消条件：队列清空、进入真实场景 Cancel() 或 Reset()。
             var enqueueFrame = DeferredDispatch.CurrentFrame();
             var timer = tree.CreateTimer(TickSeconds);
-            timer.Timeout += DeferredDispatch.WrapCallback(
+            timer.Timeout += DeferredDispatch.WrapPollCallback(
                 "DeferredProviderActivator.Tick",
                 "global",
                 Tick,
@@ -168,15 +168,17 @@ internal static class DeferredProviderActivator
         }
     }
 
-    private static void Tick()
+    private static bool Tick()
     {
         lock (Sync)
         {
             _timerRunning = false;
         }
 
+        var didWork = false;
         while (TryDequeue(out var providerId))
         {
+            didWork = true;
             var started = System.Diagnostics.Stopwatch.GetTimestamp();
             var activated = false;
             var failure = false;
@@ -209,6 +211,8 @@ internal static class DeferredProviderActivator
                 break;
             }
         }
+
+        return didWork;
     }
 
     private static bool TryDequeue(out string providerId)

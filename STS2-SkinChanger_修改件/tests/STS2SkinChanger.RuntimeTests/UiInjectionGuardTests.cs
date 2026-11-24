@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Godot;
 using HarmonyLib;
 using STS2SkinChanger;
+using STS2SkinChanger.Core;
 using STS2SkinChanger.Ui;
 
 internal static class UiInjectionGuardTests
@@ -11,7 +12,8 @@ internal static class UiInjectionGuardTests
     [
         "_Ready",
         "_EnterTree",
-        "OnSubmenuOpened"
+        "OnSubmenuOpened",
+        "OnSubmenuClosed"
     ];
 
     private static readonly HashSet<string> AuditedScreenPatches = new(StringComparer.Ordinal)
@@ -20,31 +22,52 @@ internal static class UiInjectionGuardTests
         "RemoteLobbyPlayerVisualRefreshScopePatch",
         "CharacterSelectionSkinPatch",
         "BestiarySelectionSkinPatch",
-        "CardLibraryPoolSkinPatch"
+        "CardLibraryPoolSkinPatch",
+        "ContinueRunPortraitPatch"
     };
 
     private static readonly HashSet<string> ExcludedNonUiInjectionLifecyclePatches = new(StringComparer.Ordinal)
     {
+        // Card pipeline exception finalizer itself (no Prefix/Postfix; guards NCard lifecycle).
+        "CardPipelineExceptionBoundary",
         // Guarded by CardPipelineExceptionBoundary (third-party exceptions swallowed, own exceptions bubble).
         "CardTreeReentrySkinPatch",
-        // Guarded by CombatAppearanceBoundary / in-run creature & map visuals.
+        // Guarded by CombatAppearanceBoundary / in-run creature, HUD & map visuals.
         "CharacterAppearanceCreatureReadyPatch",
         "InRunCharacterAppearanceRuntimePatch",
         "BossMapPointSkinPresentationPatch",
-        // Merchant / rest site scene scope & preview suppression patches (non-UI injection).
+        "FakeMerchantBattleFigureReadyPatch",
+        "ManagedCharacterAnimationReadyPatch",
+        "NecrobinderOptionalHeadReadyPatch",
+        "FrameworkEnergyLayersPatch",
+        // Multiplayer in-run node scope leases (Prefix/Finalizer pairs, non-UI injection).
+        "MultiplayerCreatureReadyScopePatch",
+        "MultiplayerRestSiteReadyScopePatch",
+        "MultiplayerTreasureHandReadyScopePatch",
+        // Merchant / rest site scene scope, frame scheduler & preview suppression patches (non-UI injection).
         "MerchantRoomCreateAppearancePatch",
         "MerchantRoomPlayerAppearancePatch",
         "MerchantRoomPreviewEnterTreePatch",
         "FakeMerchantAppearancePatch",
+        "FakeMerchantEventFramePatch",
         "FakeMerchantPreviewEnterTreePatch",
         "RestSitePlayerAppearancePatch",
         "MerchantButtonProviderReadyBridgePatch",
         "MerchantInventoryProviderReadyBridgePatch",
         "MerchantHandProviderReadyBridgePatch",
         "MerchantPreviewProceedReadyPatch",
+        // Startup diagnostics & self-check schedulers on NMainMenu._Ready (non-UI injection; internally guarded).
+        "GlobalWriteSummaryPatch",
+        "VanillaIntegrityMainMenuReadyPatch",
         // Non-UI random skin state restore; has own try/catch and RandomCharacterSkinTests inspects Prefix IL.
         "RandomCharacterLobbySkinPatch"
     };
+
+    private static readonly (Type DeclaringType, string MethodName, string TargetMethodName)[] ProgrammaticUiLifecycleHooks =
+    [
+        // FrameworkRegistryCooperation.Bind patches thunninoiSkinManager's SkinSelector._Ready programmatically.
+        (typeof(FrameworkRegistryCooperation), "TrackControl", "_Ready")
+    ];
 
     private static bool _downstreamRan;
 
@@ -53,9 +76,9 @@ internal static class UiInjectionGuardTests
         VerifyExceptionIsolationAndCounting();
         VerifyHarmonyPostfixChainSurvivesFailure();
         VerifyRunWhenInTreeOfflineContract();
-        var (classCount, hookCount) = VerifyAllUiInjectionPatchesGuarded();
+        var (classCount, hookCount, programmaticCount) = VerifyAllUiInjectionPatchesGuarded();
         Console.WriteLine(
-            $"UI injection guard passed: {classCount} patch classes ({hookCount} hooks) verified, exception isolation & postfix chain preserved.");
+            $"UI injection guard passed: {classCount} patch classes ({hookCount} hooks) + {programmaticCount} programmatic UI hooks verified, exception isolation & postfix chain preserved.");
     }
 
     private static void VerifyExceptionIsolationAndCounting()
@@ -183,12 +206,12 @@ internal static class UiInjectionGuardTests
             "RunWhenInTree 必须统一委托 UiInjectionGuard.Run 执行并隔离异常。");
     }
 
-    private static (int ClassCount, int HookCount) VerifyAllUiInjectionPatchesGuarded()
+    private static (int ClassCount, int HookCount, int ProgrammaticHookCount) VerifyAllUiInjectionPatchesGuarded()
     {
-        var uiPatchTypes = typeof(Entry).Assembly.GetTypes()
+        // Scan the ENTIRE assembly (all namespaces) so lifecycle and UI-callback patches
+        // placed under Core / Core.Features.* cannot bypass the guard gate.
+        var allPatchTypes = typeof(Entry).Assembly.GetTypes()
             .Where(type => type.IsClass &&
-                           type.Namespace != null &&
-                           type.Namespace.StartsWith("STS2SkinChanger.Ui", StringComparison.Ordinal) &&
                            type.IsDefined(typeof(HarmonyPatch), inherit: false))
             .OrderBy(type => type.Name, StringComparer.Ordinal)
             .ToArray();
@@ -196,7 +219,7 @@ internal static class UiInjectionGuardTests
         var discoveredLifecycleClasses = new HashSet<string>(StringComparer.Ordinal);
         var guardedClasses = new List<Type>();
 
-        foreach (var patchType in uiPatchTypes)
+        foreach (var patchType in allPatchTypes)
         {
             var targets = ResolveTargetMethodNames(patchType);
             var isLifecyclePatch = targets.Any(name => LifecycleTargets.Contains(name, StringComparer.Ordinal));
@@ -256,12 +279,39 @@ internal static class UiInjectionGuardTests
             }
         }
 
+        foreach (var (ownerType, methodName, targetName) in ProgrammaticUiLifecycleHooks)
+        {
+            var hook = ownerType.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+                       ?? throw new InvalidOperationException($"找不到程序化注册的 UI 生命周期钩子 {ownerType.Name}.{methodName}。");
+            var callsGuard = PatchProcessor.GetOriginalInstructions(hook)
+                .Select(instruction => instruction.operand)
+                .OfType<MethodInfo>()
+                .Any(method => method.DeclaringType == typeof(UiInjectionGuard) &&
+                               (method.Name == nameof(UiInjectionGuard.Run) ||
+                                method.Name == nameof(UiInjectionGuard.RunWhenInTree)));
+            if (!callsGuard)
+            {
+                unguardedHooks.Add($"{ownerType.Name}.{methodName} ({targetName})");
+            }
+        }
+
+        // Verify FrameworkRegistryCooperation.Bind still registers the documented programmatic _Ready hook.
+        var bindMethod = AccessTools.Method(typeof(FrameworkRegistryCooperation), nameof(FrameworkRegistryCooperation.Bind))
+                         ?? throw new InvalidOperationException("找不到 FrameworkRegistryCooperation.Bind。");
+        var bindStrings = PatchProcessor.GetOriginalInstructions(bindMethod)
+            .Select(instruction => instruction.operand)
+            .OfType<string>()
+            .ToArray();
+        Require(bindStrings.Contains("_Ready", StringComparer.Ordinal) &&
+                bindStrings.Contains("TrackControl", StringComparer.Ordinal),
+            "FrameworkRegistryCooperation.Bind 应保留已登记的 SkinSelector._Ready -> TrackControl 程序化钩子。");
+
         Require(unguardedHooks.Count == 0,
             $"以下 UI 注入补丁未调用 UiInjectionGuard.Run/RunWhenInTree：{string.Join(", ", unguardedHooks)}。");
-        Require(guardedClasses.Count == 22 && hookCount == 27,
-            $"已审计 UI 注入补丁预期为 22 类 / 27 钩子，实际 {guardedClasses.Count} 类 / {hookCount} 钩子（新增项须接入 guard 或显式说明原因）。");
+        Require(guardedClasses.Count == 28 && hookCount == 34 && ProgrammaticUiLifecycleHooks.Length == 1,
+            $"已审计 UI 注入补丁预期为 28 类 / 34 钩子 + 1 程序化钩子，实际 {guardedClasses.Count} 类 / {hookCount} 钩子 + {ProgrammaticUiLifecycleHooks.Length} 程序化钩子（新增项须接入 guard 或显式说明原因）。");
 
-        return (guardedClasses.Count, hookCount);
+        return (guardedClasses.Count, hookCount, ProgrammaticUiLifecycleHooks.Length);
     }
 
     private static HashSet<string> ResolveTargetMethodNames(Type patchType)

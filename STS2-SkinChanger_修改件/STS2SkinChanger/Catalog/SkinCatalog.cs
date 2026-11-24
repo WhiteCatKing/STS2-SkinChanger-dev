@@ -452,7 +452,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .Options.FirstOrDefault(candidate => candidate.Id.Equals(
                 optionId,
                 StringComparison.OrdinalIgnoreCase));
-        return option == null
+        return option == null || option.IsTextOnly
             ? []
             : option.IsComposition
                 ? option.CompositionSourceProviderIds
@@ -10401,6 +10401,7 @@ internal sealed record SkinOption(
     public string? ProviderRootPath { get; init; }
     public bool UsesPrivateMerchantRoomCallback { get; init; }
     public bool IsMerchantVariantFallback { get; init; }
+    public bool IsTextOnly { get; init; }
 }
 
 internal sealed record RuntimeMonsterVisualMode(

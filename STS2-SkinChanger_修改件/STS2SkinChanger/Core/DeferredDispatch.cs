@@ -9,7 +9,8 @@ namespace STS2SkinChanger.Core;
 internal enum DeferredDispatchRisk
 {
     Normal = 0,
-    HighRisk = 1
+    HighRisk = 1,
+    HighRiskEnterOnly = 2
 }
 
 internal readonly record struct DeferredDispatchRecord(
@@ -52,7 +53,7 @@ internal static class DeferredDispatch
     [ThreadStatic]
     private static Stack<TaskKey>? _executingStack;
 
-    private static DeferredDispatchRecord[] _ring = new DeferredDispatchRecord[DefaultRingBufferCapacity];
+    private static RingSlot[] _ring = new RingSlot[DefaultRingBufferCapacity];
     private static int _ringHead;
     private static int _ringCount;
     private static long _sequence;
@@ -61,6 +62,8 @@ internal static class DeferredDispatch
 
     private static readonly Dictionary<TaskKey, ReentrancyState> ReentrancyStates = new();
     private static readonly HashSet<TaskKey> WarnedReentrancyKeys = new();
+    private static readonly Dictionary<TaskKey, long> PendingIdlePollCounts = new();
+    private static readonly Dictionary<TaskKey, long> TotalIdlePollCounts = new();
 
     private static Action<Action> _enqueue = static action => Callable.From(action).CallDeferred();
     private static Func<ulong> _frameCounter = SafeGetEngineProcessFrame;
@@ -106,7 +109,29 @@ internal static class DeferredDispatch
         var enqueueFrame = enqueueFrameOverride ?? SafeReadFrame();
         var isSelfReentry = IsCurrentlyExecuting(key);
 
-        return () => ExecuteTrackedCore(key, enqueueFrame, isSelfReentry, risk, action);
+        return () => ExecuteTrackedCore(key, enqueueFrame, isSelfReentry, risk, action, null);
+    }
+
+    /// <summary>
+    /// Wraps a periodic polling callback (e.g. <c>SceneTreeTimer.Timeout</c>). When
+    /// <paramref name="pollAction"/> returns <c>false</c> (an empty/idle poll), only the idle poll
+    /// counter is incremented and no per-tick breadcrumb record is appended or flushed.
+    /// </summary>
+    internal static Action WrapPollCallback(
+        string taskName,
+        object? owner,
+        Func<bool> pollAction,
+        DeferredDispatchRisk risk = DeferredDispatchRisk.Normal,
+        ulong? enqueueFrameOverride = null)
+    {
+        ArgumentNullException.ThrowIfNull(pollAction);
+        var normalizedTask = NormalizeToken(taskName, "unnamed", 96);
+        var normalizedOwner = FormatOwner(owner);
+        var key = new TaskKey(normalizedTask, normalizedOwner);
+        var enqueueFrame = enqueueFrameOverride ?? SafeReadFrame();
+        var isSelfReentry = IsCurrentlyExecuting(key);
+
+        return () => ExecuteTrackedCore(key, enqueueFrame, isSelfReentry, risk, null, pollAction);
     }
 
     /// <summary>
@@ -126,7 +151,36 @@ internal static class DeferredDispatch
         var key = new TaskKey(normalizedTask, normalizedOwner);
         var enqueueFrame = enqueueFrameOverride ?? SafeReadFrame();
         var isSelfReentry = IsCurrentlyExecuting(key);
-        ExecuteTrackedCore(key, enqueueFrame, isSelfReentry, risk, action);
+        ExecuteTrackedCore(key, enqueueFrame, isSelfReentry, risk, action, null);
+    }
+
+    /// <summary>
+    /// Executes a periodic polling step synchronously on the current tick. Empty polls (returning
+    /// <c>false</c>) only increment the idle counter instead of writing per-tick breadcrumb rows.
+    /// </summary>
+    internal static bool RunTrackedPoll(
+        string taskName,
+        object? owner,
+        Func<bool> pollAction,
+        DeferredDispatchRisk risk = DeferredDispatchRisk.Normal,
+        ulong? enqueueFrameOverride = null)
+    {
+        ArgumentNullException.ThrowIfNull(pollAction);
+        var normalizedTask = NormalizeToken(taskName, "unnamed", 96);
+        var normalizedOwner = FormatOwner(owner);
+        var key = new TaskKey(normalizedTask, normalizedOwner);
+        var enqueueFrame = enqueueFrameOverride ?? SafeReadFrame();
+        var isSelfReentry = IsCurrentlyExecuting(key);
+        return ExecuteTrackedCore(key, enqueueFrame, isSelfReentry, risk, null, pollAction);
+    }
+
+    internal static long GetIdlePollCount(string taskName, object? owner)
+    {
+        var key = new TaskKey(NormalizeToken(taskName, "unnamed", 96), FormatOwner(owner));
+        lock (Sync)
+        {
+            return TotalIdlePollCounts.TryGetValue(key, out var count) ? count : 0;
+        }
     }
 
     internal static ulong CurrentFrame() => SafeReadFrame();
@@ -144,7 +198,7 @@ internal static class DeferredDispatch
             var start = (_ringHead - _ringCount + _ringCapacity) % _ringCapacity;
             for (var i = 0; i < _ringCount; i++)
             {
-                result[i] = _ring[(start + i) % _ringCapacity];
+                result[i] = _ring[(start + i) % _ringCapacity].Record;
             }
 
             return result;
@@ -178,7 +232,7 @@ internal static class DeferredDispatch
 
     internal static string FormatBreadcrumbLine(in DeferredDispatchRecord record)
     {
-        var riskTag = record.Risk == DeferredDispatchRisk.HighRisk ? "HIGH" : "NORM";
+        var riskTag = record.Risk == DeferredDispatchRisk.Normal ? "NORM" : "HIGH";
         return string.Create(
             CultureInfo.InvariantCulture,
             $"{record.TimestampUtc:O} #{record.Sequence} [{record.Phase}][{riskTag}] task={record.TaskName} owner={record.Owner} enq={record.EnqueueFrame} run={record.ExecuteFrame} streak={record.StreakCount} ms={record.ElapsedMs:F2} res={record.Result}");
@@ -208,7 +262,7 @@ internal static class DeferredDispatch
             _maxBreadcrumbFileBytes = Math.Max(256, maxBreadcrumbFileBytes ?? DefaultMaxBreadcrumbFileBytes);
             _keepTailLinesOnTrim = Math.Max(1, keepTailLinesOnTrim ?? DefaultKeepTailLinesOnTrim);
 
-            _ring = new DeferredDispatchRecord[_ringCapacity];
+            _ring = new RingSlot[_ringCapacity];
             _ringHead = 0;
             _ringCount = 0;
             _sequence = 0;
@@ -216,20 +270,25 @@ internal static class DeferredDispatch
             _unflushedNormalCount = 0;
             ReentrancyStates.Clear();
             WarnedReentrancyKeys.Clear();
+            PendingIdlePollCounts.Clear();
+            TotalIdlePollCounts.Clear();
         }
     }
 
     internal static void ResetDefaultsForTests() => ConfigureForTests();
 
-    private static void ExecuteTrackedCore(
+    private static bool ExecuteTrackedCore(
         TaskKey key,
         ulong enqueueFrame,
         bool isSelfReentry,
         DeferredDispatchRisk risk,
-        Action action)
+        Action? action,
+        Func<bool>? pollAction)
     {
         var executeFrame = SafeReadFrame();
         var nowUtc = DateTime.UtcNow;
+        var isPoll = pollAction != null;
+        var flushEnter = risk is DeferredDispatchRisk.HighRisk or DeferredDispatchRisk.HighRiskEnterOnly;
         int streak;
         string? warningMessage = null;
 
@@ -244,7 +303,7 @@ internal static class DeferredDispatch
                         $"[延迟调度] 任务连续重入超过阈值（只观察、不截断）：task={key.TaskName}，owner={key.Owner}，次数={streak}，入队帧={enqueueFrame}，执行帧={executeFrame}";
                 }
 
-                if (risk == DeferredDispatchRisk.HighRisk)
+                if (flushEnter)
                 {
                     var enterRecord = new DeferredDispatchRecord(
                         ++_sequence,
@@ -258,7 +317,7 @@ internal static class DeferredDispatch
                         "running",
                         0.0,
                         risk);
-                    AppendRingLocked(enterRecord);
+                    AppendRingLocked(enterRecord, persistToDisk: true);
                     var directory = _breadcrumbDirectoryProvider();
                     if (!string.IsNullOrWhiteSpace(directory))
                     {
@@ -288,9 +347,19 @@ internal static class DeferredDispatch
         stack.Push(key);
         var startedAt = Stopwatch.GetTimestamp();
         Exception? failure = null;
+        var didWork = true;
         try
         {
-            action();
+            if (pollAction != null)
+            {
+                didWork = pollAction();
+            }
+            else
+            {
+                action!();
+            }
+
+            return didWork;
         }
         catch (Exception exception)
         {
@@ -307,43 +376,61 @@ internal static class DeferredDispatch
             var elapsedMs = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
             try
             {
-                var phase = failure == null ? "DONE" : "FAIL";
-                var result = failure == null
-                    ? "ok"
-                    : FormatFailureResult(failure);
                 lock (Sync)
                 {
-                    var finishRecord = new DeferredDispatchRecord(
-                        ++_sequence,
-                        DateTime.UtcNow,
-                        phase,
-                        key.TaskName,
-                        key.Owner,
-                        enqueueFrame,
-                        executeFrame,
-                        streak,
-                        result,
-                        elapsedMs,
-                        risk);
-                    AppendRingLocked(finishRecord);
-
-                    if (risk == DeferredDispatchRisk.HighRisk)
+                    if (isPoll && failure == null && !didWork)
                     {
-                        var directory = _breadcrumbDirectoryProvider();
-                        if (!string.IsNullOrWhiteSpace(directory))
-                        {
-                            FlushPendingLocked(directory);
-                        }
+                        IncrementIdlePollCountLocked(key);
                     }
                     else
                     {
-                        _unflushedNormalCount++;
-                        if (_unflushedNormalCount >= _flushEveryRecords)
+                        var phase = failure == null ? "DONE" : "FAIL";
+                        long idleBeforeWork = 0;
+                        if (isPoll && PendingIdlePollCounts.Remove(key, out var pendingIdle))
+                        {
+                            idleBeforeWork = pendingIdle;
+                        }
+
+                        var result = failure == null
+                            ? (idleBeforeWork > 0
+                                ? string.Create(CultureInfo.InvariantCulture, $"ok(idle={idleBeforeWork})")
+                                : "ok")
+                            : FormatFailureResult(failure);
+                        var persistFinish = risk != DeferredDispatchRisk.HighRiskEnterOnly || failure != null;
+                        var flushFinish = risk == DeferredDispatchRisk.HighRisk ||
+                                          (risk == DeferredDispatchRisk.HighRiskEnterOnly && failure != null);
+                        var finishRecord = new DeferredDispatchRecord(
+                            ++_sequence,
+                            DateTime.UtcNow,
+                            phase,
+                            key.TaskName,
+                            key.Owner,
+                            enqueueFrame,
+                            executeFrame,
+                            streak,
+                            result,
+                            elapsedMs,
+                            risk);
+                        AppendRingLocked(finishRecord, persistFinish);
+
+                        if (flushFinish)
                         {
                             var directory = _breadcrumbDirectoryProvider();
                             if (!string.IsNullOrWhiteSpace(directory))
                             {
                                 FlushPendingLocked(directory);
+                            }
+                        }
+                        else if (persistFinish)
+                        {
+                            _unflushedNormalCount++;
+                            if (_unflushedNormalCount >= _flushEveryRecords)
+                            {
+                                var directory = _breadcrumbDirectoryProvider();
+                                if (!string.IsNullOrWhiteSpace(directory))
+                                {
+                                    FlushPendingLocked(directory);
+                                }
                             }
                         }
                     }
@@ -354,6 +441,18 @@ internal static class DeferredDispatch
                 // Never mask or replace callback completion/exception.
             }
         }
+    }
+
+    private static void IncrementIdlePollCountLocked(TaskKey key)
+    {
+        if (!TotalIdlePollCounts.ContainsKey(key) && TotalIdlePollCounts.Count >= MaxTrackedKeys)
+        {
+            TotalIdlePollCounts.Clear();
+            PendingIdlePollCounts.Clear();
+        }
+
+        TotalIdlePollCounts[key] = TotalIdlePollCounts.TryGetValue(key, out var total) ? total + 1 : 1;
+        PendingIdlePollCounts[key] = PendingIdlePollCounts.TryGetValue(key, out var pending) ? pending + 1 : 1;
     }
 
     private static int AdvanceStreakLocked(
@@ -412,9 +511,9 @@ internal static class DeferredDispatch
         }
     }
 
-    private static void AppendRingLocked(in DeferredDispatchRecord record)
+    private static void AppendRingLocked(in DeferredDispatchRecord record, bool persistToDisk)
     {
-        _ring[_ringHead] = record;
+        _ring[_ringHead] = new RingSlot(record, persistToDisk);
         _ringHead = (_ringHead + 1) % _ringCapacity;
         if (_ringCount < _ringCapacity)
         {
@@ -432,25 +531,33 @@ internal static class DeferredDispatch
 
         var builder = new StringBuilder();
         var start = (_ringHead - _ringCount + _ringCapacity) % _ringCapacity;
-        long newestFlushed = _lastFlushedSequence;
+        long newestSeen = _lastFlushedSequence;
         for (var i = 0; i < _ringCount; i++)
         {
-            var record = _ring[(start + i) % _ringCapacity];
+            var slot = _ring[(start + i) % _ringCapacity];
+            var record = slot.Record;
             if (record.Sequence <= _lastFlushedSequence)
+            {
+                continue;
+            }
+
+            if (record.Sequence > newestSeen)
+            {
+                newestSeen = record.Sequence;
+            }
+
+            if (!slot.PersistToDisk)
             {
                 continue;
             }
 
             builder.Append(FormatBreadcrumbLine(record));
             builder.Append('\n');
-            if (record.Sequence > newestFlushed)
-            {
-                newestFlushed = record.Sequence;
-            }
         }
 
         if (builder.Length == 0)
         {
+            _lastFlushedSequence = newestSeen;
             _unflushedNormalCount = 0;
             return;
         }
@@ -464,7 +571,7 @@ internal static class DeferredDispatch
             stream.Flush();
         }
 
-        _lastFlushedSequence = newestFlushed;
+        _lastFlushedSequence = newestSeen;
         _unflushedNormalCount = 0;
 
         TrimBreadcrumbFileIfNeededLocked(path);
@@ -632,6 +739,8 @@ internal static class DeferredDispatch
         var cleaned = sb.ToString().Trim();
         return cleaned.Length == 0 ? fallback : cleaned;
     }
+
+    private readonly record struct RingSlot(DeferredDispatchRecord Record, bool PersistToDisk);
 
     private readonly record struct TaskKey(string TaskName, string Owner);
 

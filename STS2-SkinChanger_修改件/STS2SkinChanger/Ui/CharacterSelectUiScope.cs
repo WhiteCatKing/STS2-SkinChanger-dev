@@ -45,7 +45,11 @@ internal static class CharacterSelectUiScope
             return;
 
         var departure = scope.Departure;
-        Callable.From(() =>
+        // [延迟调度/CallDeferred] 原触发时机：缓存选人子界面 OnSubmenuOpened 后置（且处于 Leaving 状态）延迟重走呈现；
+        // 最早可执行帧：本帧末 idle；顺序依赖：须晚于原版 OnSubmenuOpened 与可能同步触发的 SelectCharacter；
+        // 能否合并：按 scope.Departure 代数淘汰旧回调；重试上限：1 次；
+        // 取消条件：!IsInstanceValid(screen) || !screen.IsVisibleInTree() || !scope.Leaving || scope.Departure != departure || scope.Character == null。
+        DeferredDispatch.CallDeferred("CharacterSelectUiScope.Reopen", screen, () =>
         {
             if (!GodotObject.IsInstanceValid(screen) || !screen.IsVisibleInTree() ||
                 !scope.Leaving || scope.Departure != departure || scope.Character is not { } character)
@@ -54,7 +58,7 @@ internal static class CharacterSelectUiScope
             // Cached submenus may keep the old background without firing SelectCharacter.
             // Run the normal presentation path to recreate both the background and its UI.
             ContextualSkinControls.ShowCharacter(screen, character);
-        }).CallDeferred();
+        }, DeferredDispatchRisk.Normal);
     }
 
     internal static bool IsLeaving(Control screen) =>
@@ -124,11 +128,13 @@ internal static class CharacterSelectUiScope
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.OnSubmenuClosed))]
 internal static class CharacterSelectUiClosePatch
 {
-    private static void Prefix(Control __instance) => CharacterSelectUiScope.Leave(__instance);
+    private static void Prefix(Control __instance) =>
+        UiInjectionGuard.Run("CharacterSelectUiClosePatch.Prefix", () => CharacterSelectUiScope.Leave(__instance));
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.OnSubmenuOpened))]
 internal static class CharacterSelectUiOpenPatch
 {
-    private static void Postfix(Control __instance) => CharacterSelectUiScope.Reopen(__instance);
+    private static void Postfix(Control __instance) =>
+        UiInjectionGuard.Run("CharacterSelectUiOpenPatch.Postfix", () => CharacterSelectUiScope.Reopen(__instance));
 }

@@ -309,18 +309,81 @@ internal static class ManagedSkinModLoader
         }
     }
 
+    internal static bool IsRunEnvironmentAuthorizedForBehavior(
+        string behaviorProviderId,
+        IReadOnlySet<string>? configuredProviderIds = null)
+    {
+        if (string.IsNullOrWhiteSpace(behaviorProviderId))
+        {
+            return false;
+        }
+
+        var resolvedTarget = ResolveBehaviorProviderId(behaviorProviderId);
+        var configured = configuredProviderIds ?? RunEnvironmentProviderIds;
+        foreach (var configuredId in configured)
+        {
+            if (configuredId.Equals(behaviorProviderId, StringComparison.OrdinalIgnoreCase) ||
+                configuredId.Equals(resolvedTarget, StringComparison.OrdinalIgnoreCase) ||
+                ResolveBehaviorProviderId(configuredId).Equals(resolvedTarget, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void SyncRunEnvironmentAuthorizationForActiveRuntimes()
+    {
+        var shouldRefreshPresentation = false;
+        foreach (var pair in ActiveProviderRuntimes.ToArray())
+        {
+            var shouldEnable = IsRunEnvironmentAuthorizedForBehavior(pair.Key);
+            if (pair.Value.RunEnvironmentEnabled == shouldEnable)
+            {
+                continue;
+            }
+
+            if (shouldEnable)
+            {
+                PatchProviderCallbacks(pair.Value.RunEnvironmentPatches);
+            }
+            else
+            {
+                ResetRunEnvironmentControllers(pair.Value.RunEnvironmentControllers);
+                UnpatchProviderCallbacks(pair.Value.RunEnvironmentPatches);
+                StopRunEnvironmentControllers(pair.Value.RunEnvironmentControllers);
+            }
+
+            pair.Value.RunEnvironmentEnabled = shouldEnable;
+            shouldRefreshPresentation = true;
+            ModLog.Info(
+                $"已{(shouldEnable ? "启用" : "停用")} {pair.Key} 的地区背景与音乐行为；" +
+                "怪物模型、动作和 Boss 图标仍按各自皮肤选择独立生效。");
+        }
+
+        if (shouldRefreshPresentation)
+        {
+            ScheduleRunEnvironmentPresentationRefresh();
+        }
+    }
+
     public static void ConfigureRunEnvironmentProviders(IEnumerable<string> providerIds)
     {
         var next = providerIds
             .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (RunEnvironmentProviderIds.SetEquals(next))
+        var rawUnchanged = RunEnvironmentProviderIds.SetEquals(next);
+        if (rawUnchanged &&
+            ActiveProviderRuntimes.All(pair =>
+                pair.Value.RunEnvironmentEnabled == IsRunEnvironmentAuthorizedForBehavior(pair.Key, next)))
         {
             return;
         }
 
         var runtimesToDisable = ActiveProviderRuntimes
-            .Where(pair => pair.Value.RunEnvironmentEnabled && !next.Contains(pair.Key))
+            .Where(pair => pair.Value.RunEnvironmentEnabled &&
+                           !IsRunEnvironmentAuthorizedForBehavior(pair.Key, next))
             .Select(pair => pair.Value)
             .ToArray();
         // Invoke a provider's own stop/reset callback while its authorization guard still allows
@@ -336,7 +399,7 @@ internal static class ManagedSkinModLoader
         var shouldRefreshPresentation = runtimesToDisable.Length > 0;
         foreach (var pair in ActiveProviderRuntimes.ToArray())
         {
-            var shouldEnable = next.Contains(pair.Key);
+            var shouldEnable = IsRunEnvironmentAuthorizedForBehavior(pair.Key, next);
             if (pair.Value.RunEnvironmentEnabled == shouldEnable)
             {
                 continue;
@@ -1133,15 +1196,22 @@ internal static class ManagedSkinModLoader
                 continue;
             }
 
-            // Several re-exports of one pack share an assembly identity, so only one copy of the code can
-            // run. Always run the fullest build: the slimmer re-export is a stripped one that lacks, for
-            // example, the damaged-stage (clothing) behaviour. Its own art still comes from its own pack.
-            var richerPath = ProviderSettingsVariantOptions.FindRicherSiblingAssemblyPath(provider.AssemblyPath);
+            // Only keep the settings-contract re-export pre-activation for same-logical-ID copies
+            // (for example local + workshop re-exports of the same logical Mod ID). Any cross-ID
+            // executor selection MUST enter GetOrLoadProviderAssembly from the player's selection
+            // so the >= 0.80 authored-type overlap threshold and slimmer -> fuller direction apply.
+            var richerPath = ProviderSettingsVariantOptions.FindRicherSiblingAssemblyPath(
+                provider.AssemblyPath,
+                candidatePath => IsSameLogicalProviderAssemblyPath(providerId, candidatePath));
             if (richerPath != null &&
                 ProviderAssemblies.FirstOrDefault(pair =>
                         pair.Value.AssemblyPath.Equals(richerPath, StringComparison.OrdinalIgnoreCase)) is
                     { Key: { } richerId, Value: { } richerProvider } &&
                 !string.IsNullOrWhiteSpace(richerId) &&
+                string.Equals(
+                    NormalizeProviderIdentity(richerId),
+                    NormalizeProviderIdentity(providerId),
+                    StringComparison.OrdinalIgnoreCase) &&
                 !ActiveProviderRuntimes.ContainsKey(richerId))
             {
                 ModLog.Info(
@@ -1164,6 +1234,21 @@ internal static class ManagedSkinModLoader
         }
     }
 
+    private static bool IsSameLogicalProviderAssemblyPath(string providerId, string candidateAssemblyPath)
+    {
+        var logicalId = NormalizeProviderIdentity(providerId);
+        foreach (var pair in ProviderAssemblies)
+        {
+            if (pair.Value.AssemblyPath.Equals(candidateAssemblyPath, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(NormalizeProviderIdentity(pair.Key), logicalId, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static void ActivateProvider(string providerId, ProviderAssembly provider)
     {
         // Stateful card providers have object-scoped adapters, never an active global PatchAll.
@@ -1174,7 +1259,7 @@ internal static class ManagedSkinModLoader
         }
         Assembly? assembly = null;
         IReadOnlyList<object> runEnvironmentControllers = [];
-        var runEnvironmentEnabled = RunEnvironmentProviderIds.Contains(providerId);
+        var runEnvironmentEnabled = IsRunEnvironmentAuthorizedForBehavior(providerId);
         var activationStarted = Stopwatch.GetTimestamp();
         var assemblyLoadedAt = activationStarted;
         var initializedAt = activationStarted;
@@ -2191,7 +2276,8 @@ internal static class ManagedSkinModLoader
         CharacterModel character,
         Action? afterReplay = null)
     {
-        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime))
+        var behaviorProviderId = ResolveBehaviorProviderId(providerId);
+        if (!ActiveProviderRuntimes.TryGetValue(behaviorProviderId, out var runtime))
         {
             return;
         }
@@ -2809,12 +2895,15 @@ internal static class ManagedSkinModLoader
             return [];
         }
 
+        var targetBehaviorId = string.IsNullOrWhiteSpace(onlyProviderId)
+            ? null
+            : ResolveBehaviorProviderId(onlyProviderId);
         var results = new List<(string ProviderId, IReadOnlyList<Node> AddedRoots)>();
         foreach (var providerId in ActiveProviderRuntimes
                      .Where(pair => pair.Value.NodeReadyPresentationPatches.Any(patch =>
                          patch.Target.DeclaringType?.IsInstanceOfType(room) == true) &&
-                         (onlyProviderId == null ||
-                          pair.Key.Equals(onlyProviderId, StringComparison.OrdinalIgnoreCase)))
+                         (targetBehaviorId == null ||
+                          pair.Key.Equals(targetBehaviorId, StringComparison.OrdinalIgnoreCase)))
                      .Select(pair => pair.Key)
                      .ToArray())
         {
@@ -3659,7 +3748,7 @@ internal static class ManagedSkinModLoader
         return assembly != null &&
                ProviderIdsByAssembly.TryGetValue(assembly, out var providerIds) &&
                providerIds.Any(providerId =>
-                   RunEnvironmentProviderIds.Contains(providerId) &&
+                   IsRunEnvironmentAuthorizedForBehavior(providerId) &&
                    ActiveProviderRuntimes.ContainsKey(providerId));
     }
 
@@ -3975,6 +4064,7 @@ internal static class ManagedSkinModLoader
                     ModLog.Info(string.Create(
                         CultureInfo.InvariantCulture,
                         $"同名程序集姊妹包 {provider.ProviderId}（{requestedTypeCount} 个类型）优先加载并委托给更完整的 {targetId}（{richerTypeCount} 个类型，程序集 {requestedName.Name}，类型重合 {richerOverlap:F2}），资源继续来自所选包。"));
+                    SyncRunEnvironmentAuthorizationForActiveRuntimes();
                 }
 
                 return richerAssembly;
@@ -4419,6 +4509,7 @@ internal static class ManagedSkinModLoader
                     : string.Create(
                         CultureInfo.InvariantCulture,
                         $"同名程序集姊妹包 {requested.ProviderId} 的行为改由 {targetId} 代为执行（程序集 {name.Name}，类型重合 {overlap:F2}），资源继续来自所选包。"));
+                SyncRunEnvironmentAuthorizationForActiveRuntimes();
             }
             return true;
         }

@@ -306,8 +306,16 @@ internal static class MerchantRuntimeAppearance
             // A provider prefix can replace skeleton_data_res while the outgoing skeleton still
             // reports a ready animation state. Defer one frame before resolving MegaSprite, then
             // use the game's own readiness gate so the provider registers the final skeleton.
-            Callable.From(() => CompleteSelectedMerchantSpineNodeReady(node, providerId))
-                .CallDeferred();
+            // [延迟调度/Critical/CallDeferred] 原触发时机：NMerchantButton/NMerchantHand._Ready 后置（NextFrameThenSpineReady）；
+            // 最早可执行帧：本帧末 idle（第一跳）→ Spine 就绪帧（第二跳）；
+            // 顺序依赖：Critical，必须原位直排等第三方 prefix 替换 skeleton_data_res 的一帧落定再经 RunWhenSpineReady 绑定最终骨架；
+            // 能否合并：不可跨节点/跨跳合并（IsSelectedProviderForNode 守卫）；重试上限：1 次延迟 + RunWhenSpineReady 单次回调；
+            // 取消条件：!IsSelectedProviderForNode(node, providerId) 或节点失效。
+            DeferredDispatch.CallDeferred(
+                "MerchantAppearance.NextFrameSpineReady",
+                node,
+                () => CompleteSelectedMerchantSpineNodeReady(node, providerId),
+                DeferredDispatchRisk.Normal);
             return;
         }
 
@@ -336,12 +344,21 @@ internal static class MerchantRuntimeAppearance
             }
 
             var sprite = new MegaSprite(spineNode);
+            var enqueueFrame = DeferredDispatch.CurrentFrame();
             node.RunWhenSpineReady(sprite, _ =>
             {
-                if (IsSelectedProviderForNode(node, providerId))
-                {
-                    CompleteSelectedMerchantNodeReadyCore(node, providerId);
-                }
+                DeferredDispatch.RunTracked(
+                    "MerchantAppearance.SpineNodeReady",
+                    node,
+                    () =>
+                    {
+                        if (IsSelectedProviderForNode(node, providerId))
+                        {
+                            CompleteSelectedMerchantNodeReadyCore(node, providerId);
+                        }
+                    },
+                    DeferredDispatchRisk.HighRisk,
+                    enqueueFrame);
             });
         }
         catch (Exception exception)

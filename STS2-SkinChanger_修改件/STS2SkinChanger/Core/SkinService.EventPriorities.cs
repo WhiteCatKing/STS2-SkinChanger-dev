@@ -6,7 +6,13 @@ namespace STS2SkinChanger.Core;
 internal static partial class SkinService
 {
     public const string InheritEventSelectionId = "__event_category__";
-    internal sealed record EventPriorityOptionState(string OptionId, string Name, bool Enabled, int Coverage, int TotalEvents);
+    internal sealed record EventPriorityOptionState(
+        string OptionId,
+        string Name,
+        bool Enabled,
+        int Coverage,
+        int TotalEvents,
+        bool IsTextOnly = false);
 
     private static void InitializeEventSkinCategoriesAfterModels()
     {
@@ -58,8 +64,19 @@ internal static partial class SkinService
             var options = groups.SelectMany(g => g.Options).DistinctBy(o => o.Id, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(o => o.Id, StringComparer.OrdinalIgnoreCase);
             return GetEventPriorityEntries(region).Where(e => options.ContainsKey(e.OptionId)).Select(e =>
-                new EventPriorityOptionState(e.OptionId, options[e.OptionId].Name, e.Enabled,
-                    groups.Count(g => g.Options.Any(o => o.Id.Equals(e.OptionId, StringComparison.OrdinalIgnoreCase))), groups.Length)).ToArray();
+            {
+                var covered = groups
+                    .Select(g => g.Options.FirstOrDefault(o => o.Id.Equals(e.OptionId, StringComparison.OrdinalIgnoreCase)))
+                    .Where(o => o != null)
+                    .ToArray();
+                return new EventPriorityOptionState(
+                    e.OptionId,
+                    options[e.OptionId].Name,
+                    e.Enabled,
+                    covered.Length,
+                    groups.Length,
+                    covered.Length > 0 && covered.All(o => o!.IsTextOnly));
+            }).ToArray();
         }
     }
 
@@ -117,6 +134,7 @@ internal static partial class SkinService
         var previousSelections = new Dictionary<string, string>(Config.Selections, StringComparer.OrdinalIgnoreCase);
         var previousProviders = Config.VisualProviderPriority.ToList();
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visualAffected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             mutation();
@@ -125,8 +143,17 @@ internal static partial class SkinService
                 Config.Selections[update.Key] = update.Value;
                 affected.Add(update.Key);
             }
-            foreach (var id in affected) { ClearRuntimeResourceCache(id); UpdateVisualProviderPriority(id, Config.GetSelection(id)); }
-            if (affected.Count > 0) MountOverlay(affected);
+            foreach (var id in affected)
+            {
+                ClearRuntimeResourceCache(id);
+                UpdateVisualProviderPriority(id, Config.GetSelection(id));
+                if (Catalog.IsEventSelectionVisuallyActive(id, previousSelections.GetValueOrDefault(id, SkinCatalog.BaseOptionId)) ||
+                    Catalog.IsEventSelectionVisuallyActive(id, Config.GetSelection(id)))
+                {
+                    visualAffected.Add(id);
+                }
+            }
+            if (visualAffected.Count > 0) MountOverlay(visualAffected);
             Config.Save(ConfigPath);
             foreach (var id in affected) EventSkinRuntime.RefreshCurrent(id);
             LastError = null;
@@ -138,7 +165,7 @@ internal static partial class SkinService
             Config.Selections = previousSelections;
             Config.VisualProviderPriority = previousProviders;
             foreach (var id in affected) ClearRuntimeResourceCache(id);
-            if (affected.Count > 0) TryRestoreOverlay(affected, cardOverlay: false);
+            if (visualAffected.Count > 0) TryRestoreOverlay(visualAffected, cardOverlay: false);
             LastError = exception.Message;
             ModLog.Error("调整事件地区优先级失败：" + exception);
             return false;

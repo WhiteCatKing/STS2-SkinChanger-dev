@@ -3757,10 +3757,19 @@ internal static class BackgroundSkinRoomPatch
     private static void Postfix(NCombatRoom __instance, IRunState state)
     {
         BackgroundSkinService.ApplyToRoom(__instance, state);
-        if (BackgroundSkinService.CurrentEncounter(__instance)?.Id.Entry.Equals(
-                FakeMerchantEventArtPolicy.EncounterId, StringComparison.OrdinalIgnoreCase) == true &&
-            __instance.Background is { } background)
-            FakeMerchantBackgroundNudge.Attach(background);
+        try
+        {
+            if (BackgroundSkinService.CurrentEncounter(__instance)?.Id.Entry.Equals(
+                    FakeMerchantEventArtPolicy.EncounterId, StringComparison.OrdinalIgnoreCase) == true &&
+                __instance.Background is { } background)
+            {
+                FakeMerchantBackgroundNudge.Attach(background);
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("附加假商人战斗背景微调失败：" + exception.GetBaseException().Message);
+        }
     }
 }
 

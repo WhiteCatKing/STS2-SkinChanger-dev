@@ -2008,34 +2008,24 @@ internal static partial class SkinService
                 {
                     // A cross-group full package that is being replaced may still sit on top of
                     // Godot's pack stack; only an all-group rebuild re-asserts every canonical path.
-                    foreach (var update in updates)
+                    if (FindReplacedMultiGroupFullRuntimeProvider(Catalog, updates, previousSelections) is { } replaced)
                     {
-                        if (Config.GetSelection(update.Key).Equals(
-                                update.Value,
-                                StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-
-                        var previousProvider = Catalog.ResolveVisualProviderId(
-                            Config.GetSelection(update.Key));
-                        if (Catalog.ProviderUsesFullRuntime(previousProvider) &&
-                            Catalog.GetFullRuntimeProviderGroups(previousProvider).Count > 1)
-                        {
-                            RequestFullOverlayReassert(
-                                $"多分组提供者 {previousProvider} 在 {update.Key} 上被替换");
-                            break;
-                        }
+                        RequestFullOverlayReassert(
+                            $"多分组提供者 {replaced.ProviderId} 在 {replaced.GroupId} 上被替换");
                     }
 
                     // Third-party packs cache the resources they swapped; drop those caches so they
                     // reload from the skin that is selected *now* (both sides of the switch).
                     ProviderRuntimeCacheReset.ResetForSelections(
-                        updates.Keys
-                            .Select(key => Config.GetSelection(key))
-                            .Concat(updates.Values)
-                            .ToArray());
-                    MountOverlay(affectedGroups);
+                        CollectSelectionTransitionOptions(updates, previousSelections));
+                    var requiresVisualOverlay = affectedGroups.Any(id =>
+                        !EventSkinPolicy.IsEventGroup(id) ||
+                        Catalog.IsEventSelectionVisuallyActive(id, previousSelections[id].Value ?? SkinCatalog.BaseOptionId) ||
+                        Catalog.IsEventSelectionVisuallyActive(id, updates[id]));
+                    if (requiresVisualOverlay)
+                    {
+                        MountOverlay(affectedGroups);
+                    }
                 }
                 Config.Save(ConfigPath);
                 ManualCharacterVariantBridge.ApplyLocalChoice(groupId);
@@ -6810,6 +6800,47 @@ internal static partial class SkinService
     /// only reliable way to make every canonical path point at the current selection again is a
     /// rebuild of **all** groups.
     /// </summary>
+    internal static (string ProviderId, string GroupId)? FindReplacedMultiGroupFullRuntimeProvider(
+        SkinCatalog catalog,
+        IReadOnlyDictionary<string, string> updates,
+        IReadOnlyDictionary<string, (bool HadValue, string? Value)> previousSelections)
+    {
+        foreach (var update in updates)
+        {
+            var previousSelection = ResolvePreviousSelectionValue(previousSelections, update.Key);
+            if (previousSelection.Equals(update.Value, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var previousProvider = catalog.ResolveVisualProviderId(previousSelection);
+            if (catalog.ProviderUsesFullRuntime(previousProvider) &&
+                catalog.GetFullRuntimeProviderGroups(previousProvider).Count > 1)
+            {
+                return (previousProvider, update.Key);
+            }
+        }
+
+        return null;
+    }
+
+    internal static string[] CollectSelectionTransitionOptions(
+        IReadOnlyDictionary<string, string> updates,
+        IReadOnlyDictionary<string, (bool HadValue, string? Value)> previousSelections) =>
+        updates.Keys
+            .Select(key => ResolvePreviousSelectionValue(previousSelections, key))
+            .Concat(updates.Values)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static string ResolvePreviousSelectionValue(
+        IReadOnlyDictionary<string, (bool HadValue, string? Value)> previousSelections,
+        string groupId) =>
+        previousSelections.TryGetValue(groupId, out var previous) &&
+        !string.IsNullOrWhiteSpace(previous.Value)
+            ? previous.Value!
+            : SkinCatalog.BaseOptionId;
+
     private static bool _needsFullOverlayReassert;
 
     internal static void RequestFullOverlayReassert(string reason)

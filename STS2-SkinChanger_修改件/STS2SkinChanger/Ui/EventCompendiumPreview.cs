@@ -18,7 +18,55 @@ namespace STS2SkinChanger.Ui;
 internal static class EventCompendiumPreview
 {
     private static readonly ConditionalWeakTable<Node, object> PreviewNodes = new();
+    private static readonly PropertyInfo? BackgroundScenePathProperty =
+        AccessTools.Property(typeof(EventModel), "BackgroundScenePath");
     public static bool IsPreview(Node node) => PreviewNodes.TryGetValue(node, out _);
+
+    internal static string ResolveBackgroundScenePath(EventModel model)
+    {
+        try
+        {
+            if (BackgroundScenePathProperty?.GetValue(model) is string path &&
+                !string.IsNullOrWhiteSpace(path))
+            {
+                return path;
+            }
+        }
+        catch
+        {
+            // Fall back to the canonical background scene path.
+        }
+
+        return $"res://scenes/events/background_scenes/{model.Id.Entry.ToLowerInvariant()}.tscn";
+    }
+
+    internal static bool ShouldRequestBackgroundScene(
+        EventModel model,
+        string groupId,
+        Func<string, bool>? resourceExists = null)
+    {
+        var path = ResolveBackgroundScenePath(model);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        var catalog = SkinService.Catalog;
+        if (catalog != null &&
+            catalog.HasEventResource(groupId, SkinService.Config.GetSelection(groupId), path))
+        {
+            return true;
+        }
+
+        try
+        {
+            return resourceExists != null ? resourceExists(path) : ResourceLoader.Exists(path);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public static EventModel[] Events()
     {
@@ -172,7 +220,9 @@ internal static class EventCompendiumPreview
                         : canonical;
                     if (ResourceLoader.Exists(path))
                     {
-                        portrait = groupExists && path.Equals(canonical, StringComparison.OrdinalIgnoreCase)
+                        portrait = groupExists &&
+                                   EventSkinRuntime.ShouldUseIsolatedVisuals(groupId) &&
+                                   path.Equals(canonical, StringComparison.OrdinalIgnoreCase)
                             ? EventSkinRuntime.LoadTexture(groupId, path)
                             : PreloadManager.Cache.GetTexture2D(path);
                     }
@@ -185,15 +235,19 @@ internal static class EventCompendiumPreview
 
                 // BaseLib-based custom events often put their artwork in a full background scene
                 // instead of the canonical portrait image. Show it behind the layout exactly as
-                // the event room does.
+                // the event room does, but skip CreateBackgroundScene when neither the game nor
+                // the selected skin actually supplies a background scene for this event.
                 PackedScene? backgroundScene = null;
-                try
+                if (ShouldRequestBackgroundScene(model, groupId))
                 {
-                    backgroundScene = model.CreateBackgroundScene();
-                }
-                catch
-                {
-                    // Fall through to the BaseLib path below.
+                    try
+                    {
+                        backgroundScene = model.CreateBackgroundScene();
+                    }
+                    catch
+                    {
+                        // Fall through to the BaseLib path below.
+                    }
                 }
 
                 if (backgroundScene == null)

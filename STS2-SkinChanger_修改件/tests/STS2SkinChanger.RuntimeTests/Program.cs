@@ -185,6 +185,12 @@ if (args.Length == 1 && args[0] == "--test-deferred-dispatch")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-postreview-fixes")
+{
+    PostReviewFixesTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-character-select-modes")
 {
     CharacterSelectModeTests.Run();
@@ -1964,6 +1970,7 @@ Gate.Run("GitHubFolderSwapTests", () => GitHubFolderSwapTests.Run());
 Gate.Run("MlmLaunchPlanSyncTests", () => MlmLaunchPlanSyncTests.Run());
 Gate.Run("DeferredDispatchTests", () => DeferredDispatchTests.Run());
 Gate.Run("TwinAssemblyBehaviorDelegationTests", () => TwinAssemblyBehaviorDelegationTests.Run());
+Gate.Run("PostReviewFixesTests", () => PostReviewFixesTests.Run());
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 Gate.Run("RequiredLibraryVisualGuardTests", () => RequiredLibraryVisualGuardTests.Run(args));
 Gate.Run("WorkshopTests", () => WorkshopTests.Run());

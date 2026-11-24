@@ -74,11 +74,15 @@ internal static class FakeMerchantEventFrame
         if (model is not { StartedFight: false } || MerchantRuntimeAppearance.IsMerchantPreviewRoot(screen)) return;
         _current = new WeakReference<NFakeMerchant>(screen);
         Models.GetValue(screen, _ => model);
-        Callable.From(() =>
+        // [延迟调度/CallDeferred] 原触发时机：NFakeMerchant._Ready 后置延迟应用假商人售货背景；
+        // 最早可执行帧：本帧末 idle；顺序依赖：须晚于 NFakeMerchant._Ready 与场景树挂载完成；
+        // 能否合并：单次触发无合并标记；重试上限：1 次；
+        // 取消条件：!IsInstanceValid(screen) || !screen.IsInsideTree() || model.StartedFight。
+        DeferredDispatch.CallDeferred("FakeMerchantEventFrame.Apply", screen, () =>
         {
             if (GodotObject.IsInstanceValid(screen) && screen.IsInsideTree() && !model.StartedFight)
                 Apply(screen, model);
-        }).CallDeferred();
+        }, DeferredDispatchRisk.Normal);
     }
 
     private static void Apply(NFakeMerchant screen, FakeMerchant? model)
@@ -174,8 +178,13 @@ internal static class FakeMerchantEventFrame
 
             // The SpineSprite builds its skeleton asynchronously after _Ready, so the bounds are
             // only meaningful once an animation pose has been applied.
+            // [延迟调度/ProcessFrame] 原触发时机：Apply 命中 NSFW-Event 帐篷后异步轮询 Spine 包围盒；
+            // 最早可执行帧：触发当帧起每 ProcessFrame 一次；顺序依赖：须待 Spine 异步建骨完成再计算构图；
+            // 能否合并：同屏当前按 SelectedProvider 校验淘汰；重试上限：300 帧（MaxWaitFrames）；
+            // 取消条件：!IsInstanceValid(screen) || !IsInstanceValid(sprite) || model?.StartedFight == true || SelectedProvider != provider 或取到有效 bounds。
             var bounds = default(Rect2);
             var ready = false;
+            var startFrame = DeferredDispatch.CurrentFrame();
             for (var frame = 0; frame < MaxWaitFrames; frame++)
             {
                 if (!GodotObject.IsInstanceValid(screen) || !GodotObject.IsInstanceValid(sprite) || model?.StartedFight == true || SelectedProvider != provider)
@@ -183,11 +192,25 @@ internal static class FakeMerchantEventFrame
                     return;
                 }
 
-                var candidate = ReadBounds(sprite);
-                if (candidate.Size.X > MinArtSize && candidate.Size.Y > MinArtSize)
+                DeferredDispatch.RunTrackedPoll(
+                    "FakeMerchantEventFrame.FitStep",
+                    screen,
+                    () =>
+                    {
+                        var candidate = ReadBounds(sprite);
+                        if (candidate.Size.X > MinArtSize && candidate.Size.Y > MinArtSize)
+                        {
+                            bounds = candidate;
+                            ready = true;
+                            return true;
+                        }
+
+                        return false;
+                    },
+                    DeferredDispatchRisk.Normal,
+                    startFrame);
+                if (ready)
                 {
-                    bounds = candidate;
-                    ready = true;
                     break;
                 }
 

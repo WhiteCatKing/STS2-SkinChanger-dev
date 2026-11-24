@@ -125,7 +125,8 @@ internal enum ModText
     LoadOrderRiskMessage,
     LoadOrderRiskWithManagerMessage,
     LoadOrderWithManagerMessage,
-    LoadOrderRiskFirstInstallMessage
+    LoadOrderRiskFirstInstallMessage,
+    EventTextOnlySuffix
 }
 
 internal static partial class ModLocalization
@@ -1735,6 +1736,8 @@ internal static partial class ModLocalization
             ? LoadOrderWithManagerMessageTexts.GetValueOrDefault(CurrentLanguage, LoadOrderWithManagerMessageTexts["eng"])
         : text == ModText.LoadOrderRiskFirstInstallMessage
             ? LoadOrderRiskFirstInstallMessageTexts.GetValueOrDefault(CurrentLanguage, LoadOrderRiskFirstInstallMessageTexts["eng"])
+        : text == ModText.EventTextOnlySuffix
+            ? EventTextOnlySuffixTexts.GetValueOrDefault(CurrentLanguage, EventTextOnlySuffixTexts["eng"])
         : text == ModText.RandomCharacterSkin ? "⁇" + RandomCharacterSkinTexts[CurrentLanguage] :
         text == ModText.GameDefault ? "◈" + Packs[CurrentLanguage].Get(ModText.GameDefault) :
         text == ModText.OtherCategoryEvents ? EventCategoryTexts[CurrentLanguage] :

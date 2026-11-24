@@ -2217,7 +2217,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         foreach (var option in options.Where(option => option.Id != VakuuVanillaArt.EasterEggId))
         {
             var index = _skinDropdown.ItemCount;
-            _skinDropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
+            _skinDropdown.AddItem(ModLocalization.FormatEventOptionLabel(option.Name, option.IsTextOnly));
             _skinDropdown.SetItemMetadata(index, option.Id);
         }
 

@@ -118,7 +118,7 @@ internal partial class AncientCompendiumScreen
             row.AddChild(enabled);
             var name = new Label
             {
-                Text = ModLocalization.DisplayOptionName(option.Name), ClipText = true,
+                Text = ModLocalization.FormatEventOptionLabel(option.Name, option.IsTextOnly), ClipText = true,
                 TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
                 SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(260, 36),
                 VerticalAlignment = VerticalAlignment.Center

@@ -1,4 +1,8 @@
+using System.Reflection;
+using HarmonyLib;
 using STS2SkinChanger.Core;
+using STS2SkinChanger.Ui;
+using STS2SkinChanger.Ui.EmperorCrabCompat;
 
 internal static class DeferredDispatchTests
 {
@@ -10,10 +14,14 @@ internal static class DeferredDispatchTests
             VerifyCrossFrameReadinessNotExhaustedInSingleFrame();
             VerifyExceptionPropagationUnchanged();
             VerifyBreadcrumbsHighRiskImmediateFlushRingAndFileCaps();
+            VerifyHighRiskEnterOnlyFlushesEnterWithoutDone();
+            VerifyPeriodicEmptyPollsOnlyCountWithoutBreadcrumbs();
+            VerifyHalfHpCrabSkipsRetryWhenTargetModAbsent();
+            VerifyPostReviewDeferredSitesUseWrapper();
             VerifyReentrancyWarningOnceWithoutTruncation();
             VerifyThreadSafeBackgroundEnqueue();
             VerifyCrashWatchEmbedsBreadcrumbSupport();
-            Console.WriteLine("Deferred dispatch records passed: interleaved FIFO order, cross-frame progression, exception parity, high-risk immediate breadcrumbs, caps, reentrancy warning and thread-safe enqueue.");
+            Console.WriteLine("Deferred dispatch records passed: interleaved FIFO order, cross-frame progression, exception parity, high-risk enter-only & empty-poll counting, crab retry gate, site wiring, caps, reentrancy warning and thread-safe enqueue.");
         }
         finally
         {
@@ -264,6 +272,251 @@ internal static class DeferredDispatchTests
                 Directory.Delete(tempDir, recursive: true);
             }
         }
+    }
+
+    private static void VerifyHighRiskEnterOnlyFlushesEnterWithoutDone()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"sts2_dispatch_enteronly_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var queue = new Queue<Action>();
+            ulong frame = 200;
+            DeferredDispatch.ConfigureForTests(
+                enqueue: queue.Enqueue,
+                frameCounter: () => frame,
+                breadcrumbDirectoryProvider: () => tempDir,
+                flushEveryRecords: 2);
+
+            var breadcrumbFile = Path.Combine(tempDir, CrashDiagnostics.BreadcrumbFileName);
+            var sawEnterOnDisk = false;
+            DeferredDispatch.CallDeferred("OstyModelPreview.FitModel", "osty#1", () =>
+            {
+                sawEnterOnDisk = File.Exists(breadcrumbFile) &&
+                                 File.ReadAllText(breadcrumbFile).Contains("[ENTER][HIGH] task=OstyModelPreview.FitModel", StringComparison.Ordinal);
+            }, DeferredDispatchRisk.HighRiskEnterOnly);
+
+            DrainSinglePass(queue);
+            DeferredDispatch.FlushBreadcrumbs();
+
+            Require(sawEnterOnDisk,
+                "HighRiskEnterOnly 必须在执行前立即把 ENTER 落盘。");
+            var diskLines = File.ReadAllLines(breadcrumbFile)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToArray();
+            Require(diskLines.Length == 1 &&
+                    diskLines[0].Contains("[ENTER][HIGH] task=OstyModelPreview.FitModel", StringComparison.Ordinal) &&
+                    !diskLines.Any(line => line.Contains("[DONE]", StringComparison.Ordinal)),
+                $"OstyModelPreview.FitModel 正常完成时磁盘只能落盘 ENTER，不得写 DONE：{string.Join(" | ", diskLines)}");
+
+            var records = DeferredDispatch.SnapshotRecords();
+            Require(records.Length == 2 && records[0].Phase == "ENTER" && records[1].Phase == "DONE",
+                "HighRiskEnterOnly 内存环仍应保留 ENTER/DONE 状态便于测试与排查。");
+
+            // Managed exceptions on HighRiskEnterOnly must still flush FAIL to disk.
+            DeferredDispatch.CallDeferred("OstyModelPreview.FitModel", "osty#2", () =>
+                throw new InvalidOperationException("fit-boom"), DeferredDispatchRisk.HighRiskEnterOnly);
+            try
+            {
+                DrainSinglePass(queue);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            var afterFail = File.ReadAllText(breadcrumbFile);
+            Require(afterFail.Contains("[FAIL][HIGH] task=OstyModelPreview.FitModel owner=osty#2", StringComparison.Ordinal),
+                "HighRiskEnterOnly 抛出托管异常时仍应把 FAIL 落盘。");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    private static void VerifyPeriodicEmptyPollsOnlyCountWithoutBreadcrumbs()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"sts2_dispatch_poll_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            ulong frame = 10;
+            DeferredDispatch.ConfigureForTests(
+                enqueue: action => action(),
+                frameCounter: () => frame,
+                breadcrumbDirectoryProvider: () => tempDir,
+                flushEveryRecords: 4);
+
+            var breadcrumbFile = Path.Combine(tempDir, CrashDiagnostics.BreadcrumbFileName);
+            var poll = DeferredDispatch.WrapPollCallback("SkinPreloader.Tick", "global", () => false);
+            for (var i = 0; i < 40; i++)
+            {
+                frame += 10;
+                poll();
+            }
+
+            DeferredDispatch.FlushBreadcrumbs();
+            Require(DeferredDispatch.GetIdlePollCount("SkinPreloader.Tick", "global") == 40,
+                $"空轮询应准确累计次数，实际：{DeferredDispatch.GetIdlePollCount("SkinPreloader.Tick", "global")}");
+            Require(DeferredDispatch.SnapshotRecords().Length == 0,
+                "周期性空轮询不得向环形缓冲逐条追加面包屑记录。");
+            Require(!File.Exists(breadcrumbFile),
+                "周期性空轮询不得触发磁盘面包屑写入。");
+
+            frame += 10;
+            var didWork = DeferredDispatch.RunTrackedPoll("SkinPreloader.Tick", "global", () => true);
+            Require(didWork, "真正干活的轮询步应返回 true。");
+            var records = DeferredDispatch.SnapshotRecords();
+            Require(records.Length == 1 &&
+                    records[0].Phase == "DONE" &&
+                    records[0].Result == "ok(idle=40)",
+                $"首次真正干活的轮询记录应汇总前置空轮询次数，实际：{records.FirstOrDefault().Result}");
+            Require(DeferredDispatch.GetIdlePollCount("SkinPreloader.Tick", "global") == 40,
+                "总空轮询计数应保持累计。");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    private static void VerifyHalfHpCrabSkipsRetryWhenTargetModAbsent()
+    {
+        Require(!HalfHpCrabSkinPatch.IsTargetModLoaded(
+                loadedAssemblyNames: ["Gurio.SkinChanger", "sts2"],
+                loadedModTokens: ["STS2SkinChanger", "SomeOtherMod"],
+                hasPatchType: false),
+            "未加载 erowatcher 目标 Mod 时，IsTargetModLoaded 必须返回 false。");
+        Require(HalfHpCrabSkinPatch.IsTargetModLoaded(
+                loadedAssemblyNames: ["Gurio.SkinChanger", "erowatcher"],
+                loadedModTokens: [],
+                hasPatchType: false),
+            "已加载目标程序集 erowatcher 时，IsTargetModLoaded 必须返回 true。");
+        Require(HalfHpCrabSkinPatch.IsTargetModLoaded(
+                loadedAssemblyNames: ["Gurio.SkinChanger"],
+                loadedModTokens: ["EroWatcher_Pack"],
+                hasPatchType: false),
+            "目标 Mod 清单或包名包含 erowatcher 时，IsTargetModLoaded 必须返回 true。");
+
+        var installMethod = AccessTools.Method(typeof(HalfHpCrabSkinPatch), nameof(HalfHpCrabSkinPatch.Install))
+                            ?? throw new InvalidOperationException("找不到 HalfHpCrabSkinPatch.Install。");
+        var calls = PatchProcessor.GetOriginalInstructions(installMethod)
+            .Select(i => i.operand)
+            .OfType<MethodInfo>()
+            .Select(m => m.Name)
+            .ToArray();
+        Require(calls.Contains(nameof(HalfHpCrabSkinPatch.IsTargetModLoaded)),
+            "HalfHpCrabSkinPatch.Install 必须在启动 5 分钟重试前调用 IsTargetModLoaded 检查目标 Mod。");
+    }
+
+    private static void VerifyPostReviewDeferredSitesUseWrapper()
+    {
+        AssertCallsDeferredDispatch(typeof(FakeMerchantEventFrame), nameof(FakeMerchantEventFrame.Schedule), nameof(DeferredDispatch.CallDeferred));
+        AssertCallsDeferredDispatch(typeof(CharacterSelectUiScope), nameof(CharacterSelectUiScope.Reopen), nameof(DeferredDispatch.CallDeferred));
+        AssertCallsDeferredDispatch(typeof(MerchantRuntimeAppearance), nameof(MerchantRuntimeAppearance.CompleteSelectedMerchantNodeReady), nameof(DeferredDispatch.CallDeferred));
+        AssertCallsDeferredDispatch(typeof(ContextualSkinControls), nameof(ContextualSkinControls.ApplyProviderVariantLabels), nameof(DeferredDispatch.CallDeferred));
+        AssertCallsDeferredDispatch(typeof(SkinPreloader), "EnsureTimer", nameof(DeferredDispatch.WrapPollCallback));
+        AssertCallsDeferredDispatch(typeof(DeferredProviderActivator), "EnsureTimer", nameof(DeferredDispatch.WrapPollCallback));
+
+        var ostyType = typeof(OstyModelPreviewControls).Assembly.GetType("STS2SkinChanger.Ui.OstyModelPreviewPanel")
+                       ?? throw new InvalidOperationException("找不到 OstyModelPreviewPanel。");
+        var scheduleFit = AccessTools.Method(ostyType, "ScheduleFit")
+                          ?? throw new InvalidOperationException("找不到 OstyModelPreviewPanel.ScheduleFit。");
+        var fitInstructions = PatchProcessor.GetOriginalInstructions(scheduleFit);
+        Require(fitInstructions.Any(i => i.operand is MethodInfo m &&
+                                         m.DeclaringType == typeof(DeferredDispatch) &&
+                                         m.Name == nameof(DeferredDispatch.CallDeferred)),
+            "OstyModelPreviewPanel.ScheduleFit 必须走 DeferredDispatch.CallDeferred。");
+        Require(fitInstructions.Any(i => i.opcode.Name == "ldc.i4.2"),
+            "OstyModelPreviewPanel.ScheduleFit 必须传 DeferredDispatchRisk.HighRiskEnterOnly (2)。");
+
+        // Also verify inner compiler-generated state-machine / closure callbacks (FitStep, ProbeStep,
+        // and the two Spine-ready inner callbacks) are wired into DeferredDispatch with exact risk tags.
+        AssertInnerCallbackCallsDeferredDispatch(
+            typeof(FakeMerchantEventFrame),
+            "FakeMerchantEventFrame.FitStep",
+            nameof(DeferredDispatch.RunTrackedPoll));
+        AssertInnerCallbackCallsDeferredDispatch(
+            typeof(FakeMerchantBattleFigure),
+            "FakeMerchantBattleFigure.ProbeStep",
+            nameof(DeferredDispatch.RunTrackedPoll));
+        AssertInnerCallbackCallsDeferredDispatch(
+            typeof(FakeMerchantBattleFigure),
+            "FakeMerchantBattleFigure.AttachSpineReady",
+            nameof(DeferredDispatch.RunTracked),
+            expectedRiskOpcode: "ldc.i4.2");
+        AssertInnerCallbackCallsDeferredDispatch(
+            typeof(MerchantRuntimeAppearance),
+            "MerchantAppearance.SpineNodeReady",
+            nameof(DeferredDispatch.RunTracked),
+            expectedRiskOpcode: "ldc.i4.1");
+    }
+
+    private static void AssertInnerCallbackCallsDeferredDispatch(
+        Type owner,
+        string expectedTag,
+        string expectedDispatchMethod,
+        string? expectedRiskOpcode = null)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        var candidateMethods = new List<MethodBase>();
+        candidateMethods.AddRange(owner.GetMethods(flags).Where(m => m.GetMethodBody() != null && !m.ContainsGenericParameters));
+        foreach (var nested in owner.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            if (nested.ContainsGenericParameters)
+            {
+                continue;
+            }
+
+            candidateMethods.AddRange(nested.GetMethods(flags).Where(m => m.GetMethodBody() != null && !m.ContainsGenericParameters));
+        }
+
+        var matched = false;
+        foreach (var method in candidateMethods)
+        {
+            var instructions = PatchProcessor.GetOriginalInstructions(method);
+            var hasTag = instructions.Any(i => i.operand is string s && s == expectedTag);
+            var hasCall = instructions.Any(i => i.operand is MethodInfo m &&
+                                                m.DeclaringType == typeof(DeferredDispatch) &&
+                                                m.Name == expectedDispatchMethod);
+            if (!hasTag || !hasCall)
+            {
+                continue;
+            }
+
+            if (expectedRiskOpcode != null && !instructions.Any(i => i.opcode.Name == expectedRiskOpcode))
+            {
+                continue;
+            }
+
+            matched = true;
+            break;
+        }
+
+        Require(matched,
+            $"{owner.Name} 内层回调必须携带标签 \"{expectedTag}\" 并调用 DeferredDispatch.{expectedDispatchMethod}" +
+            (expectedRiskOpcode != null ? $"（风险等级操作码 {expectedRiskOpcode}）" : string.Empty) + "。");
+    }
+
+    private static void AssertCallsDeferredDispatch(Type owner, string methodName, string expectedDispatchMethod)
+    {
+        var method = AccessTools.Method(owner, methodName)
+                     ?? throw new InvalidOperationException($"找不到 {owner.Name}.{methodName}。");
+        var instructions = PatchProcessor.GetOriginalInstructions(method);
+        var called = instructions
+            .Select(i => i.operand)
+            .OfType<MethodInfo>()
+            .ToArray();
+        Require(called.Any(m => m.DeclaringType == typeof(DeferredDispatch) && m.Name == expectedDispatchMethod),
+            $"{owner.Name}.{methodName} 必须调用 DeferredDispatch.{expectedDispatchMethod}。");
+        Require(!called.Any(m => m.Name == "CallDeferred" && m.DeclaringType != typeof(DeferredDispatch)),
+            $"{owner.Name}.{methodName} 不得再直接调用裸 CallDeferred。");
     }
 
     private static void VerifyReentrancyWarningOnceWithoutTruncation()

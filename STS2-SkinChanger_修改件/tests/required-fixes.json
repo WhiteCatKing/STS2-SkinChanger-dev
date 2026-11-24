@@ -479,13 +479,16 @@
   },
   {
     "id": "deferred-dispatch-records",
-    "title": "延迟回调与轮询经 DeferredDispatch 记录执行帧、连续重入告警与崩溃面包屑（高风险任务先落盘 ENTER），不改变原有排队位置与异常语义",
+    "title": "延迟回调与轮询经 DeferredDispatch 记录执行帧、连续重入告警与崩溃面包屑（高风险任务先落盘 ENTER，OstyModelPreview.FitModel 仅 ENTER 落盘，空轮询只计次数，HalfHpCrabSkinPatch 无目标 Mod 不启动重试），不改变原有排队位置与异常语义",
     "since": "mech1-step1",
     "symbols": [
       "DeferredDispatch.CallDeferred",
       "DeferredDispatch.WrapCallback",
+      "DeferredDispatch.WrapPollCallback",
       "DeferredDispatch.RunTracked",
+      "DeferredDispatch.RunTrackedPoll",
       "DeferredDispatch.FlushBreadcrumbs",
+      "HalfHpCrabSkinPatch.IsTargetModLoaded",
       "CrashDiagnostics.FormatRecentBreadcrumbsSection"
     ],
     "tests": [
@@ -500,11 +503,35 @@
       "ManagedSkinModLoader.TryReuseSiblingBehavior",
       "ManagedSkinModLoader.DeactivateProvidersExcept",
       "ManagedSkinModLoader.ActivateSelectedProviders",
-      "ManagedSkinModLoader.IsProviderAssemblyFor"
+      "ManagedSkinModLoader.IsProviderAssemblyFor",
+      "ManagedSkinModLoader.IsRunEnvironmentAuthorizedForBehavior"
     ],
     "tests": [
       { "suite": "Runtime", "name": "TwinAssemblyBehaviorDelegationTests", "args": "" },
       { "suite": "Runtime", "name": "ProviderAssemblyReuseTests", "args": "" }
+    ]
+  },
+  {
+    "id": "postreview-event-bg-selection-nudge-guards",
+    "title": "普通事件图鉴不再请求不存在的背景场景且先古 9 个照常接管；纯文本事件按实际资源标“仅文本”且中英文均经本地化入口、选中/跟随分类不生成私有包不重打包原版图且不视为视觉已生效；ApplySelection 使用切换前选择快照触发全量重申与旧包缓存重置；假商人战斗背景微调受 STS2SC_DEBUG=1 门控；全程序集生命周期与界面补丁异常隔离",
+    "since": "1.0.41.16-postreview",
+    "symbols": [
+      "EventCompendiumPreview.ShouldRequestBackgroundScene",
+      "ContextualSkinControls.ShouldReplaceCachedScene",
+      "SkinCatalog.IsEventOptionTextOnly",
+      "SkinCatalog.IsEventSelectionVisuallyActive",
+      "EventSkinRuntime.HasActiveVisualSelection",
+      "EventSkinRuntime.ShouldUseIsolatedVisuals",
+      "EventSkinRuntime.MarkVfxInstance",
+      "EventSkinRuntime.ReconcileTrackedVfxNodes",
+      "ModLocalization.FormatEventOptionLabel",
+      "SkinService.FindReplacedMultiGroupFullRuntimeProvider",
+      "SkinService.CollectSelectionTransitionOptions",
+      "FakeMerchantBackgroundNudge.IsDebugEnabled"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "PostReviewFixesTests", "args": "" },
+      { "suite": "Runtime", "name": "UiInjectionGuardTests", "args": "" }
     ]
   }
 ]

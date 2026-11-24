@@ -123,7 +123,8 @@ internal static class CardPortraitPerformanceOpenPatch
 [HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary.OnSubmenuClosed))]
 internal static class CardPortraitPerformanceClosePatch
 {
-    private static void Postfix() => CardPortraitPerformanceView.OnLibraryClosed();
+    private static void Postfix() =>
+        UiInjectionGuard.Run("CardPortraitPerformance.Close", CardPortraitPerformanceView.OnLibraryClosed);
 }
 
 [HarmonyPatch(typeof(NCardGrid), "InitGrid", typeof(Task))]

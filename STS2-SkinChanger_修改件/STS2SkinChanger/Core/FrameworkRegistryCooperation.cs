@@ -195,10 +195,11 @@ internal static class FrameworkRegistryCooperation
             label.Text = name;
     }
 
-    private static void TrackControl(Node __instance)
-    {
-        if (!LiveControls().Any(node => node == __instance)) Controls.Add(new(__instance));
-    }
+    private static void TrackControl(Node __instance) =>
+        UiInjectionGuard.Run("FrameworkRegistryCooperation.TrackControl", () =>
+        {
+            if (!LiveControls().Any(node => node == __instance)) Controls.Add(new(__instance));
+        });
 
     private static bool CanRefreshControl(Node __instance, MethodBase __originalMethod)
     {

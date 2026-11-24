@@ -4,8 +4,12 @@ using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
 public static class TwinAssemblyBehaviorDelegationTests
@@ -52,8 +56,10 @@ public static class TwinAssemblyBehaviorDelegationTests
             VerifyRegistrationConflictStillPrefersFullerBuild(root, infoLogs);
             VerifyReverseDelegationFullerToSlimmerForbidden(root, warnLogs);
             VerifyTemplateCloneDifferentTypesDoesNotDelegate(root, warnLogs);
+            VerifySameSettingsContractLowOverlapSelectSmallerDoesNotRunUnselectedLarger(root);
+            VerifyDelegatedCallbacksAndRunEnvironmentAuthorization(root);
             VerifyUnregisteredCollisionStillWarnsAndStaysResourceOnly(root, warnLogs);
-            Console.WriteLine("Twin-assembly behavior delegation passed: slimmer-first loads fuller (including early inspection), A->vanilla->B, B->vanilla->A, A<->B, A->other->B, reverse delegation blocked, same-ID reuse, template-clone guard and unregistered conflict guard.");
+            Console.WriteLine("Twin-assembly behavior delegation passed: slimmer-first loads fuller (including early inspection), A->vanilla->B, B->vanilla->A, A<->B, A->other->B, reverse delegation blocked, same-ID reuse, template-clone + same-contract low-overlap guard, delegated char/room replay + run-environment auth, and unregistered conflict guard.");
         }
         finally
         {
@@ -369,6 +375,293 @@ public static class TwinAssemblyBehaviorDelegationTests
         }
     }
 
+    private static void VerifySameSettingsContractLowOverlapSelectSmallerDoesNotRunUnselectedLarger(DirectoryInfo root)
+    {
+        // Exact blocking repro from Astra review:
+        // Two DIFFERENT logical IDs sharing assembly simple name + identical SettingsVariantContract
+        // (same SettingsTypeName, PropertyName, Labels), where B has MORE types than A, but
+        // authored-type Jaccard overlap is low (2/10 = 0.20 < 0.80).
+        // Selecting A alone MUST load and run A only; unselected B must have 0 initializations and stay inactive.
+        var asmName = "TemplateContractSkinMod_" + Guid.NewGuid().ToString("N");
+        var idA = "ContractModA_" + Guid.NewGuid().ToString("N");
+        var idB = "ContractModB_" + Guid.NewGuid().ToString("N");
+
+        var pathA = EmitTwinProviderDll(root, "contract_mod_a.dll", asmName, new Version(1, 0, 0, 0), tag: idA, delta: 13,
+            extraTypes: ["SharedTemplate.AppearanceSettings", "ModAOnly.Extra1"]);
+        var pathB = EmitTwinProviderDll(root, "contract_mod_b.dll", asmName, new Version(2, 0, 0, 0), tag: idB, delta: 29,
+            extraTypes:
+            [
+                "SharedTemplate.AppearanceSettings",
+                "ModBOnly.Extra1", "ModBOnly.Extra2", "ModBOnly.Extra3",
+                "ModBOnly.Extra4", "ModBOnly.Extra5", "ModBOnly.Extra6", "ModBOnly.Extra7"
+            ]);
+
+        // Also test same-logical-ID re-export WITH identical settings contract: fuller copy still wins.
+        var sameAsmName = "SameIdContractReexport_" + Guid.NewGuid().ToString("N");
+        var sameBase = "SameIdContract_" + Guid.NewGuid().ToString("N");
+        var sameSlim = sameBase + "::source:first";
+        var sameFull = sameBase + "::source:second";
+        var pathSameSlim = EmitTwinProviderDll(root, "same_contract_slim.dll", sameAsmName, new Version(1, 0, 0, 0), tag: sameSlim, delta: 41,
+            extraTypes: ["SharedTemplate.AppearanceSettings"]);
+        var pathSameFull = EmitTwinProviderDll(root, "same_contract_full.dll", sameAsmName, new Version(1, 1, 0, 0), tag: sameFull, delta: 53,
+            extraTypes: ["SharedTemplate.AppearanceSettings", "SameFull.WearStage1", "SameFull.WearStage2"]);
+
+        var contractsField = (IDictionary)AccessTools.Field(typeof(ProviderSettingsVariantOptions), "Contracts")!.GetValue(null)!;
+        var bindingsField = (IDictionary)AccessTools.Field(typeof(ProviderSettingsVariantOptions), "Bindings")!.GetValue(null)!;
+        var contractType = typeof(ProviderSettingsVariantOptions).GetNestedType("SettingsVariantContract", BindingFlags.NonPublic)!;
+        var bindingType = typeof(ProviderSettingsVariantOptions).GetNestedType("SettingsVariantBinding", BindingFlags.NonPublic)!;
+        var addedContractKeys = new List<string>();
+        var addedBindingKeys = new List<string>();
+
+        void RegisterFakeContract(string providerId, string assemblyPath, string assemblySimpleName)
+        {
+            var contract = Activator.CreateInstance(
+                contractType,
+                assemblyPath,
+                assemblySimpleName,
+                providerId,
+                "SharedTemplate.AppearanceSettings",
+                "Current",
+                false,
+                "SharedTemplate.AppearanceSettings",
+                "Appearance",
+                false,
+                (IReadOnlyList<int>)Array.Empty<int>(),
+                null,
+                (IReadOnlyList<string>)new[] { "Default", "Alt" },
+                0)!;
+            var contractKey = assemblyPath + "|" + providerId;
+            contractsField[contractKey] = contract;
+            addedContractKeys.Add(contractKey);
+            bindingsField[providerId] = Activator.CreateInstance(bindingType, contract, 0)!;
+            addedBindingKeys.Add(providerId);
+        }
+
+        try
+        {
+            RegisterTestProvider(idA, pathA, canActivateBehavior: true);
+            RegisterTestProvider(idB, pathB, canActivateBehavior: true);
+            RegisterFakeContract(idA, pathA, asmName);
+            RegisterFakeContract(idB, pathB, asmName);
+
+            RegisterTestProvider(sameSlim, pathSameSlim, canActivateBehavior: true);
+            RegisterTestProvider(sameFull, pathSameFull, canActivateBehavior: true);
+            RegisterFakeContract(sameSlim, pathSameSlim, sameAsmName);
+            RegisterFakeContract(sameFull, pathSameFull, sameAsmName);
+
+            // Confirm the fixture genuinely triggers the old unfiltered FindRicherSiblingAssemblyPath.
+            var unfiltered = ProviderSettingsVariantOptions.FindRicherSiblingAssemblyPath(pathA);
+            Require(string.Equals(unfiltered, pathB, StringComparison.OrdinalIgnoreCase),
+                "夹具必须真实命中旧版无过滤 FindRicherSiblingAssemblyPath，以证明阻塞路径已被收拢。");
+            var overlap = ManagedSkinModLoader.GetAssemblyTypeOverlapRatio(pathA, pathB);
+            Require(overlap < ManagedSkinModLoader.TwinAssemblyTypeOverlapThreshold,
+                $"低重合模板包重合度必须低于 0.80：actual={overlap:F3}");
+
+            // Selecting smaller A alone MUST initialize & activate ONLY A, NEVER unselected larger B!
+            ManagedSkinModLoader.ActivateSelectedProviders([idA]);
+            Require(InitCounts.GetValueOrDefault(idB) == 0,
+                $"只选 A 时，类型重合不足（{overlap:F2}）且设置合约相同的未选包 B 初始化次数必须为 0，实际={InitCounts.GetValueOrDefault(idB)}。");
+            Require(InitCounts.GetValueOrDefault(idA) == 1,
+                $"只选 A 时应初始化 A 一次，实际={InitCounts.GetValueOrDefault(idA)}。");
+            Require(ManagedSkinModLoader.IsProviderActive(idA) && !ManagedSkinModLoader.IsProviderActive(idB),
+                "只选 A 时必须 ACTIVE_A=True、ACTIVE_B=False。");
+            Require(ManagedSkinModLoader.ResolveBehaviorProviderId(idA) == idA && ComputeTwinBehaviorValue() == 13,
+                $"只选 A 时必须运行 A 自身行为（13），actual={ComputeTwinBehaviorValue()}。");
+            ManagedSkinModLoader.DeactivateProvidersExcept([]);
+
+            // Same-logical-ID re-export with shared settings contract still activates the fuller copy.
+            ManagedSkinModLoader.ActivateSelectedProviders([sameSlim]);
+            Require(InitCounts.GetValueOrDefault(sameFull) == 1 &&
+                    InitCounts.GetValueOrDefault(sameSlim) == 0 &&
+                    ManagedSkinModLoader.IsBehaviorActiveFor(sameSlim) &&
+                    ManagedSkinModLoader.IsProviderActive(sameFull) &&
+                    ComputeTwinBehaviorValue() == 53,
+                $"同逻辑 ID 重导出（设置合约相同）仍应优先运行更完整的同 ID 副本（53）：val={ComputeTwinBehaviorValue()}, initFull={InitCounts.GetValueOrDefault(sameFull)}");
+            ManagedSkinModLoader.DeactivateProvidersExcept([]);
+        }
+        finally
+        {
+            foreach (var key in addedBindingKeys) bindingsField.Remove(key);
+            foreach (var key in addedContractKeys) contractsField.Remove(key);
+            CleanupTestProviders([idA, idB, sameSlim, sameFull], [pathA, pathB, pathSameSlim, pathSameFull]);
+        }
+    }
+
+    private static int _delegatedCharReplayCount;
+    private static int _delegatedRoomReplayCount;
+    private static readonly Dictionary<string, int> DelegatedRoomReplayProviders = new(StringComparer.OrdinalIgnoreCase);
+
+    private static void DelegatedCharPresentationCallback(Control __instance, NCharacterSelectButton button) =>
+        _delegatedCharReplayCount++;
+
+    private static void DelegatedRoomReadyCallback(Node __instance) =>
+        _delegatedRoomReplayCount++;
+
+    private static bool SkipGodotCharacterPresentationState() => false;
+    private static bool StubEmptyCharacterState(ref object __result)
+    {
+        var method = AccessTools.Method(typeof(ManagedSkinModLoader), "CaptureCharacterPresentationState")!;
+        __result = Activator.CreateInstance(method.ReturnType)!;
+        return false;
+    }
+    private static bool StubIsInstanceValidTrue(ref bool __result)
+    {
+        __result = true;
+        return false;
+    }
+    private static bool StubReplayNodeReadyBehavior(string providerId, Node node, bool includePrefixes, ref IReadOnlyList<Node> __result)
+    {
+        var resolved = ManagedSkinModLoader.ResolveBehaviorProviderId(providerId);
+        DelegatedRoomReplayProviders[resolved] = DelegatedRoomReplayProviders.GetValueOrDefault(resolved) + 1;
+        _delegatedRoomReplayCount++;
+        __result = [];
+        return false;
+    }
+
+    private static void VerifyDelegatedCallbacksAndRunEnvironmentAuthorization(DirectoryInfo root)
+    {
+        var asmName = "TwinCallbackAuth_" + Guid.NewGuid().ToString("N");
+        var idSlimA = "CbSlimA_" + Guid.NewGuid().ToString("N");
+        var idFullB = "CbFullB_" + Guid.NewGuid().ToString("N");
+        var pathSlimA = EmitTwinProviderDll(root, "cb_slim_a.dll", asmName, new Version(0, 3, 5, 0), tag: idSlimA, delta: 10, extraTypes: SlimmerTwinCoreTypes);
+        var pathFullB = EmitTwinProviderDll(root, "cb_full_b.dll", asmName, new Version(0, 3, 16, 0), tag: idFullB, delta: 20, extraTypes: FullerTwinCoreTypes);
+
+        var harmony = new Harmony("sc.test.twin.callbacks." + Guid.NewGuid().ToString("N"));
+        _delegatedCharReplayCount = 0;
+        _delegatedRoomReplayCount = 0;
+        DelegatedRoomReplayProviders.Clear();
+        try
+        {
+            RegisterTestProvider(idSlimA, pathSlimA, canActivateBehavior: true);
+            RegisterTestProvider(idFullB, pathFullB, canActivateBehavior: true);
+
+            // Prevent headless Godot calls inside ScheduleRunEnvironmentPresentationRefresh / character state capture.
+            harmony.Patch(AccessTools.Method(typeof(ManagedSkinModLoader), "ScheduleRunEnvironmentPresentationRefresh"),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(SkipGodotCharacterPresentationState)));
+            harmony.Patch(AccessTools.Method(typeof(ManagedSkinModLoader), "RestoreCharacterPresentation",
+                    [typeof(ManagedSkinModLoader).GetNestedType("ActiveProviderRuntime", BindingFlags.NonPublic)!, typeof(Control)]),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(SkipGodotCharacterPresentationState)));
+            harmony.Patch(AccessTools.Method(typeof(ManagedSkinModLoader), "CaptureCharacterPresentationState"),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(StubEmptyCharacterState)));
+            harmony.Patch(AccessTools.Method(typeof(ManagedSkinModLoader), "TrackCharacterPresentationMutation"),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(SkipGodotCharacterPresentationState)));
+
+            // 1) Run-environment authorization configured for A BEFORE A->B alias even exists (exact SkinService.cs:1714-1735 order).
+            ManagedSkinModLoader.ConfigureRunEnvironmentProviders([idSlimA]);
+            ManagedSkinModLoader.ActivateSelectedProviders([idSlimA]);
+
+            Require(ManagedSkinModLoader.ResolveBehaviorProviderId(idSlimA) == idFullB &&
+                    ManagedSkinModLoader.IsProviderActive(idFullB),
+                "A 选中后必须成功委托并激活执行者 B。");
+
+            var activeRuntimes = (IDictionary)AccessTools.Field(typeof(ManagedSkinModLoader), "ActiveProviderRuntimes")!.GetValue(null)!;
+            var runtimeB = activeRuntimes[idFullB]!;
+            var runEnvEnabledProp = runtimeB.GetType().GetProperty("RunEnvironmentEnabled")!;
+            Require((bool)runEnvEnabledProp.GetValue(runtimeB)! &&
+                    ManagedSkinModLoader.IsRunEnvironmentAuthorizedForBehavior(idFullB),
+                "先按 A 配置地区授权、再建立 A->B 委托时，执行者 B 必须获得地区行为授权。");
+
+            var fullAsm = ManagedSkinModLoader.GetActiveProviderAssembly(idSlimA)!;
+            var runEnvPrefix = AccessTools.Method(typeof(ManagedSkinModLoader), "RunEnvironmentCallbackPrefix")!;
+            var entryMethodB = fullAsm.GetTypes().First().GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)!;
+            Require((bool)runEnvPrefix.Invoke(null, [entryMethodB])!,
+                "A 持有地区授权时，RunEnvironmentCallbackPrefix 必须放行执行者 B 的程序集回调。");
+
+            // Revoking back to vanilla must disable B's run-environment authorization.
+            ManagedSkinModLoader.ConfigureRunEnvironmentProviders([]);
+            Require(!(bool)runEnvEnabledProp.GetValue(runtimeB)! &&
+                    !ManagedSkinModLoader.IsRunEnvironmentAuthorizedForBehavior(idFullB) &&
+                    !(bool)runEnvPrefix.Invoke(null, [entryMethodB])!,
+                "切回原版清空地区授权后，执行者 B 的地区行为授权必须撤销。");
+
+            // Re-authorizing A after alias already exists must re-enable B.
+            ManagedSkinModLoader.ConfigureRunEnvironmentProviders([idSlimA]);
+            Require((bool)runEnvEnabledProp.GetValue(runtimeB)! &&
+                    (bool)runEnvPrefix.Invoke(null, [entryMethodB])!,
+                "重新为 A 授权后，执行者 B 的地区行为授权必须重新生效。");
+
+            // 2) Character-select presentation replay invoked with A must hit B and run afterReplay.
+            var providerPatchType = typeof(ManagedSkinModLoader).GetNestedType("ProviderPatch", BindingFlags.NonPublic)!;
+            var patchKindEnum = typeof(ManagedSkinModLoader).GetNestedType("ProviderPatchKind", BindingFlags.NonPublic)!;
+            var postfixKind = Enum.Parse(patchKindEnum, "Postfix");
+            var selectTarget = AccessTools.Method(typeof(NCharacterSelectScreen), "SelectCharacter")
+                               ?? typeof(NCharacterSelectScreen).GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).First(m => m.DeclaringType == typeof(NCharacterSelectScreen));
+            var charCallback = AccessTools.Method(typeof(TwinAssemblyBehaviorDelegationTests), nameof(DelegatedCharPresentationCallback))!;
+            var syntheticCharPatch = Activator.CreateInstance(
+                providerPatchType,
+                selectTarget,
+                charCallback,
+                postfixKind,
+                400,
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                false)!;
+            var charPatchList = Array.CreateInstance(providerPatchType, 1);
+            charPatchList.SetValue(syntheticCharPatch, 0);
+            var charPatchesField = runtimeB.GetType().GetField("<CharacterPresentationPatches>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)
+                                   ?? throw new InvalidOperationException("找不到 CharacterPresentationPatches 后备字段。");
+            charPatchesField.SetValue(runtimeB, charPatchList);
+
+            var dummyScreen = FakeGodot<NCharacterSelectScreen>();
+            var dummyButton = FakeGodot<NCharacterSelectButton>();
+            var concreteCharType = typeof(CharacterModel).Assembly.GetTypes()
+                .First(t => !t.IsAbstract && typeof(CharacterModel).IsAssignableFrom(t));
+            var dummyChar = (CharacterModel)RuntimeHelpers.GetUninitializedObject(concreteCharType);
+            var afterReplayRuns = 0;
+            ManagedSkinModLoader.ReplaySelectedCharacterPresentation(idSlimA, dummyScreen, dummyButton, dummyChar, () => afterReplayRuns++);
+            Require(_delegatedCharReplayCount == 1 && afterReplayRuns == 1,
+                $"以精简包 A 触发选角重放时必须命中执行者 B 并执行 afterReplay：charReplay={_delegatedCharReplayCount}, afterReplay={afterReplayRuns}");
+
+            // 3) Room-ready filtered replay invoked with onlyProviderId = A must match B.
+            var roomTarget = AccessTools.Method(typeof(Node), nameof(Node._Ready))!;
+            var roomCallback = AccessTools.Method(typeof(TwinAssemblyBehaviorDelegationTests), nameof(DelegatedRoomReadyCallback))!;
+            var syntheticRoomPatch = Activator.CreateInstance(
+                providerPatchType,
+                roomTarget,
+                roomCallback,
+                postfixKind,
+                400,
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                false)!;
+            var roomPatchList = Array.CreateInstance(providerPatchType, 1);
+            roomPatchList.SetValue(syntheticRoomPatch, 0);
+            var roomPatchesField = runtimeB.GetType().GetField("<NodeReadyPresentationPatches>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)
+                                   ?? throw new InvalidOperationException("找不到 NodeReadyPresentationPatches 后备字段。");
+            roomPatchesField.SetValue(runtimeB, roomPatchList);
+
+            harmony.Patch(AccessTools.Method(typeof(GodotObject), nameof(GodotObject.IsInstanceValid)),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(StubIsInstanceValidTrue)));
+            harmony.Patch(AccessTools.Method(typeof(ManagedSkinModLoader), nameof(ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior)),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(StubReplayNodeReadyBehavior)));
+
+            var dummyRoom = FakeGodot<Node>();
+            var roomResults = ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(dummyRoom, onlyProviderId: idSlimA);
+            Require(roomResults.Count == 1 &&
+                    roomResults[0].ProviderId.Equals(idFullB, StringComparison.OrdinalIgnoreCase) &&
+                    _delegatedRoomReplayCount == 1 &&
+                    DelegatedRoomReplayProviders.GetValueOrDefault(idFullB) == 1,
+                $"以精简包 A 过滤房间热切换重放时必须命中执行者 B：count={roomResults.Count}, replays={_delegatedRoomReplayCount}");
+
+            // Switching back to vanilla deactivates B so subsequent char/room replays do nothing.
+            ManagedSkinModLoader.ConfigureRunEnvironmentProviders([]);
+            ManagedSkinModLoader.DeactivateProvidersExcept([]);
+            ManagedSkinModLoader.ReplaySelectedCharacterPresentation(idSlimA, dummyScreen, dummyButton, dummyChar, () => afterReplayRuns++);
+            var afterVanillaRooms = ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(dummyRoom, onlyProviderId: idSlimA);
+            Require(_delegatedCharReplayCount == 1 && afterReplayRuns == 1 && afterVanillaRooms.Count == 0,
+                "切回原版停用 B 后，选角与房间重放必须停止生效。");
+        }
+        finally
+        {
+            try { ManagedSkinModLoader.ConfigureRunEnvironmentProviders([]); } catch { }
+            CleanupTestProviders([idSlimA, idFullB], [pathSlimA, pathFullB]);
+            harmony.UnpatchAll(harmony.Id);
+            _delegatedCharReplayCount = 0;
+            _delegatedRoomReplayCount = 0;
+            DelegatedRoomReplayProviders.Clear();
+        }
+    }
+
     private static void VerifyUnregisteredCollisionStillWarnsAndStaysResourceOnly(DirectoryInfo root, List<string> warnLogs)
     {
         var asmName = "TwinUnregisteredHost_" + Guid.NewGuid().ToString("N");
@@ -565,6 +858,13 @@ public static class TwinAssemblyBehaviorDelegationTests
     {
         _capturedWarns?.Add(message);
         return false;
+    }
+
+    private static T FakeGodot<T>() where T : class
+    {
+        var obj = (T)RuntimeHelpers.GetUninitializedObject(typeof(T));
+        GC.SuppressFinalize(obj);
+        return obj;
     }
 
     private static void Require(bool condition, string message)

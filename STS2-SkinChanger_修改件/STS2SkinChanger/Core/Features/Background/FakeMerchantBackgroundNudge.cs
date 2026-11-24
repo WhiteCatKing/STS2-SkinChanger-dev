@@ -12,9 +12,22 @@ internal sealed partial class FakeMerchantBackgroundNudge : Node
     private Vector2 _origin;
     private Vector2 _scale;
 
+    internal static bool IsDebugEnabled() =>
+        string.Equals(
+            System.Environment.GetEnvironmentVariable("STS2SC_DEBUG"),
+            "1",
+            System.StringComparison.Ordinal);
+
     internal static void Attach(NCombatBackground background)
     {
-        if (background.GetNodeOrNull<FakeMerchantBackgroundNudge>("SkinChangerBackgroundNudge") != null) return;
+        if (!IsDebugEnabled() ||
+            background == null ||
+            !GodotObject.IsInstanceValid(background) ||
+            background.GetNodeOrNull<FakeMerchantBackgroundNudge>("SkinChangerBackgroundNudge") != null)
+        {
+            return;
+        }
+
         var nudge = new FakeMerchantBackgroundNudge
         {
             Name = "SkinChangerBackgroundNudge",

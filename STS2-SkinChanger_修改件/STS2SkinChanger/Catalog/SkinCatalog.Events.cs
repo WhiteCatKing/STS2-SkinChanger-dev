@@ -104,13 +104,20 @@ internal sealed partial class SkinCatalog
                 var assets = assetsById.GetValueOrDefault(id) ?? new Dictionary<string, ResourceAsset>();
                 var existingIndex = group.Options.FindIndex(option => option.Id == index.Mod.Id);
                 if (existingIndex < 0)
-                    group.Options.Add(new SkinOption(index.Mod.Id, index.Mod.Name, assets));
+                    group.Options.Add(new SkinOption(index.Mod.Id, index.Mod.Name, assets)
+                    {
+                        IsTextOnly = assets.Count == 0
+                    });
                 else
                 {
                     var existing = group.Options[existingIndex];
                     var merged = new Dictionary<string, ResourceAsset>(existing.Assets, StringComparer.OrdinalIgnoreCase);
                     foreach (var asset in assets) merged[asset.Key] = asset.Value;
-                    group.Options[existingIndex] = existing with { Assets = merged };
+                    group.Options[existingIndex] = existing with
+                    {
+                        Assets = merged,
+                        IsTextOnly = merged.Count == 0 && !existing.IsRuntimeProvider
+                    };
                 }
             }
         }
@@ -217,7 +224,11 @@ internal sealed partial class SkinCatalog
                     var old = group.Options[position];
                     var merged = new Dictionary<string, ResourceAsset>(old.Assets, StringComparer.OrdinalIgnoreCase);
                     foreach (var pair in groupAssets) merged[pair.Key] = pair.Value;
-                    group.Options[position] = old with { Assets = merged };
+                    group.Options[position] = old with
+                    {
+                        Assets = merged,
+                        IsTextOnly = merged.Count == 0 && !old.IsRuntimeProvider
+                    };
                 }
             }
         }
@@ -296,6 +307,27 @@ internal sealed partial class SkinCatalog
             .FirstOrDefault(option => option.Id == selection)?.Assets.ContainsKey(path) == true ||
         _baselineIndexes.Any(index => index.Archive.Contains(path) ||
             index.Archive.Contains(path + ".import") || index.Archive.Contains(path + ".remap"));
+
+    public bool IsEventOptionTextOnly(string groupId, string? optionId) =>
+        EventSkinPolicy.IsEventGroup(groupId) &&
+        !string.IsNullOrWhiteSpace(optionId) &&
+        !optionId.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+        Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))
+            ?.IsTextOnly == true;
+
+    public bool HasVisualEventOption(string groupId) =>
+        EventSkinPolicy.IsEventGroup(groupId) &&
+        Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.Any(option => !option.IsTextOnly) == true;
+
+    public bool IsEventSelectionVisuallyActive(string groupId, string? optionId) =>
+        EventSkinPolicy.IsEventGroup(groupId) &&
+        !string.IsNullOrWhiteSpace(optionId) &&
+        !optionId.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+        Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))
+            is { IsTextOnly: false };
 
     private static bool TryReadEventText(EventTables tables, string key, string language, out string text)
     {
