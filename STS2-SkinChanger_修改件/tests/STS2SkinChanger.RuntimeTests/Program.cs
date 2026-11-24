@@ -268,6 +268,12 @@ if (args is ["--test-runtime-bundle-residency"])
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-twin-assembly-behavior")
+{
+    TwinAssemblyBehaviorDelegationTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-runtime-safety")
 {
     RuntimeSafetyTests.Run();
@@ -1943,6 +1949,7 @@ Gate.Run("StatefulCardArtTests", () => StatefulCardArtTests.CheckObservers());
 Gate.Run("GitHubFolderSwapTests", () => GitHubFolderSwapTests.Run());
 Gate.Run("MlmLaunchPlanSyncTests", () => MlmLaunchPlanSyncTests.Run());
 Gate.Run("DeferredDispatchTests", () => DeferredDispatchTests.Run());
+Gate.Run("TwinAssemblyBehaviorDelegationTests", () => TwinAssemblyBehaviorDelegationTests.Run());
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 Gate.Run("RequiredLibraryVisualGuardTests", () => RequiredLibraryVisualGuardTests.Run(args));
 Gate.Run("WorkshopTests", () => WorkshopTests.Run());

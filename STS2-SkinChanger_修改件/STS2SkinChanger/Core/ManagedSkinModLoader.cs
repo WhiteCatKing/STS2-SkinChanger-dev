@@ -17,7 +17,10 @@ using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 using System.Security.Cryptography;
 
@@ -67,6 +70,15 @@ internal static class ManagedSkinModLoader
     // A same-ID variation whose own DLL cannot be executed (identical assembly identity, different
     // content) keeps its resources but borrows the behaviour of the copy .NET actually loaded.
     private static readonly Dictionary<string, string> BehaviorProviderAliases =
+        new(StringComparer.OrdinalIgnoreCase);
+    // 不同逻辑 ID 的同名程序集，仅当作者类型定义集合 Jaccard 重合度达到此阈值才视为同一套代码的姊妹包。
+    // 设为 0.80：真实姊妹包（如贞德 sfw/nsfw，实测去编译器生成噪声后 51/56 ≈ 0.91，全量 79/89 ≈ 0.89）
+    // 允许存在少量分支新增类型；而从同一模板改出的不同 Mod（往往只共享 ModEntry 等一两个类型）重合度远低于此值。
+    internal const double TwinAssemblyTypeOverlapThreshold = 0.8;
+    private static readonly object TwinOverlapCacheSync = new();
+    private static readonly Dictionary<TwinAssemblyOverlapCacheKey, double> TwinAssemblyTypeOverlapCache = new();
+    private static readonly Dictionary<AssemblyFileStamp, ProviderAssemblyMetadataSummary> ProviderAssemblyMetadataCache = new();
+    private static readonly HashSet<string> ReportedReverseTwinDelegationWarnings =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Assembly> LoadedProviderAssemblies =
         new(StringComparer.OrdinalIgnoreCase);
@@ -227,7 +239,9 @@ internal static class ManagedSkinModLoader
         ProviderAssemblies.ContainsKey(providerId);
 
     internal static bool IsProviderAssemblyFor(string providerId, Assembly assembly) =>
-        ProviderIdsByAssembly.TryGetValue(assembly, out var providers) && providers.Contains(providerId);
+        ProviderIdsByAssembly.TryGetValue(assembly, out var providers) &&
+        (providers.Contains(providerId) ||
+         providers.Contains(ResolveBehaviorProviderId(providerId)));
 
     internal static Assembly? GetActiveProviderAssembly(string providerId) =>
         ActiveProviderRuntimes.TryGetValue(ResolveBehaviorProviderId(providerId), out var runtime) ? runtime.Assembly : null;
@@ -609,7 +623,11 @@ internal static class ManagedSkinModLoader
     internal static IReadOnlyList<MethodInfo> GetSelectedCharacterSkinPathMethods(string groupId)
     {
         var providerId = SkinService.GetSelectedCreatureRuntimeProvider(groupId);
-        if (providerId == null || !ActiveProviderRuntimes.TryGetValue(providerId, out var runtime)) return [];
+        if (providerId == null ||
+            !ActiveProviderRuntimes.TryGetValue(ResolveBehaviorProviderId(providerId), out var runtime))
+        {
+            return [];
+        }
         // Reuse only path dispatchers already registered for the selected owner. Never search
         // all loaded assemblies or invoke a whole combat Ready callback from a menu preview.
         return DirectCharacterSkinPathProviders
@@ -1070,9 +1088,21 @@ internal static class ManagedSkinModLoader
 
     public static void DeactivateProvidersExcept(IEnumerable<string> selectedProviderIds)
     {
-        var selected = selectedProviderIds
-            .Select(NormalizeProviderIdentity)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var providerId in selectedProviderIds)
+        {
+            if (string.IsNullOrWhiteSpace(providerId))
+            {
+                continue;
+            }
+
+            selected.Add(NormalizeProviderIdentity(providerId));
+            var behaviorId = ResolveBehaviorProviderId(providerId);
+            if (!string.IsNullOrWhiteSpace(behaviorId))
+            {
+                selected.Add(NormalizeProviderIdentity(behaviorId));
+            }
+        }
         var merchantSelection = SkinService.GetSelectedRuntimeProvider("merchant");
         foreach (var providerId in ActiveProviderRuntimes.Keys
                      .Where(providerId => !selected.Contains(NormalizeProviderIdentity(providerId)))
@@ -1127,7 +1157,10 @@ internal static class ManagedSkinModLoader
                 }
             }
 
-            ActivateProvider(providerId, provider);
+            if (!IsBehaviorActiveFor(providerId))
+            {
+                ActivateProvider(providerId, provider);
+            }
         }
     }
 
@@ -2473,6 +2506,7 @@ internal static class ManagedSkinModLoader
     /// </summary>
     public static void ReplaySelectedCreatureReady(string providerId, NCreature creature)
     {
+        providerId = ResolveBehaviorProviderId(providerId);
         if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime))
         {
             return;
@@ -2526,6 +2560,7 @@ internal static class ManagedSkinModLoader
         Node node,
         bool includePrefixes = false)
     {
+        providerId = ResolveBehaviorProviderId(providerId);
         if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
             !GodotObject.IsInstanceValid(node))
         {
@@ -2567,6 +2602,7 @@ internal static class ManagedSkinModLoader
         string providerId,
         Node node)
     {
+        providerId = ResolveBehaviorProviderId(providerId);
         if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
             !GodotObject.IsInstanceValid(node))
         {
@@ -2607,6 +2643,7 @@ internal static class ManagedSkinModLoader
         string providerId,
         Node node)
     {
+        providerId = ResolveBehaviorProviderId(providerId);
         if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
             !GodotObject.IsInstanceValid(node))
         {
@@ -2643,6 +2680,7 @@ internal static class ManagedSkinModLoader
 
     public static void RestoreSelectedNodeReadyBehavior(string providerId, Node node)
     {
+        providerId = ResolveBehaviorProviderId(providerId);
         if (ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) &&
             GodotObject.IsInstanceValid(node))
         {
@@ -2652,6 +2690,7 @@ internal static class ManagedSkinModLoader
 
     public static void ReplaySelectedCompanionReveal(string providerId, NCreature creature)
     {
+        providerId = ResolveBehaviorProviderId(providerId);
         if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime)) return;
         var entity = creature.Entity;
         if (entity.PetOwner == null || entity.IsDead || !creature.Visuals.HasSpineAnimation) return;
@@ -2972,6 +3011,7 @@ internal static class ManagedSkinModLoader
     /// </summary>
     public static void BeginSelectedNodeReadyTracking(string providerId, Node node)
     {
+        providerId = ResolveBehaviorProviderId(providerId);
         if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
             !GodotObject.IsInstanceValid(node))
         {
@@ -2992,6 +3032,7 @@ internal static class ManagedSkinModLoader
     /// </summary>
     public static void EndSelectedNodeReadyTracking(string providerId, Node node)
     {
+        providerId = ResolveBehaviorProviderId(providerId);
         if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
             !GodotObject.IsInstanceValid(node) ||
             !runtime.PendingNodeReadyBaselines.Remove(node.GetInstanceId(), out var baseline))
@@ -3020,7 +3061,17 @@ internal static class ManagedSkinModLoader
             return;
         }
 
-        var selected = selectedProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var providerId in selectedProviderIds)
+        {
+            if (string.IsNullOrWhiteSpace(providerId))
+            {
+                continue;
+            }
+
+            selected.Add(providerId);
+            selected.Add(ResolveBehaviorProviderId(providerId));
+        }
         var nodeId = node.GetInstanceId();
         foreach (var pair in ActiveProviderRuntimes.ToArray())
         {
@@ -3878,7 +3929,9 @@ internal static class ManagedSkinModLoader
         }
     }
 
-    private static Assembly? GetOrLoadProviderAssembly(ProviderAssembly provider)
+    private static Assembly? GetOrLoadProviderAssembly(
+        ProviderAssembly provider,
+        bool allowOverrideRegistrationConflict = false)
     {
         if (LoadedProviderAssemblies.TryGetValue(provider.AssemblyPath, out var loadedProviderAssembly))
         {
@@ -3889,11 +3942,101 @@ internal static class ManagedSkinModLoader
                           AssemblyLoadContext.Default;
         var requestedName = ReadProviderAssemblyName(provider.AssemblyPath);
         var occupied = FindAssemblyBySimpleName(loadContext, requestedName);
-        if (occupied != null && TryReuseSiblingBehavior(provider, requestedName!, occupied))
-            return occupied;
+        if (occupied != null)
+        {
+            if (TryReuseSiblingBehavior(provider, requestedName!, occupied, out var reverseBlocked))
+            {
+                return occupied;
+            }
 
-        if (!provider.CanActivateBehavior)
-            return null;
+            if (reverseBlocked)
+            {
+                return null;
+            }
+        }
+        else if (requestedName != null &&
+                 TryFindRicherTwinSibling(provider, requestedName, out var richerSibling, out var richerOverlap, out var requestedTypeCount, out var richerTypeCount))
+        {
+            // When any entry point (Godot script registration, inspection, settings, prewarm,
+            // or activation) touches the slimmer twin first while the assembly name is still free,
+            // always load the fuller twin first so the slimmer package delegates to the fuller one.
+            var richerAssembly = GetOrLoadProviderAssembly(richerSibling, allowOverrideRegistrationConflict: true);
+            if (richerAssembly != null)
+            {
+                var targetId = ResolveBehaviorProviderId(richerSibling.ProviderId);
+                if (!targetId.Equals(provider.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+                    BehaviorProviderAliases.TryAdd(provider.ProviderId, targetId))
+                {
+                    if (!LoadedProviderAssemblies.ContainsKey(richerSibling.AssemblyPath))
+                    {
+                        AdoptedGameAssemblies.Add(richerAssembly);
+                    }
+
+                    ModLog.Info(string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"同名程序集姊妹包 {provider.ProviderId}（{requestedTypeCount} 个类型）优先加载并委托给更完整的 {targetId}（{richerTypeCount} 个类型，程序集 {requestedName.Name}，类型重合 {richerOverlap:F2}），资源继续来自所选包。"));
+                }
+
+                return richerAssembly;
+            }
+        }
+
+        if (!provider.CanActivateBehavior && !allowOverrideRegistrationConflict)
+        {
+            if (requestedName?.FullName is { } requestedIdentity &&
+                ProviderAssemblySourcesByIdentity.TryGetValue(requestedIdentity, out var primarySource) &&
+                !primarySource.ProviderId.Equals(provider.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+                ProviderAssemblies.TryGetValue(primarySource.ProviderId, out var primaryProvider))
+            {
+                var sameLogicalId = string.Equals(
+                    NormalizeProviderIdentity(provider.ProviderId),
+                    NormalizeProviderIdentity(primaryProvider.ProviderId),
+                    StringComparison.OrdinalIgnoreCase);
+                if (sameLogicalId)
+                {
+                    if (primaryProvider.CanActivateBehavior)
+                    {
+                        var primaryAssembly = GetOrLoadProviderAssembly(primaryProvider);
+                        if (primaryAssembly != null &&
+                            TryReuseSiblingBehavior(provider, requestedName, primaryAssembly, out _))
+                        {
+                            return primaryAssembly;
+                        }
+                    }
+
+                    return null;
+                }
+
+                var overlap = GetAssemblyTypeOverlapRatio(provider.AssemblyPath, primaryProvider.AssemblyPath);
+                if (overlap >= TwinAssemblyTypeOverlapThreshold)
+                {
+                    var reqCount = GetAuthoredTypeCount(provider.AssemblyPath);
+                    var primaryCount = GetAuthoredTypeCount(primaryProvider.AssemblyPath);
+                    if (reqCount > primaryCount)
+                    {
+                        // This package is strictly fuller than the one scanned earlier at registration,
+                        // and the assembly name is still unoccupied: load this fuller build directly.
+                        allowOverrideRegistrationConflict = true;
+                    }
+                    else if (primaryProvider.CanActivateBehavior)
+                    {
+                        var primaryAssembly = GetOrLoadProviderAssembly(primaryProvider);
+                        if (primaryAssembly != null &&
+                            TryReuseSiblingBehavior(provider, requestedName, primaryAssembly, out _))
+                        {
+                            return primaryAssembly;
+                        }
+
+                        return null;
+                    }
+                }
+            }
+
+            if (!allowOverrideRegistrationConflict)
+            {
+                return null;
+            }
+        }
 
         var fingerprint = ComputeProviderAssemblyFingerprint(provider.AssemblyPath);
         var assemblyIdentity = requestedName?.FullName;
@@ -3918,6 +4061,19 @@ internal static class ManagedSkinModLoader
                     fingerprint,
                     StringComparison.OrdinalIgnoreCase))
             {
+                if (requestedName != null)
+                {
+                    if (TryReuseSiblingBehavior(provider, requestedName, loadedIdentity.Assembly, out var reverseBlocked))
+                    {
+                        return loadedIdentity.Assembly;
+                    }
+
+                    if (reverseBlocked)
+                    {
+                        return null;
+                    }
+                }
+
                 ReportProviderAssemblyIdentityConflict(
                     provider,
                     assemblyIdentity,
@@ -3986,6 +4142,19 @@ internal static class ManagedSkinModLoader
                 if (loadedFingerprint == null ||
                     !loadedFingerprint.Equals(fingerprint, StringComparison.OrdinalIgnoreCase))
                 {
+                    if (requestedName != null)
+                    {
+                        if (TryReuseSiblingBehavior(provider, requestedName, assembly, out var reverseBlocked))
+                        {
+                            return assembly;
+                        }
+
+                        if (reverseBlocked)
+                        {
+                            return null;
+                        }
+                    }
+
                     ReportProviderAssemblyIdentityConflict(
                         provider,
                         assemblyIdentity,
@@ -4062,7 +4231,8 @@ internal static class ManagedSkinModLoader
                     // A competing loader can occupy the name after the initial check.
                     var existing = FindAssemblyBySimpleName(loadContext, requestedName);
                     if (existing == null) throw;
-                    if (TryReuseSiblingBehavior(provider, requestedName!, existing)) return existing;
+                    if (TryReuseSiblingBehavior(provider, requestedName!, existing, out var reverseBlocked)) return existing;
+                    if (reverseBlocked) return null;
                     ReportProviderAssemblyIdentityConflict(provider, assemblyIdentity!, fingerprint,
                         TryComputeLoadedAssemblyFingerprint(existing));
                     return null;
@@ -4084,33 +4254,404 @@ internal static class ManagedSkinModLoader
                 string.Equals(candidate.GetName().Name, name, StringComparison.OrdinalIgnoreCase))
             : null;
 
-    private static bool TryReuseSiblingBehavior(ProviderAssembly requested, AssemblyName name, Assembly loaded)
+    private static bool TryFindRicherTwinSibling(
+        ProviderAssembly requested,
+        AssemblyName requestedName,
+        out ProviderAssembly richerSibling,
+        out double overlapRatio,
+        out int requestedTypeCount,
+        out int richerTypeCount)
     {
+        richerSibling = null!;
+        overlapRatio = 0.0;
+        requestedTypeCount = 0;
+        richerTypeCount = 0;
+
+        if (string.IsNullOrWhiteSpace(requested.ProviderId) ||
+            string.IsNullOrWhiteSpace(requestedName.Name))
+        {
+            return false;
+        }
+
+        var logicalId = NormalizeProviderIdentity(requested.ProviderId);
+        var requestedToken = requestedName.GetPublicKeyToken() ?? [];
+
+        ProviderAssembly? best = null;
+        var bestTypeCount = -1;
+        var bestOverlap = 0.0;
+        var baseTypeCount = -1;
+
+        foreach (var candidate in ProviderAssemblies.Values)
+        {
+            if (string.IsNullOrWhiteSpace(candidate.ProviderId) ||
+                candidate.AssemblyPath.Equals(requested.AssemblyPath, StringComparison.OrdinalIgnoreCase) ||
+                candidate.ProviderId.Equals(requested.ProviderId, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(NormalizeProviderIdentity(candidate.ProviderId), logicalId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var candidateName = ReadCachedProviderAssemblyName(candidate.AssemblyPath);
+            if (candidateName == null ||
+                !string.Equals(candidateName.Name, requestedName.Name, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(candidateName.CultureName, requestedName.CultureName, StringComparison.OrdinalIgnoreCase) ||
+                !requestedToken.AsSpan().SequenceEqual(candidateName.GetPublicKeyToken() ?? []))
+            {
+                continue;
+            }
+
+            if (baseTypeCount < 0)
+            {
+                baseTypeCount = GetAuthoredTypeCount(requested.AssemblyPath);
+                if (baseTypeCount <= 0)
+                {
+                    return false;
+                }
+            }
+
+            var candidateTypeCount = GetAuthoredTypeCount(candidate.AssemblyPath);
+            if (candidateTypeCount <= baseTypeCount)
+            {
+                continue;
+            }
+
+            var overlap = GetAssemblyTypeOverlapRatio(requested.AssemblyPath, candidate.AssemblyPath);
+            if (overlap < TwinAssemblyTypeOverlapThreshold)
+            {
+                continue;
+            }
+
+            if (candidateTypeCount > bestTypeCount ||
+                (candidateTypeCount == bestTypeCount && overlap > bestOverlap))
+            {
+                best = candidate;
+                bestTypeCount = candidateTypeCount;
+                bestOverlap = overlap;
+            }
+        }
+
+        if (best == null)
+        {
+            return false;
+        }
+
+        richerSibling = best;
+        overlapRatio = bestOverlap;
+        requestedTypeCount = baseTypeCount;
+        richerTypeCount = bestTypeCount;
+        return true;
+    }
+
+    private static bool TryReuseSiblingBehavior(
+        ProviderAssembly requested,
+        AssemblyName name,
+        Assembly loaded,
+        out bool blockedReverseDelegation)
+    {
+        blockedReverseDelegation = false;
         if (string.IsNullOrWhiteSpace(requested.ProviderId)) return false;
         var loadedName = loaded.GetName();
-        if (!string.Equals(name.CultureName, loadedName.CultureName, StringComparison.OrdinalIgnoreCase) ||
+        if (!string.Equals(name.Name, loadedName.Name, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(name.CultureName, loadedName.CultureName, StringComparison.OrdinalIgnoreCase) ||
             !(name.GetPublicKeyToken() ?? []).AsSpan().SequenceEqual(loadedName.GetPublicKeyToken() ?? []))
             return false;
 
         var logicalId = NormalizeProviderIdentity(requested.ProviderId);
-        var source = ProviderAssemblies.Values.FirstOrDefault(candidate =>
-            !candidate.AssemblyPath.Equals(requested.AssemblyPath, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(NormalizeProviderIdentity(candidate.ProviderId), logicalId, StringComparison.OrdinalIgnoreCase) &&
-            (LoadedProviderAssemblies.TryGetValue(candidate.AssemblyPath, out var cached)
-                ? ReferenceEquals(cached, loaded)
-                : string.Equals(candidate.AssemblyPath, loaded.Location, StringComparison.OrdinalIgnoreCase)));
-        if (source == null) return false;
+        // Prefer a same-logical-ID sibling first (preserves original same-ID routing without extra
+        // type-overlap or direction requirements), then check any registered provider owning this
+        // loaded assembly whose PE metadata type-definition set overlaps >= TwinAssemblyTypeOverlapThreshold
+        // and is at least as rich as requested (delegation is strictly slimmer -> fuller, never fuller -> slimmer).
+        var candidates = ProviderAssemblies.Values
+            .Where(candidate =>
+                !string.IsNullOrWhiteSpace(candidate.ProviderId) &&
+                !candidate.AssemblyPath.Equals(requested.AssemblyPath, StringComparison.OrdinalIgnoreCase) &&
+                !candidate.ProviderId.Equals(requested.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+                OwnsLoadedAssembly(candidate, loaded))
+            .OrderByDescending(candidate =>
+                string.Equals(NormalizeProviderIdentity(candidate.ProviderId), logicalId, StringComparison.OrdinalIgnoreCase));
 
-        // The selected package keeps its own PCK and source ID. Delegate only behaviour to
-        // the registered sibling that owns the loaded assembly, including in-memory rewrites.
-        if (BehaviorProviderAliases.TryAdd(requested.ProviderId, source.ProviderId))
+        foreach (var source in candidates)
         {
-            if (!LoadedProviderAssemblies.ContainsKey(source.AssemblyPath))
-                AdoptedGameAssemblies.Add(loaded);
-            ModLog.Info($"同 ID 皮肤包 {requested.ProviderId} 复用 {source.ProviderId} 的行为程序集 {name.Name}，资源继续来自所选包。");
+            var targetId = ResolveBehaviorProviderId(source.ProviderId);
+            if (targetId.Equals(requested.ProviderId, StringComparison.OrdinalIgnoreCase)) continue;
+
+            var sameLogicalId = string.Equals(
+                NormalizeProviderIdentity(targetId),
+                logicalId,
+                StringComparison.OrdinalIgnoreCase);
+
+            var overlap = 1.0;
+            if (!sameLogicalId)
+            {
+                overlap = GetAssemblyTypeOverlapRatio(requested.AssemblyPath, source.AssemblyPath);
+                if (overlap < TwinAssemblyTypeOverlapThreshold)
+                {
+                    continue;
+                }
+
+                var requestedTypeCount = GetAuthoredTypeCount(requested.AssemblyPath);
+                var sourceTypeCount = GetAuthoredTypeCount(source.AssemblyPath);
+                if (requestedTypeCount > sourceTypeCount)
+                {
+                    // Never reverse-delegate a fuller build to an already-loaded slimmer build
+                    // (e.g., a stripped pack missing combat wear logic). Warn explicitly instead.
+                    blockedReverseDelegation = true;
+                    var warnKey = requested.ProviderId + "->" + targetId + "|" + (name.Name ?? string.Empty);
+                    if (ReportedReverseTwinDelegationWarnings.Add(warnKey))
+                    {
+                        ModLog.Warn(string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"同名程序集姊妹包 {requested.ProviderId}（{requestedTypeCount} 个类型）比已加载的 {targetId}（{sourceTypeCount} 个类型）更完整，" +
+                            $"但程序集 {name.Name} 已被精简版提前占用（类型重合 {overlap:F2}）；拒绝反向委托，行为可能不完整，当前包仅接管资源。"));
+                    }
+                    return false;
+                }
+            }
+
+            // The selected package keeps its own PCK and source ID. Delegate only behaviour to
+            // the registered sibling that owns the loaded assembly, including in-memory rewrites.
+            if (BehaviorProviderAliases.TryAdd(requested.ProviderId, targetId))
+            {
+                if (!LoadedProviderAssemblies.ContainsKey(source.AssemblyPath))
+                    AdoptedGameAssemblies.Add(loaded);
+                ModLog.Info(sameLogicalId
+                    ? $"同 ID 皮肤包 {requested.ProviderId} 复用 {targetId} 的行为程序集 {name.Name}，资源继续来自所选包。"
+                    : string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"同名程序集姊妹包 {requested.ProviderId} 的行为改由 {targetId} 代为执行（程序集 {name.Name}，类型重合 {overlap:F2}），资源继续来自所选包。"));
+            }
+            return true;
         }
-        return true;
+
+        return false;
     }
+
+    internal static int GetAuthoredTypeCount(string assemblyPath) =>
+        GetOrReadAssemblyMetadataSummary(assemblyPath)?.AuthoredTypes.Count ?? 0;
+
+    private static AssemblyName? ReadCachedProviderAssemblyName(string assemblyPath) =>
+        GetOrReadAssemblyMetadataSummary(assemblyPath)?.AssemblyName;
+
+    private static ProviderAssemblyMetadataSummary? GetOrReadAssemblyMetadataSummary(string assemblyPath)
+    {
+        if (string.IsNullOrWhiteSpace(assemblyPath) || !TryBuildFileStamp(assemblyPath, out var stamp))
+        {
+            return null;
+        }
+
+        lock (TwinOverlapCacheSync)
+        {
+            if (ProviderAssemblyMetadataCache.TryGetValue(stamp, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        var assemblyName = ReadProviderAssemblyName(stamp.FullPath);
+        var authoredTypes = ReadAuthoredTypeFullNames(stamp.FullPath);
+        if (assemblyName == null || authoredTypes == null)
+        {
+            return null;
+        }
+
+        var summary = new ProviderAssemblyMetadataSummary(assemblyName, authoredTypes);
+        lock (TwinOverlapCacheSync)
+        {
+            if (ProviderAssemblyMetadataCache.Count >= 512)
+            {
+                ProviderAssemblyMetadataCache.Clear();
+            }
+
+            ProviderAssemblyMetadataCache[stamp] = summary;
+        }
+
+        return summary;
+    }
+
+    /// <summary>
+    /// Computes the Jaccard similarity (<c>|A ∩ B| / |A ∪ B|</c>) between the authored type
+    /// definition full names of two DLLs using read-only PE metadata (never loads or executes
+    /// either assembly). Results are cached by canonical file path + size + last-write timestamp.
+    /// </summary>
+    internal static double GetAssemblyTypeOverlapRatio(string pathA, string pathB)
+    {
+        if (string.IsNullOrWhiteSpace(pathA) || string.IsNullOrWhiteSpace(pathB))
+        {
+            return 0.0;
+        }
+
+        if (!TryBuildFileStamp(pathA, out var stampA) || !TryBuildFileStamp(pathB, out var stampB))
+        {
+            return 0.0;
+        }
+
+        var cacheKey = StringComparer.OrdinalIgnoreCase.Compare(stampA.FullPath, stampB.FullPath) <= 0
+            ? new TwinAssemblyOverlapCacheKey(stampA, stampB)
+            : new TwinAssemblyOverlapCacheKey(stampB, stampA);
+
+        lock (TwinOverlapCacheSync)
+        {
+            if (TwinAssemblyTypeOverlapCache.TryGetValue(cacheKey, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        var typesA = GetOrReadAssemblyMetadataSummary(stampA.FullPath)?.AuthoredTypes;
+        var typesB = GetOrReadAssemblyMetadataSummary(stampB.FullPath)?.AuthoredTypes;
+        double ratio;
+        if (typesA == null || typesB == null || typesA.Count == 0 || typesB.Count == 0)
+        {
+            ratio = 0.0;
+        }
+        else
+        {
+            var intersection = 0;
+            foreach (var typeName in typesA)
+            {
+                if (typesB.Contains(typeName))
+                {
+                    intersection++;
+                }
+            }
+
+            var union = typesA.Count + typesB.Count - intersection;
+            ratio = union == 0 ? 0.0 : (double)intersection / union;
+        }
+
+        lock (TwinOverlapCacheSync)
+        {
+            if (TwinAssemblyTypeOverlapCache.Count >= 256)
+            {
+                TwinAssemblyTypeOverlapCache.Clear();
+            }
+
+            TwinAssemblyTypeOverlapCache[cacheKey] = ratio;
+        }
+
+        return ratio;
+    }
+
+    private sealed record ProviderAssemblyMetadataSummary(
+        AssemblyName AssemblyName,
+        HashSet<string> AuthoredTypes);
+
+    private static bool TryBuildFileStamp(string path, out AssemblyFileStamp stamp)
+    {
+        stamp = default;
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists)
+            {
+                return false;
+            }
+
+            stamp = new AssemblyFileStamp(info.FullName, info.Length, info.LastWriteTimeUtc.Ticks);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static HashSet<string>? ReadAuthoredTypeFullNames(string assemblyPath)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                assemblyPath,
+                FileMode.Open,
+                System.IO.FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            using var peReader = new PEReader(stream);
+            if (!peReader.HasMetadata)
+            {
+                return null;
+            }
+
+            var reader = peReader.GetMetadataReader();
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var handle in reader.TypeDefinitions)
+            {
+                var fullName = FormatMetadataTypeFullName(reader, handle);
+                if (string.IsNullOrEmpty(fullName) ||
+                    fullName == "<Module>" ||
+                    IsCompilerGeneratedMetadataType(reader, handle, fullName))
+                {
+                    continue;
+                }
+
+                names.Add(fullName);
+            }
+
+            return names;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsCompilerGeneratedMetadataType(
+        MetadataReader reader,
+        TypeDefinitionHandle handle,
+        string fullName)
+    {
+        var typeDef = reader.GetTypeDefinition(handle);
+        var name = reader.GetString(typeDef.Name);
+        if (name.StartsWith("<", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (fullName.StartsWith("Microsoft.CodeAnalysis.", StringComparison.Ordinal) ||
+            fullName.StartsWith("System.Runtime.CompilerServices.", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (typeDef.IsNested)
+        {
+            var enclosing = typeDef.GetDeclaringType();
+            if (!enclosing.IsNil &&
+                IsCompilerGeneratedMetadataType(reader, enclosing, FormatMetadataTypeFullName(reader, enclosing)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string FormatMetadataTypeFullName(MetadataReader reader, TypeDefinitionHandle handle)
+    {
+        var typeDef = reader.GetTypeDefinition(handle);
+        var name = reader.GetString(typeDef.Name);
+        if (typeDef.IsNested)
+        {
+            var enclosing = typeDef.GetDeclaringType();
+            if (!enclosing.IsNil)
+            {
+                var parentName = FormatMetadataTypeFullName(reader, enclosing);
+                return string.IsNullOrEmpty(parentName) ? name : parentName + "+" + name;
+            }
+        }
+
+        var ns = reader.GetString(typeDef.Namespace);
+        return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
+    }
+
+    private readonly record struct AssemblyFileStamp(string FullPath, long Length, long LastWriteTicks);
+
+    private readonly record struct TwinAssemblyOverlapCacheKey(AssemblyFileStamp First, AssemblyFileStamp Second);
+
+    private static bool OwnsLoadedAssembly(ProviderAssembly candidate, Assembly loaded) =>
+        LoadedProviderAssemblies.TryGetValue(candidate.AssemblyPath, out var cached)
+            ? ReferenceEquals(cached, loaded)
+            : !string.IsNullOrEmpty(loaded.Location) &&
+              string.Equals(candidate.AssemblyPath, loaded.Location, StringComparison.OrdinalIgnoreCase);
 
     private static MemoryStream? RewriteProviderSettings(Stream source, string name, string assemblyPath)
     {

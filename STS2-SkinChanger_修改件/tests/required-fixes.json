@@ -482,5 +482,20 @@
     "tests": [
       { "suite": "Runtime", "name": "DeferredDispatchTests", "args": "" }
     ]
+  },
+  {
+    "id": "twin-assembly-behavior-delegation",
+    "title": "同名程序集不同 ID 的姊妹包行为委托给已登记提供者，停用保留委托目标，重选经蓝图重激活且不重复初始化",
+    "since": "1.0.38.14",
+    "symbols": [
+      "ManagedSkinModLoader.TryReuseSiblingBehavior",
+      "ManagedSkinModLoader.DeactivateProvidersExcept",
+      "ManagedSkinModLoader.ActivateSelectedProviders",
+      "ManagedSkinModLoader.IsProviderAssemblyFor"
+    ],
+    "tests": [
+      { "suite": "Runtime", "name": "TwinAssemblyBehaviorDelegationTests", "args": "" },
+      { "suite": "Runtime", "name": "ProviderAssemblyReuseTests", "args": "" }
+    ]
   }
 ]
