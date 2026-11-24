@@ -108,6 +108,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private MegaCrit.Sts2.Core.Entities.Creatures.Creature? _targetEntity;
     private AncientEventModel? _targetAncient;
     private NMerchantCharacter? _targetShopPlayerVisual;
+    private Node2D? _targetRoomPlayerVisual;
     private NMerchantButton? _targetMerchantButton;
     private NFakeMerchant? _targetFakeMerchant;
     private NBossMapPoint? _targetBossMapPoint;
@@ -1468,6 +1469,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetCreature = null;
         _targetAncient = null;
         _targetShopPlayerVisual = null;
+        _targetRoomPlayerVisual = null;
         _targetMerchantButton = null;
         _targetFakeMerchant = null;
         _targetBossMapPoint = null;
@@ -1500,6 +1502,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         EndSelectionReticlePreview();
         _targetAncient = ancient;
         _targetShopPlayerVisual = null;
+        _targetRoomPlayerVisual = null;
         _targetMerchantButton = null;
         _targetFakeMerchant = null;
         _targetBossMapPoint = null;
@@ -1539,6 +1542,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetCreature = null;
         _targetAncient = null;
         _targetShopPlayerVisual = null;
+        _targetRoomPlayerVisual = null;
         _targetMerchantButton = null;
         _targetFakeMerchant = null;
         _targetBossMapPoint = bossPoint;
@@ -1576,6 +1580,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetEntity = creature.Entity;
         _targetAncient = null;
         _targetShopPlayerVisual = null;
+        _targetRoomPlayerVisual = null;
         _targetMerchantButton = null;
         _targetFakeMerchant = null;
         _targetBossMapPoint = null;
@@ -1617,7 +1622,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     }
 
     private bool SelectShopPlayerTarget(
-        NMerchantCharacter visual,
+        Node2D visual,
         Vector2 targetCenter)
     {
         if (_player == null)
@@ -1633,13 +1638,15 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             return false;
         }
 
-        MerchantRuntimeAppearance.ApplyLocalPlayerTransform(visual, group.Id);
+        var shopVisual = visual as NMerchantCharacter;
+        if (shopVisual != null) MerchantRuntimeAppearance.ApplyLocalPlayerTransform(shopVisual, group.Id);
 
         _selectionMode = false;
         EndSelectionReticlePreview();
         _targetCreature = null;
         _targetAncient = null;
-        _targetShopPlayerVisual = visual;
+        _targetShopPlayerVisual = shopVisual;
+        _targetRoomPlayerVisual = shopVisual == null ? visual : null;
         _targetMerchantButton = null;
         _targetFakeMerchant = null;
         _targetBossMapPoint = null;
@@ -1647,9 +1654,9 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _group = group;
         _transformKey = null;
         _canEditSkin = MultiplayerSkinSync.CanEditLocalPlayerSkinInRun();
-        _canEditTransform = true;
+        _canEditTransform = shopVisual != null;
         SetTargetControlsVisible(
-            supportsModel: true,
+            supportsModel: _canEditTransform,
             isCreature: false,
             canSelectSkin: true,
             supportsIntent: false);
@@ -1685,6 +1692,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetCreature = null;
         _targetAncient = null;
         _targetShopPlayerVisual = null;
+        _targetRoomPlayerVisual = null;
         _targetMerchantButton = merchantButton;
         _targetFakeMerchant = fakeMerchant;
         _targetBossMapPoint = null;
@@ -1758,6 +1766,16 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
     private string? RefreshShopPlayerVisualAfterSelection()
     {
+        if (_targetRoomPlayerVisual != null && _player != null)
+        {
+            var currentVisual = RoomPlayerAppearance.GetVisual(_player);
+            if (currentVisual == _targetRoomPlayerVisual)
+                _targetRoomPlayerVisual = RoomPlayerAppearance.Refresh(_player, currentVisual);
+            else
+                _targetRoomPlayerVisual = null;
+            return null;
+        }
+
         if (_targetShopPlayerVisual == null || _player == null || _group == null)
         {
             return null;

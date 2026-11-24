@@ -55,13 +55,23 @@ internal partial class CharacterAppearanceScreen
             yield return new(AppearanceTargetKind.Character, playerRect, 1,
                 _ => SelectShopPlayerTarget(shopPlayer, playerRect.GetCenter()));
 
-        var merchant = GameBranchApi.MerchantButton(NMerchantRoom.Instance);
+        if (_player != null && RoomPlayerAppearance.GetVisual(_player) is { } roomPlayer &&
+            roomPlayer.IsVisibleInTree() && ContextualSkinControls.FindGroup(
+                _player.Character.Id.Entry, _player.Character.GetType().Name) != null &&
+            _dragSurface.TryGetCanvasRect(RoomPlayerAppearance.GetBounds(roomPlayer), 8f, out var roomPlayerRect))
+            yield return new(AppearanceTargetKind.Character, roomPlayerRect, 1,
+                _ => SelectShopPlayerTarget(roomPlayer, roomPlayerRect.GetCenter()));
+
+        var room = NMerchantRoom.Instance;
+        var merchantGroup = room == null ? MerchantRuntimeAppearance.GroupId :
+            MerchantRuntimeAppearance.GetMerchantGroupId(room);
+        var merchant = GameBranchApi.MerchantButton(room);
         if (merchant != null && GodotObject.IsInstanceValid(merchant) && merchant.IsVisibleInTree() &&
             SkinService.Catalog?.Groups.Any(group => group.Id.Equals(
-                MerchantRuntimeAppearance.GroupId, StringComparison.OrdinalIgnoreCase)) == true &&
+                merchantGroup, StringComparison.OrdinalIgnoreCase)) == true &&
             _dragSurface.TryGetCanvasRect(merchant, 8f, out var merchantRect))
             yield return new(AppearanceTargetKind.Merchant, merchantRect, 2,
-                _ => SelectMerchantTarget(merchant, merchantRect.GetCenter()));
+                _ => SelectMerchantTarget(merchant, merchantRect.GetCenter(), merchantGroup));
 
         var fakeMerchant = NEventRoom.Instance?.CustomEventNode as NFakeMerchant;
         var fakeButton = fakeMerchant?.MerchantButton;

@@ -14,6 +14,9 @@ internal static class PrivateMerchantResourceIdentity
 {
     internal const string Body = "res://animations/backgrounds/merchant_room/top/shop_merchant_top.tres";
     internal const string Hand = "res://animations/backgrounds/merchant_room/hand/merchant_hand_skel_data.tres";
+    private const string FakeBody = "res://animations/backgrounds/fake_merchant_room/top/fake_merchant_top.tres";
+    private const string FakeHand = "res://animations/backgrounds/fake_merchant_room/hand/fake_merchant_hand_skel_data.tres";
+    private static readonly string[] CanonicalPaths = [Body, Hand, FakeBody, FakeHand];
     private sealed record Identity(string Path);
     private static readonly ConditionalWeakTable<Resource, Identity> Identities = new();
     private static readonly HashSet<MethodInfo> Installed = [];
@@ -22,7 +25,7 @@ internal static class PrivateMerchantResourceIdentity
 
     internal static void Register(Resource resource, string canonical)
     {
-        if (canonical != Body && canonical != Hand) return;
+        if (!CanonicalPaths.Contains(canonical)) return;
         Identities.Remove(resource);
         Identities.Add(resource, new(canonical));
     }
@@ -33,11 +36,11 @@ internal static class PrivateMerchantResourceIdentity
         var actual = resource.ResourcePath;
         // IgnoreDeep can give the instantiated scene its own dependency instance. Such a copy
         // is not in the ownership table, but its SC-authored alias retains the complete vanilla
-        // source path. Match only these two exact paths inside our reserved namespace.
+        // source path. Match only the native merchant paths inside our reserved namespace.
         if (actual.StartsWith("res://sts2_skin_runtime/", StringComparison.Ordinal))
         {
-            if (actual.EndsWith("/" + Body[6..], StringComparison.Ordinal)) return Body;
-            if (actual.EndsWith("/" + Hand[6..], StringComparison.Ordinal)) return Hand;
+            foreach (var path in CanonicalPaths)
+                if (actual.EndsWith("/" + path[6..], StringComparison.Ordinal)) return path;
         }
         return actual;
     }
@@ -55,7 +58,7 @@ internal static class PrivateMerchantResourceIdentity
             if (Installed.Contains(method) || method.ContainsGenericParameters || method.GetMethodBody() == null) continue;
             var body = PatchProcessor.GetOriginalInstructions(method);
             if (!body.Any(instruction => instruction.opcode == OpCodes.Ldstr &&
-                    instruction.operand is string path && (path == Body || path == Hand)) ||
+                    instruction.operand is string path && CanonicalPaths.Contains(path)) ||
                 !body.Any(IsPathGetter)) continue;
             Patches.Patch(method, transpiler: new HarmonyMethod(typeof(PrivateMerchantResourceIdentity), nameof(Rewrite)));
             Installed.Add(method);

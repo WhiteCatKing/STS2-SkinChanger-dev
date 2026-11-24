@@ -1793,6 +1793,7 @@ internal static class CharacterAppearanceRuntime
 
             oldVisuals.GetParent()?.RemoveChild(oldVisuals);
             newVisuals.Name = desiredVisualName;
+            FakeMerchantBattleFigure.RefreshAfterSelection(creature);
             oldVisuals.QueueFree();
             CreatureIntentDepth.Apply(creature);
             return true;

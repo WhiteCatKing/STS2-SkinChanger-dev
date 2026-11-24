@@ -183,16 +183,25 @@ internal sealed partial class SkinCatalog
                 .Distinct(StringComparer.OrdinalIgnoreCase).Select(index.TryBuildAsset).OfType<ResourceAsset>()
                 .ToDictionary(asset => asset.SourcePath, StringComparer.OrdinalIgnoreCase);
             if (assets.Count == 0) continue;
-            var id = FakeMerchantEventArtPolicy.MonsterGroupId;
-            if (!groups.TryGetValue(id, out var group)) groups[id] = group = new SkinGroup(id, DisplayName(id));
-            var position = group.Options.FindIndex(option => option.Id == index.Mod.Id);
-            if (position < 0) group.Options.Add(new SkinOption(index.Mod.Id, index.Mod.Name, assets));
-            else
+            foreach (var id in new[] { FakeMerchantEventArtPolicy.MonsterGroupId, FakeMerchantEventFrame.GroupId })
             {
-                var old = group.Options[position];
-                var merged = new Dictionary<string, ResourceAsset>(old.Assets, StringComparer.OrdinalIgnoreCase);
-                foreach (var pair in assets) merged[pair.Key] = pair.Value;
-                group.Options[position] = old with { Assets = merged };
+                if (id == FakeMerchantEventFrame.GroupId && index.Mod.Id != FakeMerchantEventFrame.WorkshopProviderId)
+                    continue;
+                var groupAssets = id == FakeMerchantEventFrame.GroupId
+                    ? assets.Where(pair => IsFakeMerchantEventPresentationPath(pair.Key))
+                        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
+                    : assets;
+                if (groupAssets.Count == 0) continue;
+                if (!groups.TryGetValue(id, out var group)) groups[id] = group = new SkinGroup(id, DisplayName(id));
+                var position = group.Options.FindIndex(option => option.Id == index.Mod.Id);
+                if (position < 0) group.Options.Add(new SkinOption(index.Mod.Id, index.Mod.Name, groupAssets));
+                else
+                {
+                    var old = group.Options[position];
+                    var merged = new Dictionary<string, ResourceAsset>(old.Assets, StringComparer.OrdinalIgnoreCase);
+                    foreach (var pair in groupAssets) merged[pair.Key] = pair.Value;
+                    group.Options[position] = old with { Assets = merged };
+                }
             }
         }
     }

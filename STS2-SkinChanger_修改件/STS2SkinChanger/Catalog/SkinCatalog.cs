@@ -1432,11 +1432,13 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Where(group => group.Options.Where(option => !option.IsMerchantVariantFallback)
                     .All(option => option.IsBaselinePartOverride))
                 .ToArray();
+            var anchoredIds = CollapseMerchantAppearanceGroups(anchored);
+            var partIds = CollapseMerchantAppearanceGroups(parts);
             return (
-                anchored.Length,
-                [.. anchored.Select(group => group.Id)],
-                parts.Length,
-                [.. parts.Select(group => group.Id)],
+                anchoredIds.Length,
+                anchoredIds,
+                partIds.Length,
+                partIds,
                 servedSources);
         }
 
@@ -1475,6 +1477,24 @@ internal sealed partial class SkinCatalog : IDisposable
                     sources.Add(source);
                 }
             }
+        }
+
+        // 三个商人分屋（普通/闪电/假商人）现在共用同一套选中的外观，闪电分屋的分组只是
+        // 普通商人分组的镜像。它们同属一套商人外观：一份外观只能算一次，否则只覆盖商人
+        // 房间手部的风格包会被数成"覆盖了两个分组"，从而被当成完整的商人皮肤。
+        static string[] CollapseMerchantAppearanceGroups(SkinGroup[] groups)
+        {
+            var merchant = groups.Where(group => IsMerchantAppearanceGroup(group.Id)).ToArray();
+            if (merchant.Length <= 1)
+                return [.. groups.Select(group => group.Id)];
+            var representative = new[] { "merchant", "fake_merchant_monster", "blitz_merchant" }
+                .FirstOrDefault(id => merchant.Any(group => group.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
+                ?? merchant[0].Id;
+            return
+            [
+                .. groups.Where(group => !IsMerchantAppearanceGroup(group.Id)).Select(group => group.Id),
+                representative
+            ];
         }
     }
 
@@ -2444,6 +2464,9 @@ internal sealed partial class SkinCatalog : IDisposable
             return false;
         }
 
+        if (groupIds.All(IsMerchantAppearanceGroup))
+            return groupIds.Any(groupId => selections.TryGetValue(groupId, out var id) && SelectionUsesProvider(groupId, id, providerId));
+
         return groupIds.All(groupId =>
             selections.TryGetValue(groupId, out var selectedId) &&
             SelectionUsesProvider(groupId, selectedId, providerId));
@@ -2477,6 +2500,9 @@ internal sealed partial class SkinCatalog : IDisposable
             return false;
         }
 
+        if (groupIds.All(IsMerchantAppearanceGroup))
+            return IsFullRuntimeProviderFullySelected(providerId, selections);
+
         var relevant = groupIds.Where(groupId => !IsCompanionGroup(groupId)).ToArray();
         return relevant.Length > 0 && relevant.All(groupId =>
             selections.TryGetValue(groupId, out var selectedId) &&
@@ -2489,6 +2515,12 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyDictionary<string, string> selections)
     {
         var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (IsMerchantAppearanceGroup(groupId))
+        {
+            updates[groupId] = optionId;
+            return updates;
+        }
+
         var requestedProviderId = ResolveVisualProviderId(optionId);
         var isCompanion = IsCompanionGroup(groupId);
         var targetGroupIds = RuntimeProviderScopePolicy.ResolveCharacterSelectionTargets(
@@ -2510,7 +2542,7 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (var ownedGroupId in GetFullRuntimeProviderGroups(displacedProviderId))
             {
                 // 随从分组不参与全量提供者的"整包退回"：切主人皮肤不能顺带重置奥斯提。
-                if (IsCompanionGroup(ownedGroupId))
+                if (IsCompanionGroup(ownedGroupId) || IsMerchantAppearanceGroup(ownedGroupId))
                 {
                     continue;
                 }
@@ -2535,7 +2567,7 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (var ownedGroupId in GetFullRuntimeProviderGroups(requestedProviderId))
             {
                 if (ownedGroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase) ||
-                    IsCompanionGroup(ownedGroupId))
+                    IsCompanionGroup(ownedGroupId) || IsMerchantAppearanceGroup(ownedGroupId))
                 {
                     continue;
                 }

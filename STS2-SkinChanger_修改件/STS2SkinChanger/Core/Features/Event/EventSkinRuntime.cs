@@ -35,6 +35,11 @@ internal static class EventSkinRuntime
     public static void RefreshCurrent(string groupId)
     {
         if (!EventSkinPolicy.IsEventGroup(groupId)) return;
+        if (groupId == FakeMerchantEventFrame.GroupId)
+        {
+            FakeMerchantEventFrame.RefreshCurrent();
+            return;
+        }
         var layout = NEventRoom.Instance?.Layout;
         if (layout == null || !GodotObject.IsInstanceValid(layout) ||
             EventField.GetValue(layout) is not EventModel model ||

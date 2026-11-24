@@ -2,6 +2,8 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Nodes.Events.Custom;
+using MegaCrit.Sts2.Core.Models.Events;
+using STS2SkinChanger.Ui;
 
 using STS2SkinChanger.Core.Features;
 
@@ -47,21 +49,116 @@ internal static class FakeMerchantEventFrame
     private const int MaxWaitFrames = 300;
     private const float MinArtSize = 8f;
 
-    public static void Schedule(NFakeMerchant screen)
+    internal const string GroupId = EventSkinPolicy.Prefix + "fake_merchant_sale_background";
+    internal const string WorkshopProviderId = "NSFW-Event";
+
+    internal static string SelectedProvider =>
+        SkinService.Config.Selections.TryGetValue(GroupId, out var selection)
+            ? selection
+            : SkinService.Catalog?.Groups.Any(group => group.Id == GroupId &&
+                group.Options.Any(option => option.Id == WorkshopProviderId)) == true
+                ? WorkshopProviderId
+                : STS2SkinChanger.Catalog.SkinCatalog.BaseOptionId;
+    private const string ScenePath = "res://scenes/events/custom/fake_merchant.tscn";
+    private static WeakReference<NFakeMerchant>? _current;
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<NFakeMerchant, FakeMerchant> Models = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CanvasItem, Layout> Layouts = new();
+    private sealed record Layout(Transform2D Transform, bool Visible);
+
+    internal static void RefreshPreview(NFakeMerchant screen) => Apply(screen, null);
+
+    internal static void RefreshCurrent()
+    {
+        if (_current?.TryGetTarget(out var screen) == true && GodotObject.IsInstanceValid(screen) &&
+            screen.IsInsideTree() && Models.TryGetValue(screen, out var model) && !model.StartedFight)
+            Apply(screen, model);
+    }
+
+    public static void Schedule(NFakeMerchant screen, FakeMerchant? model)
+    {
+        if (model is not { StartedFight: false } || MerchantRuntimeAppearance.IsMerchantPreviewRoot(screen)) return;
+        _current = new WeakReference<NFakeMerchant>(screen);
+        Models.GetValue(screen, _ => model);
+        Callable.From(() =>
+        {
+            if (GodotObject.IsInstanceValid(screen) && screen.IsInsideTree() && !model.StartedFight)
+                Apply(screen, model);
+        }).CallDeferred();
+    }
+
+    private static void Apply(NFakeMerchant screen, FakeMerchant? model)
     {
         try
         {
-            _ = FitAsync(screen);
+            var provider = SelectedProvider;
+            var art = SkinService.Catalog?.HasFakeMerchantEventImage(provider) == true
+                ? SkinService.GetOrLoadRuntimeResource(GroupId, FakeMerchantEventArtPolicy.EventImage) as Texture2D
+                : null;
+            var original = screen.GetNodeOrNull<Control>(ContainerPath);
+            var cutter = screen.GetNodeOrNull<Node2D>(CutterPath);
+            foreach (var item in new CanvasItem?[] { original, cutter })
+            {
+                if (item == null) continue;
+                var layout = Layouts.GetValue(item, node => new Layout(node.GetTransform(), node.Visible));
+                ApplyGlobalTransform(item, ((item.GetParent() as CanvasItem)?.GetGlobalTransform() ??
+                    Transform2D.Identity) * layout.Transform);
+                item.Visible = art == null && layout.Visible;
+            }
+
+            if (screen.GetNodeOrNull<TextureRect>("SkinChangerFakeMerchantEventImage") is { } previous)
+            {
+                screen.RemoveChild(previous);
+                previous.QueueFree();
+            }
+            if (art != null)
+            {
+                var backdrop = new TextureRect
+                {
+                    Name = "SkinChangerFakeMerchantEventImage",
+                    Texture = art,
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                    StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered,
+                    MouseFilter = Control.MouseFilterEnum.Ignore
+                };
+                screen.AddChild(backdrop);
+                screen.MoveChild(backdrop, 0);
+                backdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+                return;
+            }
+
+            var template = SkinService.InstantiateMerchantVariantScene(GroupId, ScenePath, true, null);
+            try
+            {
+                foreach (var path in new[] { SpritePath, CutterPath })
+                {
+                    if (screen.GetNodeOrNull<Node2D>(path) is not { } sprite ||
+                        template.GetNodeOrNull<Node2D>(path) is not { } baseline) continue;
+                    using var value = baseline.Get("skeleton_data_res");
+                    if (value.AsGodotObject() is not Resource resource) continue;
+                    var index = resource.ResourcePath.IndexOf("animations/", StringComparison.Ordinal);
+                    if (index >= 0)
+                    {
+                        var canonical = "res://" + resource.ResourcePath[index..];
+                        if (provider == WorkshopProviderId)
+                        {
+                            // Workshop 3765802910 replaces the atlas pages only. Load the
+                            // native skeleton with those pages in the provider's isolated pack.
+                            resource = SkinService.WithBackgroundEventResource(provider, canonical, selected => selected);
+                        }
+                    }
+                    sprite.Set("skeleton_data_res", resource);
+                }
+            }
+            finally { template.Free(); }
+            if (provider == WorkshopProviderId) _ = FitAsync(screen, model, provider);
         }
         catch (Exception exception)
         {
-            ModLog.Warn(
-                "假商人事件构图补丁未能启动，保持原构图：" +
-                exception.GetBaseException().Message);
+            ModLog.Warn("刷新假商人事件背景失败：" + exception.GetBaseException().Message);
         }
     }
 
-    private static async Task FitAsync(NFakeMerchant screen)
+    private static async Task FitAsync(NFakeMerchant screen, FakeMerchant? model, string provider)
     {
         try
         {
@@ -86,7 +183,7 @@ internal static class FakeMerchantEventFrame
             var ready = false;
             for (var frame = 0; frame < MaxWaitFrames; frame++)
             {
-                if (!GodotObject.IsInstanceValid(screen) || !GodotObject.IsInstanceValid(sprite))
+                if (!GodotObject.IsInstanceValid(screen) || !GodotObject.IsInstanceValid(sprite) || model?.StartedFight == true || SelectedProvider != provider)
                 {
                     return;
                 }
@@ -108,56 +205,8 @@ internal static class FakeMerchantEventFrame
                 return;
             }
 
-            // 坐标校正只服务于 NSFW-Event（工坊 3765802910）那张帐篷美术的构图：
-            // 没装这个包时保持原版构图，其余逻辑（美术归属判定等）不受影响。
-            // 判据用「游戏自己记下的启用/加载列表」，这样本地手动装进 mods 的玩家也算装；
-            // 只看磁盘目录会把「已取消订阅但文件残留」误判成已安装。
-            static bool HasNsfwEventPack()
-            {
-                var steamRoot = System.IO.Path.Combine(
-                    System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData),
-                    "SlayTheSpire2", "steam");
-                if (System.IO.Directory.Exists(steamRoot))
-                {
-                    foreach (var settings in System.IO.Directory.EnumerateFiles(steamRoot, "settings.save", System.IO.SearchOption.AllDirectories))
-                    {
-                        try
-                        {
-                            var text = System.IO.File.ReadAllText(settings);
-                            if (text.Contains("NSFW-Event", StringComparison.OrdinalIgnoreCase) ||
-                                text.Contains("3765802910", StringComparison.Ordinal))
-                            {
-                                return true;
-                            }
-                        }
-                        catch
-                        {
-                            // 读不到就当没装，宁可不动构图。
-                        }
-                    }
-                }
-
-                // 兜底：本地 mods 目录里存在该包的清单文件。
-                foreach (var modsRoot in new[] { System.IO.Path.Combine(AppContext.BaseDirectory, "mods"), @"D:\steam\steamapps\common\Slay the Spire 2\mods" })
-                {
-                    if (!System.IO.Directory.Exists(modsRoot))
-                    {
-                        continue;
-                    }
-
-                    if (System.IO.Directory.EnumerateFiles(modsRoot, "NSFW-Event.json", System.IO.SearchOption.AllDirectories).Any())
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-            if (!HasNsfwEventPack())
-            {
-                ModLog.Info("假商人帐篷坐标校正仅对 NSFW-Event（3765802910）启用，当前未检测到该包，保持原构图。");
+            if (model?.StartedFight == true || SelectedProvider != provider)
                 return;
-            }
 
             // Fit to the screen's own rect instead of the viewport: the same scene is also
             // instantiated as a small compendium preview, and that one must fill its own box.
@@ -252,5 +301,6 @@ internal static class FakeMerchantEventFrame
 [HarmonyPatch(typeof(NFakeMerchant), "_Ready")]
 internal static class FakeMerchantEventFramePatch
 {
-    private static void Postfix(NFakeMerchant __instance) => FakeMerchantEventFrame.Schedule(__instance);
+    private static void Postfix(NFakeMerchant __instance, FakeMerchant? ____event) =>
+        FakeMerchantEventFrame.Schedule(__instance, ____event);
 }

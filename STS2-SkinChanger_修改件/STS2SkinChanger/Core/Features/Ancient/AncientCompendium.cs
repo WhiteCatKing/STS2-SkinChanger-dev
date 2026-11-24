@@ -611,6 +611,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private Label _headingLabel = null!;
     private HBoxContainer _skinSelector = null!;
     private OptionButton _skinDropdown = null!;
+    private OptionButton _fakeMerchantBackgroundDropdown = null!;
     private CheckButton _inRunEntryToggle = null!;
     private SubViewport _previewViewport = null!;
     private SubViewportContainer _previewContainer = null!;
@@ -773,6 +774,18 @@ internal partial class AncientCompendiumScreen : NSubmenu
         ContextualSkinControls.ApplyGameTheme(_skinDropdown);
         _skinDropdown.ItemSelected += index => OnSkinSelected(checked((int)index));
         _skinSelector.AddChild(_skinDropdown);
+
+        _fakeMerchantBackgroundDropdown = new OptionButton
+        {
+            CustomMinimumSize = new Vector2(284, 48),
+            FitToLongestItem = false,
+            ClipText = true,
+            Alignment = HorizontalAlignment.Center,
+            Visible = false
+        };
+        ContextualSkinControls.ApplyGameTheme(_fakeMerchantBackgroundDropdown);
+        _fakeMerchantBackgroundDropdown.ItemSelected += OnFakeMerchantBackgroundSelected;
+        _skinSelector.AddChild(_fakeMerchantBackgroundDropdown);
 
         _otherActionSelector = new VBoxContainer
         {
@@ -1810,7 +1823,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 "res://scenes/events/custom/fake_merchant.tscn"),
             ..(MerchantVariantScenes.HasBlitz ? new[] { new OtherEntry(
                 MerchantVariantScenes.BlitzEntryId, ModLocalization.BlitzMerchantTitle,
-                MerchantRuntimeAppearance.BlitzMerchantRoomScenePath, MerchantRuntimeAppearance.GroupId) } : [])
+                MerchantRuntimeAppearance.BlitzMerchantRoomScenePath, MerchantVariantScenes.BlitzEntryId) } : [])
         ],
         OtherCategory.Events => EventCompendiumPreview.Events().Select(model => new OtherEntry(
             EventSkinPolicy.GroupId(model.Id.Entry), EventCompendiumPreview.Title(model),
@@ -2021,6 +2034,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             _skinDropdown.Select(0);
         }
 
+        _fakeMerchantBackgroundDropdown.Hide();
         _skinDropdown.SetMeta("sts2_background_act", act.ActId);
         if (_skinDropdown.HasMeta("sts2_skin_group"))
         {
@@ -2096,8 +2110,59 @@ internal partial class AncientCompendiumScreen : NSubmenu
             reason);
     }
 
+    private void PopulateFakeMerchantBackgroundDropdown()
+    {
+        var dropdown = _fakeMerchantBackgroundDropdown;
+        dropdown.Visible = _selectedCategory == OtherCategory.Merchants &&
+            _selectedOther?.Id == MerchantRuntimeAppearance.FakeMerchantGroupId;
+        if (!dropdown.Visible) return;
+
+        var groupId = FakeMerchantEventFrame.GroupId;
+        var current = FakeMerchantEventFrame.SelectedProvider;
+        var label = ModLocalization.Get(ModText.Background);
+        dropdown.Clear();
+        dropdown.AddItem($"{label} · {ModLocalization.Get(ModText.GameDefault)}");
+        dropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
+        var group = SkinService.Catalog?.Groups.FirstOrDefault(candidate => candidate.Id == groupId);
+        var selectedIndex = 0;
+        if (group != null)
+        {
+            foreach (var option in group.Options)
+            {
+                var index = dropdown.ItemCount;
+                dropdown.AddItem($"{label} · {ModLocalization.DisplayOptionName(option.Name)}");
+                dropdown.SetItemMetadata(index, option.Id);
+                if (option.Id == current) selectedIndex = index;
+            }
+        }
+        SkinWorkshopEntry.Append(dropdown);
+        dropdown.Select(selectedIndex);
+        dropdown.TooltipText = label;
+        SkinWorkshopEntry.RefreshSelectionColor(dropdown);
+    }
+
+    private void OnFakeMerchantBackgroundSelected(long index)
+    {
+        var optionId = _fakeMerchantBackgroundDropdown.GetItemMetadata(checked((int)index)).AsString();
+        if (SkinWorkshopEntry.Open(optionId, this, EventSkinPolicy.Prefix + "fake_merchant",
+                PopulateFakeMerchantBackgroundDropdown, kind: "event"))
+        {
+            PopulateFakeMerchantBackgroundDropdown();
+            return;
+        }
+        if (!SkinService.ApplySelection(FakeMerchantEventFrame.GroupId, optionId))
+        {
+            ModLog.Warn("假商人事件背景切换失败：" + SkinService.LastError);
+            PopulateFakeMerchantBackgroundDropdown();
+            return;
+        }
+        if (_otherPreviewInstance is NFakeMerchant screen && GodotObject.IsInstanceValid(screen))
+            FakeMerchantEventFrame.RefreshPreview(screen);
+    }
+
     private void PopulateSkinDropdown(SkinGroup? group)
     {
+        PopulateFakeMerchantBackgroundDropdown();
         if (_selectedCategory == OtherCategory.Creatures && _selectedOther?.Id == "osty")
         {
             _updatingDropdown = true;
@@ -2311,7 +2376,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 var merchantPreview = MerchantRuntimeAppearance.InstantiateMerchantPreviewScene(
                     isFakeMerchant
                         ? MerchantRuntimeAppearance.FakeMerchantGroupId
-                        : MerchantRuntimeAppearance.GroupId, blitz: entry.Id == MerchantVariantScenes.BlitzEntryId);
+                        : entry.Id, blitz: entry.Id == MerchantVariantScenes.BlitzEntryId);
                 instance = merchantPreview.Scene;
                 previewScene = merchantPreview;
             }
@@ -2405,6 +2470,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     $"商人预览节点 {entry.Id}: rootVisible={instance is CanvasItem rootCanvas && rootCanvas.Visible}, " +
                     $"visualVisible={visual?.Visible}, visualModulate={visual?.Modulate}");
             }
+            if (isFakeMerchant && instance is NFakeMerchant fakeMerchantPreview)
+                FakeMerchantEventFrame.RefreshPreview(fakeMerchantPreview);
             _otherPreviewInstance = instance;
             _otherPreviewGroupId = group?.Id;
             if (instance is Control control)

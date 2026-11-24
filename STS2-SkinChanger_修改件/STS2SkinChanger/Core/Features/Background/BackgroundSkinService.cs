@@ -234,18 +234,13 @@ internal static class BackgroundSkinService
             var selection = GetSelection(actId);
             if (IsFakeMerchantEncounter(encounter))
             {
-                // The fake merchant fight happens inside the tent the event was held in, so it must
-                // show the event pack's picture whatever the act-level setting says - except for
-                // "游戏默认", which asks for the game's own art. Only an explicit choice of another
-                // background replaces it with that background (handled below).
+                // Keep the tent's selected event art across the room transition.
+                if (TryUseFakeMerchantEventImageBackground(actId, ref result))
+                    return;
+
                 if (selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
                 {
                     if (TryUseFakeMerchantVanillaBackground(ref result))
-                    {
-                        return;
-                    }
-
-                    if (TryUseFakeMerchantEventImageBackground(ref result))
                     {
                         return;
                     }
@@ -257,11 +252,6 @@ internal static class BackgroundSkinService
                 if (BackgroundSkinPolicy.IsFollowCategory(selection) ||
                     selection.Equals(BackgroundSkinPolicy.ModDefaultId, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (TryUseFakeMerchantEventImageBackground(ref result))
-                    {
-                        return;
-                    }
-
                     ModLog.Info("假商人战斗背景来源=遭遇自带。");
                     return;
                 }
@@ -359,17 +349,12 @@ internal static class BackgroundSkinService
             var act = state.Act;
             var actId = NormalizeActId(act.Id.Entry);
             var selection = GetSelection(actId);
-            if (IsFakeMerchantCombat(room))
-            {
-                // The fake merchant's fight happens inside the tent the event was held in. That
-                // encounter ships the tent as its own background; follow/mod-default and
-                // "游戏默认" both have to leave it alone instead of swapping in the act's
-                // battlefield, which is what made the fight look unrelated to the event.
-                return;
-            }
+            var roomEncounter = CurrentEncounter(room);
+            var fakeMerchant = IsFakeMerchantEncounter(roomEncounter) || IsFakeMerchantCombat(room);
+            var fakeMerchantOption = fakeMerchant ? ResolveFakeMerchantBackgroundOption(actId) : null;
+            if (fakeMerchant && fakeMerchantOption == null) return;
 
             BackgroundOption? providerDefault = null;
-            var roomEncounter = CurrentEncounter(room);
             if (!IsFakeMerchantEncounter(roomEncounter) &&
                 !CanApplyActBackground(room.Background, roomEncounter))
             {
@@ -387,8 +372,8 @@ internal static class BackgroundSkinService
                 return;
             }
 
-            if (BackgroundSkinPolicy.IsFollowCategory(selection) ||
-                selection.Equals(BackgroundSkinPolicy.ModDefaultId, StringComparison.OrdinalIgnoreCase))
+            if (!fakeMerchant && (BackgroundSkinPolicy.IsFollowCategory(selection) ||
+                selection.Equals(BackgroundSkinPolicy.ModDefaultId, StringComparison.OrdinalIgnoreCase)))
             {
                 if (_providerActDefaults.TryGetValue(actId, out var providerId) &&
                     FindBackground(providerId) is { } providerOption &&
@@ -409,7 +394,7 @@ internal static class BackgroundSkinService
                 return;
             }
 
-            var option = providerDefault ??
+            var option = fakeMerchantOption ?? providerDefault ??
                          (selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase)
                              ? (GameBackgroundExists(actId) ? GameOption(actId) : null)
                              : FindBackground(selection));
@@ -3247,7 +3232,7 @@ internal static class BackgroundSkinService
     /// <c>_visuals</c> field; <see cref="NCombatRoom.Background"/> alone cannot tell us whether the
     /// node belongs to the encounter or to the act.
     /// </summary>
-    private static EncounterModel? CurrentEncounter(NCombatRoom room)
+    internal static EncounterModel? CurrentEncounter(NCombatRoom room)
     {
         // Public path first: the combat state owns the authoritative encounter in a fight.
         try
@@ -3513,25 +3498,48 @@ internal static class BackgroundSkinService
     /// event shows. Returns false (leaving <paramref name="result"/> untouched) when no event pack
     /// supplies that picture.
     /// </summary>
-    private static bool TryUseFakeMerchantEventImageBackground(ref NCombatBackground result)
+    internal static string? ResolveFakeMerchantArtProvider(string? actId = null)
+    {
+        actId ??= CurrentActId;
+        var selection = actId == null ? BackgroundSkinPolicy.FollowCategoryId : GetSelection(actId);
+        if (selection == SkinCatalog.BaseOptionId) return null;
+        var providers = SkinService.Catalog?.FindFakeMerchantEventArtProviders() ?? [];
+        if (FindBackground(selection) is { } option)
+        {
+            var match = providers.FirstOrDefault(provider => option.Id ==
+                BackgroundSkinPolicy.ProviderOptionId(provider.Id, FakeMerchantEventOptionToken));
+            if (match != null) return match.Id;
+        }
+        return providers.FirstOrDefault()?.Id;
+    }
+
+    private static BackgroundOption? ResolveFakeMerchantBackgroundOption(string actId)
+    {
+        var selection = GetSelection(actId);
+        if (selection == SkinCatalog.BaseOptionId) return null;
+        if (!BackgroundSkinPolicy.IsFollowCategory(selection) &&
+            selection != BackgroundSkinPolicy.ModDefaultId &&
+            FindBackground(selection) is { } explicitOption)
+            return explicitOption;
+
+        var provider = ResolveFakeMerchantArtProvider(actId);
+        if (provider == null) return null;
+
+        var id = BackgroundSkinPolicy.ProviderOptionId(provider, FakeMerchantEventOptionToken);
+        return FindBackground(id) ?? new BackgroundOption(
+            id,
+            FakeMerchantEventBackgroundName,
+            provider,
+            SkinService.Catalog!.HasFakeMerchantEventImage(provider)
+                ? FakeMerchantEventArtPolicy.EventImage : FakeMerchantEventArtPolicy.EncounterBackgroundScene,
+            null);
+    }
+
+    private static bool TryUseFakeMerchantEventImageBackground(string actId, ref NCombatBackground result)
     {
         try
         {
-            var provider = SkinService.Catalog?.FindFakeMerchantEventArtProvider();
-            if (string.IsNullOrWhiteSpace(provider))
-            {
-                return false;
-            }
-
-            var id = BackgroundSkinPolicy.ProviderOptionId(provider, FakeMerchantEventOptionToken);
-            var option = FindBackground(id) ??
-                         new BackgroundOption(
-                             id,
-                             FakeMerchantEventBackgroundName,
-                             provider,
-                             SkinService.Catalog!.HasFakeMerchantEventImage(provider)
-                                 ? FakeMerchantEventArtPolicy.EventImage : FakeMerchantEventArtPolicy.EncounterBackgroundScene,
-                             null);
+            if (ResolveFakeMerchantBackgroundOption(actId) is not { } option) return false;
             var replacement = CreateOptionBackground(option, CreatePreviewRng()!);
             if (replacement == null || !GodotObject.IsInstanceValid(replacement))
             {
@@ -3746,8 +3754,14 @@ internal static class BackgroundSkinService
 internal static class BackgroundSkinRoomPatch
 {
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NCombatRoom __instance, IRunState state) =>
+    private static void Postfix(NCombatRoom __instance, IRunState state)
+    {
         BackgroundSkinService.ApplyToRoom(__instance, state);
+        if (BackgroundSkinService.CurrentEncounter(__instance)?.Id.Entry.Equals(
+                FakeMerchantEventArtPolicy.EncounterId, StringComparison.OrdinalIgnoreCase) == true &&
+            __instance.Background is { } background)
+            FakeMerchantBackgroundNudge.Attach(background);
+    }
 }
 
 /// <summary>

@@ -1,9 +1,11 @@
 using System.Reflection;
 using HarmonyLib;
+using Godot;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Models.Monsters;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.RestSite;
 
 namespace STS2SkinChanger.Core;
 
@@ -30,6 +32,7 @@ internal static class RedHoodCompanionCompat
         Patch(assembly, Provider + ".NativeCreatureVisuals", "Prefix",
             [typeof(Creature), typeof(NCreatureVisuals).MakeByRefType()], nameof(AllowVisualFactory));
         Patch(assembly, Provider + ".Mod", "AttachCombat", [typeof(NCreature)], nameof(AllowCombatActor));
+        Patch(assembly, Provider + ".Mod", "Decorate", [typeof(Node), typeof(string)], nameof(AllowRestSiteActor));
     }
 
     private static void Patch(Assembly assembly, string type, string name, Type[] arguments, string prefix)
@@ -53,6 +56,13 @@ internal static class RedHoodCompanionCompat
         __result = true;
         return false;
     }
+
+    // The author keeps its SceneTree.NodeAdded subscription after its Harmony hooks are removed.
+    // A rebuilt local camp character can still reach the deferred decorator after switching away.
+    private static bool AllowRestSiteActor(Node __0) =>
+        __0 is not NRestSiteCharacter { Player: { } player } ||
+        !LocalContext.IsMe(player) ||
+        SkinService.GetSelectedRuntimeProvider("necrobinder") == Provider;
 
     private static bool AllowCombatActor(NCreature __0) => !UsesIndependentOsty(__0.Entity);
 }
