@@ -919,6 +919,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods.Select(IndependentFoolSkinContract.Normalize)))
             .Where(mod => !string.Equals(mod.ResourceNamespaceId, "CznStyleUI", StringComparison.OrdinalIgnoreCase))
             .ToList();
+        var excludedPacks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var gameArchive = PckArchive.Open(gamePckPath);
         var baselineIndexes = new List<PckResourceIndex>();
         var cosmeticIndexes = new List<PckResourceIndex>();
@@ -943,32 +944,39 @@ internal sealed partial class SkinCatalog : IDisposable
                     continue;
                 }
 
-                var archive = PckArchive.Open(mod.PckPath);
+                PckArchive? archive = null;
                 try
                 {
-                    var index = PckResourceIndex.Build(
-                        mod,
-                        archive,
-                        importedToSource,
-                        remapFilter: null);
-                    if (mod.AffectsGameplay)
-                    {
-                        baselineIndexes.Add(index);
-                    }
-                    else
-                    {
-                        cosmeticIndexes.Add(index);
-                    }
+                    archive = PckArchive.Open(mod.PckPath);
+                    var index = PckResourceIndex.Build(mod, archive, importedToSource, remapFilter: null);
+                    (mod.AffectsGameplay ? baselineIndexes : cosmeticIndexes).Add(index);
+                }
+                catch (Exception error) when (error is InvalidDataException or IOException or
+                    UnauthorizedAccessException or OverflowException)
+                {
+                    archive?.Dispose();
+                    excludedPacks.Add(mod.Id);
+                    ModLog.Warn($"跳过无法读取的 Mod 资源包 {mod.Id}（{mod.PckPath}）：{error.Message}。继续扫描其它皮肤。");
                 }
                 catch
                 {
-                    // 索引构建失败时释放未登记到任何列表的档案句柄。
-                    archive.Dispose();
+                    archive?.Dispose();
                     throw;
                 }
             }
 
             var groups = BuildGroups(cosmeticIndexes, baselineIndexes);
+            if (baselineIndexes[0].TryBuildAsset("res://scenes/creature_visuals/wuppy.tscn") != null &&
+                cosmeticIndexes.Concat(baselineIndexes).FirstOrDefault(index =>
+                    index.Mod.HasDll && index.Mod.ResourceNamespaceId == WhaleGirlWuppyCompat.ProviderId &&
+                    index.Archive.Paths.Contains("res://WhaleGirlWuppy/art/animations.json")) is { } whale)
+            {
+                var group = groups.FirstOrDefault(candidate => candidate.Id == "wuppy") ??
+                    new SkinGroup("wuppy", DisplayName("wuppy"));
+                group.Options.Add(new SkinOption(WhaleGirlWuppyCompat.ProviderId, whale.Mod.Name,
+                    new Dictionary<string, ResourceAsset>()));
+                if (!groups.Contains(group)) groups = [..groups, group];
+            }
             var cardGroups = BuildCardGroups(cosmeticIndexes);
             var pckCardOptions = BuildPckCardOptions(cosmeticIndexes, baselineIndexes);
             var catalog = new SkinCatalog(
@@ -978,7 +986,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 groups,
                 cardGroups,
                 pckCardOptions,
-                modList);
+                modList.Where(mod => !excludedPacks.Contains(mod.Id)).ToList());
             catalog.SortGroupsAndOptions();
             return catalog;
         }
@@ -10764,6 +10772,7 @@ internal sealed partial class PckResourceIndex : IDisposable
         Func<string, bool>? remapFilter)
     {
         var index = new PckResourceIndex(mod, archive, importedToSource);
+        var pendingRemaps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var remapPath in archive.Paths.Where(IsRemapPath))
         {
             if (remapFilter != null && !remapFilter(remapPath))
@@ -10771,7 +10780,7 @@ internal sealed partial class PckResourceIndex : IDisposable
                 continue;
             }
 
-            index.AddRemap(remapPath);
+            index.AddRemap(remapPath, pendingRemaps);
         }
 
         foreach (var path in archive.Paths.Where(IsDirectAnimationResource))
@@ -10783,9 +10792,11 @@ internal sealed partial class PckResourceIndex : IDisposable
         Dictionary<string, string>? textureSources = null;
         foreach (var importedPath in archive.Paths.Where(IsImportedPath))
         {
-            if (importedToSource.TryGetValue(importedPath, out var sourcePath) ||
+            if (pendingRemaps.TryGetValue(importedPath, out var sourcePath) ||
+                importedToSource.TryGetValue(importedPath, out sourcePath) ||
                 (ImportedTexturePathPolicy.SourceKey(importedPath) is { } textureKey &&
-                 (textureSources ??= ImportedTexturePathPolicy.UnambiguousSources(importedToSource))
+                 (textureSources ??= ImportedTexturePathPolicy.UnambiguousSources(
+                     importedToSource.Where(pair => !pendingRemaps.ContainsKey(pair.Key)).Concat(pendingRemaps)))
                      .TryGetValue(textureKey, out sourcePath)))
             {
                 index.GetAsset(sourcePath).AddFile(archive, importedPath);
@@ -10811,6 +10822,7 @@ internal sealed partial class PckResourceIndex : IDisposable
             index.GetAsset(sourcePath).AddFile(archive, path);
         }
 
+        foreach (var (target, source) in pendingRemaps) importedToSource[target] = source;
         return index;
     }
 
@@ -10850,8 +10862,9 @@ internal sealed partial class PckResourceIndex : IDisposable
 
     public void Dispose() => Archive.Dispose();
 
-    private void AddRemap(string remapPath)
+    private void AddRemap(string remapPath, Dictionary<string, string>? pendingRemaps = null)
     {
+        var remaps = pendingRemaps ?? _importedToSource;
         var sourcePath = remapPath.EndsWith(".import", StringComparison.OrdinalIgnoreCase)
             ? remapPath[..^7]
             : remapPath[..^6];
@@ -10863,7 +10876,7 @@ internal sealed partial class PckResourceIndex : IDisposable
         foreach (Match match in RemapTargetRegex().Matches(text))
         {
             var targetPath = match.Groups[1].Value;
-            _importedToSource[targetPath] = sourcePath;
+            remaps[targetPath] = sourcePath;
             if (Archive.Contains(targetPath))
             {
                 asset.AddFile(Archive, targetPath);
@@ -10878,7 +10891,7 @@ internal sealed partial class PckResourceIndex : IDisposable
             foreach (Match pathMatch in QuotedPathRegex().Matches(destFiles.Value))
             {
                 var targetPath = pathMatch.Groups[1].Value;
-                _importedToSource[targetPath] = sourcePath;
+                remaps[targetPath] = sourcePath;
                 if (Archive.Contains(targetPath))
                 {
                     asset.AddFile(Archive, targetPath);

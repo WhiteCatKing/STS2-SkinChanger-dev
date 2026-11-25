@@ -15,7 +15,7 @@ internal static class ImportedTexturePathPolicy
             ? path[..(separator + 33)] : null;
     }
 
-    internal static Dictionary<string, string> UnambiguousSources(Dictionary<string, string> importedToSource) =>
+    internal static Dictionary<string, string> UnambiguousSources(IEnumerable<KeyValuePair<string, string>> importedToSource) =>
         importedToSource.Select(pair => (Key: SourceKey(pair.Key), Source: pair.Value))
             .Where(pair => pair.Key != null)
             .GroupBy(pair => pair.Key!, StringComparer.OrdinalIgnoreCase)
