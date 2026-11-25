@@ -1449,7 +1449,10 @@ internal static partial class SkinService
                 if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var path)) continue;
                 entries.Add(new CardCatalogEntry(card.GetType().Name, path,
                     GetCardPoolGroupId(card), GetCardCatalogGroupId(card), GetCardFilterGroupId(card))
-                { IsCharacterPool = IsCharacterCardPool(card) });
+                {
+                    IsCharacterPool = IsCharacterCardPool(card),
+                    IsGameCard = card.GetType().Assembly == typeof(CardModel).Assembly
+                });
             }
             catch (Exception exception)
             {
@@ -3877,7 +3880,12 @@ internal static partial class SkinService
         var cardIdentity = ResolveCardMatchIdentity(cardType, baselinePath, poolGroupId);
         var filterGroupId = GetCardFilterGroupId(card);
         string groupId;
-        if (!filterGroupId.Equals(poolGroupId, StringComparison.OrdinalIgnoreCase) &&
+        if (Catalog?.IsCardTypeSharedAcrossPools(cardType) == true)
+        {
+            // Explicit option maps use the simple class name within each card pool.
+            groupId = poolGroupId;
+        }
+        else if (!filterGroupId.Equals(poolGroupId, StringComparison.OrdinalIgnoreCase) &&
             ((filterGroupId.Equals("ancients", StringComparison.OrdinalIgnoreCase) &&
               Catalog?.CardGroups.Any(group => group.Id.Equals("ancients", StringComparison.OrdinalIgnoreCase)) == true) ||
              CardGroupAffectsCardUncached(filterGroupId, cardType, cardIdentity)))
