@@ -95,6 +95,8 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyList<CardSkinOption> _pckCardOptions;
     private readonly List<CardSkinGroup> _cardGroups;
     private HashSet<string>? _knownCardGroups;
+    private HashSet<string>? _cardTypesSharedAcrossPools;
+    internal bool IsCardTypeSharedAcrossPools(string cardType) => _cardTypesSharedAcrossPools?.Contains(cardType) == true;
     private HashSet<string>? _knownCardPoolGroups;
     internal IReadOnlySet<string>? KnownCardGroups => _knownCardGroups;
     internal IReadOnlySet<string>? KnownCardPoolGroups => _knownCardPoolGroups;
@@ -942,6 +944,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var modList = DeduplicateModDescriptors(AssignProviderInstanceIdentities(mods.Select(IndependentFoolSkinContract.Normalize)))
             .Where(mod => !string.Equals(mod.ResourceNamespaceId, "CznStyleUI", StringComparison.OrdinalIgnoreCase))
             .ToList();
+        var excludedPacks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var gameArchive = PckArchive.Open(gamePckPath);
         var globalWriteProtection = new Lazy<GlobalWriteProtection>(() =>
             new GlobalWriteProtection(gameArchive, path => EnumerateGlobalWriteDependencies(gameArchive, path)));
@@ -976,32 +979,39 @@ internal sealed partial class SkinCatalog : IDisposable
                     continue;
                 }
 
-                var archive = PckArchive.Open(mod.PckPath);
+                PckArchive? archive = null;
                 try
                 {
-                    var index = PckResourceIndex.Build(
-                        mod,
-                        archive,
-                        importedToSource,
-                        remapFilter: null);
-                    if (mod.AffectsGameplay)
-                    {
-                        baselineIndexes.Add(index);
-                    }
-                    else
-                    {
-                        cosmeticIndexes.Add(index);
-                    }
+                    archive = PckArchive.Open(mod.PckPath);
+                    var index = PckResourceIndex.Build(mod, archive, importedToSource, remapFilter: null);
+                    (mod.AffectsGameplay ? baselineIndexes : cosmeticIndexes).Add(index);
+                }
+                catch (Exception error) when (error is InvalidDataException or IOException or
+                    UnauthorizedAccessException or OverflowException)
+                {
+                    archive?.Dispose();
+                    excludedPacks.Add(mod.Id);
+                    ModLog.Warn($"跳过无法读取的 Mod 资源包 {mod.Id}（{mod.PckPath}）：{error.Message}。继续扫描其它皮肤。");
                 }
                 catch
                 {
-                    // 索引构建失败时释放未登记到任何列表的档案句柄。
-                    archive.Dispose();
+                    archive?.Dispose();
                     throw;
                 }
             }
 
             var groups = BuildGroups(cosmeticIndexes, baselineIndexes);
+            if (baselineIndexes[0].TryBuildAsset("res://scenes/creature_visuals/wuppy.tscn") != null &&
+                cosmeticIndexes.Concat(baselineIndexes).FirstOrDefault(index =>
+                    index.Mod.HasDll && index.Mod.ResourceNamespaceId == WhaleGirlWuppyCompat.ProviderId &&
+                    index.Archive.Paths.Contains("res://WhaleGirlWuppy/art/animations.json")) is { } whale)
+            {
+                var group = groups.FirstOrDefault(candidate => candidate.Id == "wuppy") ??
+                    new SkinGroup("wuppy", DisplayName("wuppy"));
+                group.Options.Add(new SkinOption(WhaleGirlWuppyCompat.ProviderId, whale.Mod.Name,
+                    new Dictionary<string, ResourceAsset>()));
+                if (!groups.Contains(group)) groups = [..groups, group];
+            }
             var cardGroups = BuildCardGroups(cosmeticIndexes);
             var pckCardOptions = BuildPckCardOptions(cosmeticIndexes, baselineIndexes);
             var catalog = new SkinCatalog(
@@ -1011,7 +1021,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 groups,
                 cardGroups,
                 pckCardOptions,
-                modList,
+                modList.Where(mod => !excludedPacks.Contains(mod.Id)).ToList(),
                 globalWriteProtection);
             catalog.SortGroupsAndOptions();
             return catalog;
@@ -4815,7 +4825,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private static CardCatalogEntry? FindCardForPackEntry(
         CardArtPackCard packCard,
         IReadOnlyList<CardCatalogEntry> cards) =>
-        ResolveCardForPortraitStem(packCard.CardId, cards);
+        ResolveCardForPortraitStem(packCard.CardId, cards, packCard.SourcePath);
 
     /// <summary>
     /// Resolves the card a portrait file is named after. A bundle entry and a provider's own image
@@ -4824,7 +4834,8 @@ internal sealed partial class SkinCatalog : IDisposable
     /// </summary>
     internal static CardCatalogEntry? ResolveCardForPortraitStem(
         string stem,
-        IReadOnlyList<CardCatalogEntry> cards)
+        IReadOnlyList<CardCatalogEntry> cards,
+        string? sourcePath = null)
     {
         var token = NormalizeCardToken(stem);
         if (token.Length == 0)
@@ -4833,26 +4844,37 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var context = GetCardStemResolutionContext(cards);
-        CardCatalogEntry? match = null;
+        var sourceCategory = TryGetCardArtIdentity(sourcePath, knownPoolGroups: context.KnownPoolGroups)?.Category;
+        CardCatalogEntry? best = null;
+        var bestScore = -1;
+        var tied = false;
         foreach (var entry in context.Entries)
         {
-            var matches = (entry.PortraitStem != null && CardStemsMatch(token, entry.PortraitStem)) ||
-                          CardStemsMatch(token, entry.TypeStem);
-            if (!matches)
+            if (!(entry.PortraitStem != null && CardStemsMatch(token, entry.PortraitStem)) &&
+                !CardStemsMatch(token, entry.TypeStem))
             {
                 continue;
             }
 
-            // An ambiguous stem must not be routed to an arbitrary card.
-            if (match != null)
+            var card = entry.Card;
+            var sourceMatchesPool = !string.IsNullOrEmpty(sourceCategory) &&
+                sourceCategory.Equals(card.PoolGroupId, StringComparison.OrdinalIgnoreCase);
+            var score = !string.IsNullOrEmpty(sourceCategory) && context.KnownPoolGroups.Contains(sourceCategory)
+                ? (sourceMatchesPool ? 2 : -1)
+                : card.IsGameCard ? 1 : 0;
+            if (score < 0 || score < bestScore) continue;
+            if (score == bestScore)
             {
-                return null;
+                tied = true;
+                continue;
             }
 
-            match = entry.Card;
+            best = card;
+            bestScore = score;
+            tied = false;
         }
 
-        return match;
+        return tied ? null : best;
     }
 
     private static CardStemResolutionContext GetCardStemResolutionContext(
@@ -4884,7 +4906,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 identity is { HasForeignPortrait: false } resolved ? resolved.Portrait.Stem : null);
         }
 
-        var built = new CardStemResolutionContext(cards.Count, entries);
+        var built = new CardStemResolutionContext(cards.Count, entries, knownPoolGroups);
         CardStemResolutionCache.AddOrUpdate(cards, built);
         return built;
     }
@@ -4916,6 +4938,12 @@ internal sealed partial class SkinCatalog : IDisposable
             })
             .Where(group => !string.IsNullOrWhiteSpace(group))
             .Cast<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _cardTypesSharedAcrossPools = cardEntries
+            .GroupBy(card => card.TypeName, StringComparer.OrdinalIgnoreCase)
+            .Where(entries => entries.Select(card => card.PoolGroupId)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any())
+            .Select(entries => entries.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         _knownCardPoolGroups = knownPoolGroups;
         _knownCardGroups = knownCardGroups;
@@ -4990,6 +5018,17 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        var unscopedCardOwners = new Dictionary<string, CardCatalogEntry?>(StringComparer.OrdinalIgnoreCase);
+        CardCatalogEntry? ResolveUnscopedOwner(string stem)
+        {
+            if (!unscopedCardOwners.TryGetValue(stem, out var owner))
+            {
+                owner = ResolveCardForPortraitStem(stem, cardEntries);
+                unscopedCardOwners[stem] = owner;
+            }
+            return owner;
+        }
+
         foreach (var option in _pckCardOptions)
         {
             var preparedAssets = option.Assets
@@ -5010,7 +5049,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 var assets = preparedCard.Identity is { } cardIdentity
                     ? preparedAssets
                         .Where(asset => asset.Identity is { } assetIdentity &&
-                                        CardArtMatches(assetIdentity, cardIdentity))
+                                        CardArtMatches(assetIdentity, cardIdentity) &&
+                                        (!string.IsNullOrEmpty(assetIdentity.Category) ||
+                                         ReferenceEquals(ResolveUnscopedOwner(assetIdentity.Stem), card)))
                         .Select(asset => new KeyValuePair<string, ResourceAsset>(asset.Path, asset.Asset))
                         .ToArray()
                     : [];
@@ -5127,6 +5168,17 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        // Merge bundles after PCK providers so a provider that declares the same id keeps its
+        // own definition, and a pack-only card still reaches the library listing below.
+        // A catalog built without its constructor (test fixtures) simply has no packs.
+        foreach (var artPackGroup in _artPackCardGroups?.Values ?? Enumerable.Empty<CardSkinGroup>())
+        {
+            foreach (var option in artPackGroup.Options)
+            {
+                AddCardOption(groups, artPackGroup.Id, option);
+            }
+        }
+
         // A character's Ancient cards appear in both library filters. Mirror only each
         // matching card's complete provider definition, not the whole Ancient pack. The
         // canonical Ancient group remains intact for existing presets and resource paths.
@@ -5158,6 +5210,12 @@ internal sealed partial class SkinCatalog : IDisposable
                                        CardArtMatches(assetIdentity, cardIdentity))
                         .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
                     : new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
+                // Bundle paths are private and may have no recognizable card-pool directory.
+                // The explicit binding is enough to carry the exact resource into both groups.
+                foreach (var path in normal.Values)
+                {
+                    if (option.Assets.TryGetValue(path, out var asset)) assets[path] = asset;
+                }
                 if (normal.Count + ancient.Count + presentations.Count + assets.Count == 0) continue;
                 var scoped = option with
                 {
@@ -5169,17 +5227,6 @@ internal sealed partial class SkinCatalog : IDisposable
                 };
                 AddCardOption(groups, card.PoolGroupId, scoped);
                 AddCardOption(groups, "ancients", scoped);
-            }
-        }
-
-        // Card-art packs are merged last so a PCK provider that declares the same id keeps its
-        // own definition, and a pack-only card still reaches the library listing below.
-        // A catalog built without its constructor (test fixtures) simply has no packs.
-        foreach (var artPackGroup in _artPackCardGroups?.Values ?? Enumerable.Empty<CardSkinGroup>())
-        {
-            foreach (var option in artPackGroup.Options)
-            {
-                AddCardOption(groups, artPackGroup.Id, option);
             }
         }
 
@@ -10274,7 +10321,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly record struct PreparedCard(CardCatalogEntry Entry, CardMatchIdentity? Identity);
     private readonly record struct PreparedCardAsset(string Path, ResourceAsset Asset, CardArtIdentity? Identity);
     private readonly record struct PreparedStemCard(CardCatalogEntry Card, string TypeStem, string? PortraitStem);
-    private sealed record CardStemResolutionContext(int Count, PreparedStemCard[] Entries);
+    private sealed record CardStemResolutionContext(int Count, PreparedStemCard[] Entries, IReadOnlySet<string> KnownPoolGroups);
     private sealed record CardArtVariant(string Key, ResourceAsset[] Assets, HashSet<string> Stems);
     private sealed record RuntimeResource(
         string SourcePath,
@@ -10516,6 +10563,7 @@ internal sealed record CardCatalogEntry(
     string FilterGroupId)
 {
     public bool IsCharacterPool { get; init; }
+    public bool IsGameCard { get; init; }
 }
 
 internal sealed record AncientCardPortrait(string? NormalPortrait, string? AncientPortrait);
@@ -10804,6 +10852,7 @@ internal sealed partial class PckResourceIndex : IDisposable
         Func<string, bool>? remapFilter)
     {
         var index = new PckResourceIndex(mod, archive, importedToSource);
+        var pendingRemaps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var remapPath in archive.Paths.Where(IsRemapPath))
         {
             if (remapFilter != null && !remapFilter(remapPath))
@@ -10811,7 +10860,7 @@ internal sealed partial class PckResourceIndex : IDisposable
                 continue;
             }
 
-            index.AddRemap(remapPath);
+            index.AddRemap(remapPath, pendingRemaps);
         }
 
         foreach (var path in archive.Paths.Where(IsDirectAnimationResource))
@@ -10823,9 +10872,11 @@ internal sealed partial class PckResourceIndex : IDisposable
         Dictionary<string, string>? textureSources = null;
         foreach (var importedPath in archive.Paths.Where(IsImportedPath))
         {
-            if (importedToSource.TryGetValue(importedPath, out var sourcePath) ||
+            if (pendingRemaps.TryGetValue(importedPath, out var sourcePath) ||
+                importedToSource.TryGetValue(importedPath, out sourcePath) ||
                 (ImportedTexturePathPolicy.SourceKey(importedPath) is { } textureKey &&
-                 (textureSources ??= ImportedTexturePathPolicy.UnambiguousSources(importedToSource))
+                 (textureSources ??= ImportedTexturePathPolicy.UnambiguousSources(
+                     importedToSource.Where(pair => !pendingRemaps.ContainsKey(pair.Key)).Concat(pendingRemaps)))
                      .TryGetValue(textureKey, out sourcePath)))
             {
                 index.GetAsset(sourcePath).AddFile(archive, importedPath);
@@ -10851,6 +10902,7 @@ internal sealed partial class PckResourceIndex : IDisposable
             index.GetAsset(sourcePath).AddFile(archive, path);
         }
 
+        foreach (var (target, source) in pendingRemaps) importedToSource[target] = source;
         return index;
     }
 
@@ -10890,8 +10942,9 @@ internal sealed partial class PckResourceIndex : IDisposable
 
     public void Dispose() => Archive.Dispose();
 
-    private void AddRemap(string remapPath)
+    private void AddRemap(string remapPath, Dictionary<string, string>? pendingRemaps = null)
     {
+        var remaps = pendingRemaps ?? _importedToSource;
         var sourcePath = remapPath.EndsWith(".import", StringComparison.OrdinalIgnoreCase)
             ? remapPath[..^7]
             : remapPath[..^6];
@@ -10903,7 +10956,7 @@ internal sealed partial class PckResourceIndex : IDisposable
         foreach (Match match in RemapTargetRegex().Matches(text))
         {
             var targetPath = match.Groups[1].Value;
-            _importedToSource[targetPath] = sourcePath;
+            remaps[targetPath] = sourcePath;
             if (Archive.Contains(targetPath))
             {
                 asset.AddFile(Archive, targetPath);
@@ -10918,7 +10971,7 @@ internal sealed partial class PckResourceIndex : IDisposable
             foreach (Match pathMatch in QuotedPathRegex().Matches(destFiles.Value))
             {
                 var targetPath = pathMatch.Groups[1].Value;
-                _importedToSource[targetPath] = sourcePath;
+                remaps[targetPath] = sourcePath;
                 if (Archive.Contains(targetPath))
                 {
                     asset.AddFile(Archive, targetPath);

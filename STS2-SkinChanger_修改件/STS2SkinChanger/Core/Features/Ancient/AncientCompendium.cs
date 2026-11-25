@@ -546,6 +546,7 @@ internal static class AncientCompendiumEntry
 
 internal partial class AncientCompendiumScreen : NSubmenu
 {
+    private Node2D? _standaloneOstyPreview;
     private static readonly Vector2I PreviewLogicalSize = new(1920, 1080);
 
     private enum OtherCategory
@@ -2358,6 +2359,28 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     entryButton.Text = EventCompendiumPreview.Title(model);
                 return;
             }
+            if (entry.Id == "osty" && !string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId) &&
+                OstyImpostorBridge.CreateSelectDisplay() is { } display)
+            {
+                // Use the same canvas as the working character-select renderer. The author's
+                // independent display could start its animation but remain blank in the preview viewport.
+                OtherCreaturePreview.UseStandaloneOstyBattleSkeleton(display);
+                _standaloneOstyPreview = display;
+                _otherPreviewInstance = display;
+                _otherPreviewGroupId = entry.Id;
+                foreach (var (button, _) in _otherActionButtons) button.Hide();
+                display.Position = new Vector2(960f, 600f);
+                display.Scale = Vector2.One * .2f;
+                AddChild(display);
+                MoveChild(display, _previewContainer.GetIndex() + 1);
+                _ = OtherCreaturePreview.PrepareStandaloneOsty(display, () =>
+                {
+                    if (_otherPreviewInstance == display)
+                        ManagedAncientSceneAnimation.ConfigureActions(display, entry.Id, _otherActionButtons);
+                });
+                RefreshAuxiliaryPreviewControls();
+                return;
+            }
             var group = FindOtherGroup(entry);
             var creatureDefinition = OtherCreatureCatalog.Find(entry.Id);
             // PackedScene external resources (notably Spine skeleton data) can resolve lazily
@@ -2510,7 +2533,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 // isolation. Reuse the same generic Spine starter used by Ancient previews so a
                 // Byrdpip skin with an idle loop remains animated in the compendium.
                 if (creatureDefinition != null) OtherCreaturePreview.Prepare(creatureDefinition, instance);
-                ManagedAncientSceneAnimation.TryStart(group?.Id, instance);
+                if (entry.Id != "osty" || string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId))
+                    ManagedAncientSceneAnimation.TryStart(group?.Id, instance);
                 ManagedAncientSceneAnimation.ConfigureActions(
                     instance,
                     group?.Id,
@@ -2541,6 +2565,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
         SkinGroup? group)
     {
         if (entry.Id == "osty") return (OtherCreaturePreview.CreateOsty(), entry.ScenePath);
+        if (entry.Id == "wuppy" && WhaleGirlWuppyCompat.CreatePreview() is { } whale)
+            return (whale, entry.ScenePath);
         var scenePaths = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
             // The standalone button is the smallest common scene and gives provider DLLs the
             // same _Ready hook as the live shop. v0.107 does not ship it, so the room scene is a
@@ -2710,6 +2736,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
             var selected = group == null ? SkinCatalog.BaseOptionId : SkinService.GetDisplayedSelection(group.Id);
             if (VakuuVanillaArt.PathFor(ancient.Id.Entry, selected) != null)
                 VakuuVanillaArt.Apply(preview, selected);
+            else if (group?.Id == "vakuu" && !SkinService.IsExternalRuntimeProviderSelected(group.Id) &&
+                SkinService.SelectedSkinProvidesResource(group.Id, VakuuVanillaArt.NormalPath) &&
+                preview.GetNodeOrNull<TextureRect>("TextureRect") is { } vakuuArt)
+            {
+                // The native scene fills this slot at event start; the catalogue has no event.
+                vakuuArt.Texture = SkinService.GetOrLoadRuntimeResource(group.Id, VakuuVanillaArt.NormalPath) as Texture2D;
+            }
             preview.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
             var previewHost = new Control
             {
@@ -2773,6 +2806,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void ClearPreview()
     {
+        if (_standaloneOstyPreview is { } display && GodotObject.IsInstanceValid(display))
+        {
+            display.Hide();
+            RemoveChild(display);
+            display.QueueFree();
+        }
+        _standaloneOstyPreview = null;
         ByrdineAttackPreview.Cancel(_otherPreviewInstance);
         SetMerchantInventoryOpen(false);
         _otherPreviewInstance = null;

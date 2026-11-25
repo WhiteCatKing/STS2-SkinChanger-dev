@@ -17,6 +17,7 @@ internal static class CardArtPackTests
     {
         CheckFormatRules();
         CheckWorkshopRecognition();
+        CheckAncientAndSameNameOwnership();
         CheckLooseProviderFolder();
         CheckRealPacks();
         Console.WriteLine(
@@ -24,6 +25,56 @@ internal static class CardArtPackTests
             "malformed-entry rejection, canvas routing, Workshop recognition, loose provider " +
             "folders and real pack dimensions.");
     }
+
+    private static void CheckAncientAndSameNameOwnership()
+    {
+        var root = Directory.CreateTempSubdirectory("sts2-card-art-ownership-").FullName;
+        try
+        {
+            const string foolArt = "res://fool_card_beauty/art/fool_ancient_fixture.png";
+            const string vanillaArt = "res://vanilla_card_beauty/art/same_name.png";
+            const string modArt = "res://custom/cards/card_portraits/custom/same_name.png";
+            CardCatalogEntry[] cards =
+            [
+                new("FoolAncientFixture", "res://images/atlases/card_atlas.sprites/fool/fool_ancient_fixture.tres",
+                    "fool", "fool", "ancients") { IsCharacterPool = true },
+                new("SameName", "res://images/atlases/card_atlas.sprites/ironclad/same_name.tres",
+                    "ironclad", "ironclad", "ironclad") { IsGameCard = true },
+                new("SameName", "res://custom/cards/card_portraits/custom/same_name.png",
+                    "custom", "custom", "custom")
+            ];
+
+            var game = Path.Combine(root, "game.pck");
+            PckArchive.Write(game, new Dictionary<string, byte[]>());
+            using var catalog = SkinCatalog.Build(game, []);
+            var image = MakePng(608, 416, false);
+            catalog.AttachCardArtPacks(
+                [
+                    new("fool_card_beauty", "Fool", "", root, [new(foolArt, "fool_ancient_fixture", image, "", "", false)]),
+                    new("vanilla_card_beauty", "Vanilla", "", root, [new(vanillaArt, "same_name", image, "", "", false)]),
+                    new("custom_card_beauty", "Custom", "", root, [new(modArt, "same_name", image, "", "", false)])
+                ], cards);
+            catalog.FinalizeCardGroups(cards);
+
+            var groups = catalog.CardGroups.ToDictionary(group => group.Id);
+            foreach (var groupId in new[] { "fool", "ancients" })
+            {
+                var option = groups[groupId].Options.Single(option => option.Id == "fool_card_beauty");
+                Require(option.NormalPortraits.GetValueOrDefault("FoolAncientFixture") == foolArt &&
+                        option.Assets.ContainsKey(foolArt),
+                    "The Fool's Ancient card must keep its bundle option and exact private asset in both groups.");
+            }
+
+            Require(groups["ironclad"].Options.Any(option => option.Id == "vanilla_card_beauty") &&
+                    groups["custom"].Options.All(option => option.Id != "vanilla_card_beauty"),
+                "An unscoped replacement for a name shared with a mod card must remain available to the vanilla card.");
+            Require(groups["custom"].Options.Any(option => option.Id == "custom_card_beauty") &&
+                    groups["ironclad"].Options.All(option => option.Id != "custom_card_beauty"),
+                "An explicit mod-pool resource path must keep the replacement scoped to that pool.");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
 
     /// <summary>
     /// A provider that keeps its card art as ordinary image files must become selectable card art,

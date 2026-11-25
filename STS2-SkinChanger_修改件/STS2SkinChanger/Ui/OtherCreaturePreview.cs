@@ -13,9 +13,6 @@ internal static class OtherCreaturePreview
 
     internal static Node2D CreateOsty()
     {
-        // Match character select: author display factory, drawable scene, then selected skeleton.
-        if (!string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId) &&
-            OstyImpostorBridge.CreateSelectDisplay() is { } display) return display;
         var group = OstySkinChoices.GroupId;
         if (OstyModelPreviewControls.TryLoadSceneForCurrentSelection(group, out var scene, out _))
         {
@@ -40,6 +37,62 @@ internal static class OtherCreaturePreview
         return spine;
     }
 
+    internal static void UseStandaloneOstyBattleSkeleton(Node2D display)
+    {
+        const string path = "res://osty_defect/battle.tres";
+        try
+        {
+            if (ResourceLoader.Load<Resource>(path, "SpineSkeletonDataResource",
+                ResourceLoader.CacheMode.Ignore) is { } data)
+                display.Set("skeleton_data_res", data);
+        }
+        catch (Exception error)
+        {
+            ModLog.Warn("奥斯提图鉴：加载独立战斗骨架失败：" + error.GetBaseException().Message);
+        }
+    }
+
+    internal static async Task PrepareStandaloneOsty(Node2D display, Action onReady)
+    {
+        var tree = display.GetTree();
+        var started = false;
+        try
+        {
+            using var speed = display.Call("set_time_scale", 1.0);
+            using var mode = display.Call("set_update_mode", 0);
+            for (var frame = 0; frame < 30; frame++)
+            {
+                await display.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
+                if (!GodotObject.IsInstanceValid(display) || !display.IsInsideTree() ||
+                    display.IsQueuedForDeletion()) return;
+
+                using var stateValue = display.Call("get_animation_state");
+                if (!started && stateValue.AsGodotObject() is { } state)
+                {
+                    var idle = new MegaSprite(display).HasAnimation("idle_loop")
+                        ? "idle_loop" : OstyImpostorBridge.SelectDisplayAnimation;
+                    using var playback = state.Call("set_animation", idle, true, 0);
+                    started = true;
+                }
+                using var update = display.Call("update_skeleton", 0f);
+                using var skeleton = display.Call("get_skeleton");
+                if (!started || skeleton.AsGodotObject() is not { } value) continue;
+                using var boundsValue = value.Call("get_bounds");
+                var bounds = boundsValue.AsRect2();
+                if (bounds.Size.X <= 1 || bounds.Size.Y <= 1) continue;
+                Fit(display, bounds);
+                onReady();
+                ModLog.Info($"奥斯提图鉴：独立展示骨架已启动并居中，范围={bounds.Size}。");
+                return;
+            }
+            ModLog.Warn("奥斯提图鉴：独立展示骨架在 30 帧内未就绪。");
+        }
+        catch (Exception error)
+        {
+            ModLog.Warn("奥斯提图鉴：启动独立展示失败：" + error.GetBaseException().Message);
+        }
+    }
+
     internal static void Prepare(OtherCreatureDefinition creature, Node root)
     {
         if (creature.Id == "osty")
@@ -50,9 +103,12 @@ internal static class OtherCreaturePreview
                 if (root.HasMethod("set_update_mode")) { using var mode = root.Call("set_update_mode", 0); }
                 if (root.HasMethod("update_skeleton")) { using var update = root.Call("update_skeleton", 0f); }
                 var sprite = new MegaSprite(root);
-                root.RunWhenSpineReady(sprite, _ =>
+                root.RunWhenSpineReady(sprite, state =>
                 {
                     if (!GodotObject.IsInstanceValid(root) || root is not Node2D node) return;
+                    if (!string.IsNullOrEmpty(SkinService.Config.CompanionImpostorSkinId) &&
+                        sprite.HasAnimation(OstyImpostorBridge.SelectDisplayAnimation))
+                        state.SetAnimation(OstyImpostorBridge.SelectDisplayAnimation, true, 0);
                     using var skeleton = root.Call("get_skeleton");
                     if (skeleton.AsGodotObject() is not { } value) return;
                     using var bounds = value.Call("get_bounds");

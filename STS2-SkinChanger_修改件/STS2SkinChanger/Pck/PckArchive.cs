@@ -131,14 +131,34 @@ internal sealed class PckArchive : IDisposable
             }
             else
             {
-                entries = ReadEntries(
-                    reader,
-                    stream,
-                    path,
-                    fileBase,
-                    fileCount,
-                    includeFileFlags: true,
-                    removedPaths);
+                try
+                {
+                    entries = ReadEntries(
+                        reader,
+                        stream,
+                        path,
+                        fileBase,
+                        fileCount,
+                        includeFileFlags: true,
+                        removedPaths);
+                }
+                catch (Exception exception) when (formatVersion == 3 &&
+                    exception is InvalidDataException or EndOfStreamException or OverflowException)
+                {
+                    // Some v3 exporters record the raw path length, then write zero alignment
+                    // bytes separately. Native Godot packs normally include them in the length.
+                    stream.Position = directoryStart;
+                    removedPaths?.Clear();
+                    entries = ReadEntries(
+                        reader,
+                        stream,
+                        path,
+                        fileBase,
+                        fileCount,
+                        includeFileFlags: true,
+                        removedPaths,
+                        alignRawPath: true);
+                }
             }
 
             return new PckArchive(path, stream, entries, (IReadOnlyCollection<string>?)removedPaths ?? []);
@@ -157,7 +177,8 @@ internal sealed class PckArchive : IDisposable
         ulong fileBase,
         uint fileCount,
         bool includeFileFlags,
-        HashSet<string>? removedPaths)
+        HashSet<string>? removedPaths,
+        bool alignRawPath = false)
     {
         var entries = new Dictionary<string, PckEntry>(checked((int)fileCount), StringComparer.OrdinalIgnoreCase);
         for (var i = 0U; i < fileCount; i++)
@@ -172,6 +193,14 @@ internal sealed class PckArchive : IDisposable
             if (rawPath.Length != (int)pathLength)
             {
                 throw new InvalidDataException($"{path} 的 PCK 目录在读取路径时被截断。");
+            }
+
+            if (alignRawPath)
+            {
+                var padding = (4 - (int)(pathLength % 4)) % 4;
+                for (var j = 0; j < padding; j++)
+                    if (reader.ReadByte() != 0)
+                        throw new InvalidDataException($"{path} 的 PCK 路径填充无效。");
             }
 
             var resourcePath = Encoding.UTF8.GetString(rawPath).TrimEnd('\0');
