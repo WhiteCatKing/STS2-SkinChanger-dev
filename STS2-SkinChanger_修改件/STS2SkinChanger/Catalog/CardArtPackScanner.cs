@@ -14,13 +14,16 @@ namespace STS2SkinChanger.Catalog;
 /// </summary>
 internal static class CardArtPackScanner
 {
-    public static CardArtPackScanResult Scan(IEnumerable<string> scanRoots)
+    public static CardArtPackScanResult Scan(
+        IEnumerable<string> scanRoots,
+        IEnumerable<string>? excludedDirectories = null)
     {
         var packs = new List<CardArtPack>();
         var warnings = new List<string>();
+        var excluded = NormalizeExcludedDirectories(excludedDirectories);
         foreach (var root in NormalizeRoots(scanRoots))
         {
-            foreach (var packPath in EnumeratePackFiles(root))
+            foreach (var packPath in EnumeratePackFiles(root, excluded))
             {
                 try
                 {
@@ -40,6 +43,19 @@ internal static class CardArtPackScanner
         }
 
         return new CardArtPackScanResult(PreferHighResolution(packs), warnings);
+    }
+
+    internal static bool DirectoryHasCardArtPack(
+        string directory,
+        IEnumerable<string>? excludedDirectories = null)
+    {
+        if (!TryNormalizeDirectoryPath(directory, out var normalized) || !Directory.Exists(normalized))
+        {
+            return false;
+        }
+
+        var excluded = NormalizeExcludedDirectories(excludedDirectories);
+        return EnumeratePackFiles(normalized, excluded).Any();
     }
 
     /// <summary>
@@ -133,15 +149,7 @@ internal static class CardArtPackScanner
                 continue;
             }
 
-            string full;
-            try
-            {
-                full = Path.GetFullPath(root).TrimEnd(
-                    Path.DirectorySeparatorChar,
-                    Path.AltDirectorySeparatorChar);
-            }
-            catch (Exception exception) when (
-                exception is ArgumentException or NotSupportedException or PathTooLongException)
+            if (!TryNormalizeDirectoryPath(root, out var full))
             {
                 continue;
             }
@@ -158,13 +166,85 @@ internal static class CardArtPackScanner
         }
 
         return result;
-
-        static bool IsUnder(string candidate, string parent) =>
-            candidate.StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static IEnumerable<string> EnumeratePackFiles(string root)
+    private static HashSet<string>? NormalizeExcludedDirectories(IEnumerable<string>? excludedDirectories)
     {
+        if (excludedDirectories == null)
+        {
+            return null;
+        }
+
+        HashSet<string>? normalized = null;
+        foreach (var directory in excludedDirectories)
+        {
+            if (TryNormalizeDirectoryPath(directory, out var full))
+            {
+                normalized ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                normalized.Add(full);
+            }
+        }
+
+        return normalized;
+    }
+
+    private static bool TryNormalizeDirectoryPath(string? path, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            normalized = Path.GetFullPath(path).TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            return !string.IsNullOrWhiteSpace(normalized);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsUnder(string candidate, string parent) =>
+        candidate.StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsExcludedDirectory(string directory, IReadOnlySet<string>? excludedDirectories)
+    {
+        if (excludedDirectories == null || excludedDirectories.Count == 0)
+        {
+            return false;
+        }
+
+        if (excludedDirectories.Contains(directory))
+        {
+            return true;
+        }
+
+        foreach (var excluded in excludedDirectories)
+        {
+            if (IsUnder(directory, excluded))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<string> EnumeratePackFiles(
+        string root,
+        IReadOnlySet<string>? excludedDirectories = null)
+    {
+        if (IsExcludedDirectory(root, excludedDirectories))
+        {
+            yield break;
+        }
+
         // Walk explicitly rather than with SearchOption.AllDirectories: file enumeration is lazy,
         // so one unreadable folder (a protected directory, a denied junction) would otherwise
         // abort the whole scan. Keeping our own stack lets a bad folder be skipped on its own.
@@ -186,6 +266,13 @@ internal static class CardArtPackScanner
 
             foreach (var child in TakeAll(children))
             {
+                if (excludedDirectories != null &&
+                    TryNormalizeDirectoryPath(child, out var normalizedChild) &&
+                    excludedDirectories.Contains(normalizedChild))
+                {
+                    continue;
+                }
+
                 pending.Push(child);
             }
 

@@ -1026,6 +1026,7 @@ Gate.Run("BundlePresetTests", () => BundlePresetTests.Run());
 Gate.Run("BundleContentModeTests", () => BundleContentModeTests.Run());
 Gate.Run("CardPresetMigrationTests", () => CardPresetMigrationTests.Run());
 Gate.Run("CardOptionOrderTests", () => CardOptionOrderTests.Run());
+Gate.Run("CardArtPackTests", () => CardArtPackTests.CheckDisabledAndUnloadedModsSkippedAndFallbackToDefault());
 Gate.Run("AncientCardPriorityTests", () => AncientCardPriorityTests.Run());
 Gate.Run("CardPoolOwnershipTests", () => CardPoolOwnershipTests.Run());
 Gate.Run("CharacterSkinBundleContractTests", () => CharacterSkinBundleContractTests.Run());

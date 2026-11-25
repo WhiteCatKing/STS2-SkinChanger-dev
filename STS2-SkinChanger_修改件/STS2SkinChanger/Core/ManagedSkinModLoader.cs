@@ -940,14 +940,229 @@ internal static class ManagedSkinModLoader
             .ToArray();
 
     public static Mod[] GetCatalogMods() =>
-        ModManager.Mods.Where(mod => mod.state == ModLoadState.Loaded ||
-            (mod.state == ModLoadState.DisabledDuplicate && ManagedModInstances.Contains(mod))).ToArray();
+        ModManager.Mods.Where(mod => IsActiveCatalogMod(mod)).ToArray();
+
+    private static bool IsModDisabledBySettings(Mod mod, ModSettings? modSettings = null) =>
+        (modSettings ?? ModSettingsField?.GetValue(null) as ModSettings)?.IsModDisabled(mod) == true;
+
+    internal static bool IsActiveCatalogMod(Mod mod, ModSettings? modSettings = null) =>
+        (mod.state == ModLoadState.Loaded ||
+         (mod.state == ModLoadState.DisabledDuplicate && ManagedModInstances.Contains(mod))) &&
+        !IsModDisabledBySettings(mod, modSettings);
+
+    /// <summary>
+    /// Directories belonging to Mods that have a manifest in the game's Mod list but were not
+    /// loaded (disabled in settings, failed due to missing dependencies / version mismatch, or
+    /// unmanaged duplicates). Pure asset packs without a manifest are absent from the Mod list
+    /// and are never excluded. Any directory that hosts or encloses an active loaded Mod stays
+    /// scannable so sharing a folder with an active Mod never hides the active Mod's assets.
+    /// </summary>
+    internal static IReadOnlyList<string> GetUnloadedManifestedModDirectories(
+        IEnumerable<Mod>? mods = null,
+        ModSettings? modSettings = null,
+        Func<Mod, bool>? isActiveOverride = null)
+    {
+        var allMods = (mods ?? ModManager.Mods).ToArray();
+        var settings = modSettings ?? ModSettingsField?.GetValue(null) as ModSettings;
+        bool IsActive(Mod mod) => isActiveOverride?.Invoke(mod) ?? IsActiveCatalogMod(mod, settings);
+
+        var activeDirectories = new List<string>();
+        foreach (var mod in allMods)
+        {
+            if (mod.manifest == null || !IsActive(mod))
+            {
+                continue;
+            }
+
+            if (TryNormalizeDirectoryPath(mod.path, out var activeDirectory))
+            {
+                activeDirectories.Add(activeDirectory);
+            }
+        }
+
+        var excludedDirectories = new List<string>();
+        var seenDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var mod in allMods)
+        {
+            if (mod.manifest == null || IsActive(mod))
+            {
+                continue;
+            }
+
+            if (!TryNormalizeDirectoryPath(mod.path, out var modDirectory))
+            {
+                continue;
+            }
+
+            if (activeDirectories.Any(active => IsSameOrSubdirectory(active, modDirectory)))
+            {
+                continue;
+            }
+
+            if (seenDirectories.Add(modDirectory))
+            {
+                excludedDirectories.Add(modDirectory);
+            }
+        }
+
+        return excludedDirectories;
+    }
+
+    /// <summary>
+    /// Detects directories that hold both active and unloaded manifested Mods while also
+    /// containing <c>*.cardartpack.json</c> files. Because card-art packs in a shared folder
+    /// cannot be separated cleanly by Mod, disabling one Mod there will not disable its card art;
+    /// callers surface a warning log and a non-modal main-menu banner asking the player to place
+    /// each Mod in its own folder.
+    /// </summary>
+    internal static IReadOnlyList<MixedCardArtDirectoryConflict> GetMixedCardArtDirectories(
+        IEnumerable<Mod>? mods = null,
+        ModSettings? modSettings = null,
+        Func<Mod, bool>? isActiveOverride = null)
+    {
+        var allMods = (mods ?? ModManager.Mods).ToArray();
+        var settings = modSettings ?? ModSettingsField?.GetValue(null) as ModSettings;
+        bool IsActive(Mod mod) => isActiveOverride?.Invoke(mod) ?? IsActiveCatalogMod(mod, settings);
+
+        var activeByDirectory = new Dictionary<string, List<(string Id, string Name)>>(StringComparer.OrdinalIgnoreCase);
+        var unloadedByDirectory = new Dictionary<string, List<(string Id, string Name)>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var mod in allMods)
+        {
+            if (mod.manifest == null || !TryNormalizeDirectoryPath(mod.path, out var directory))
+            {
+                continue;
+            }
+
+            var id = mod.manifest.id ?? string.Empty;
+            var displayName = !string.IsNullOrWhiteSpace(mod.manifest.name)
+                ? mod.manifest.name.Trim()
+                : id;
+
+            if (IsActive(mod))
+            {
+                if (!activeByDirectory.TryGetValue(directory, out var activeList))
+                {
+                    activeList = [];
+                    activeByDirectory[directory] = activeList;
+                }
+
+                activeList.Add((id, displayName));
+                continue;
+            }
+
+            if (!unloadedByDirectory.TryGetValue(directory, out var unloadedList))
+            {
+                unloadedList = [];
+                unloadedByDirectory[directory] = unloadedList;
+            }
+
+            unloadedList.Add((id, displayName));
+        }
+
+        if (unloadedByDirectory.Count == 0 || activeByDirectory.Count == 0)
+        {
+            return [];
+        }
+
+        var excludedDirectories = GetUnloadedManifestedModDirectories(allMods, settings, isActiveOverride);
+        var conflicts = new List<MixedCardArtDirectoryConflict>();
+        foreach (var (directory, unloadedList) in unloadedByDirectory
+                     .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            // Only trigger the mixed-directory notice when active and unloaded manifests live
+            // in the exact same directory. Parent-child layouts keep whole-directory scan
+            // protection via GetUnloadedManifestedModDirectories without false warnings.
+            if (!activeByDirectory.TryGetValue(directory, out var sameDirActive) ||
+                sameDirActive.Count == 0)
+            {
+                continue;
+            }
+
+            var sameDirActiveIds = sameDirActive
+                .Select(entry => entry.Id)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var distinctUnloadedNames = unloadedList
+                .Where(entry => string.IsNullOrWhiteSpace(entry.Id) ||
+                                !sameDirActiveIds.Contains(entry.Id))
+                .Select(entry => entry.Name)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (distinctUnloadedNames.Length == 0)
+            {
+                continue;
+            }
+
+            // Skip unrelated excluded subdirectories and distinct child active Mod folders.
+            var skipSubdirectories = new List<string>(excludedDirectories);
+            foreach (var activeDirectory in activeByDirectory.Keys)
+            {
+                if (!activeDirectory.Equals(directory, StringComparison.OrdinalIgnoreCase) &&
+                    IsSameOrSubdirectory(activeDirectory, directory))
+                {
+                    skipSubdirectories.Add(activeDirectory);
+                }
+            }
+
+            if (!CardArtPackScanner.DirectoryHasCardArtPack(directory, skipSubdirectories))
+            {
+                continue;
+            }
+
+            var activeNames = sameDirActive
+                .Select(entry => entry.Name)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var folderName = Path.GetFileName(directory);
+            if (string.IsNullOrWhiteSpace(folderName))
+            {
+                folderName = directory;
+            }
+
+            conflicts.Add(new MixedCardArtDirectoryConflict(
+                directory,
+                folderName,
+                activeNames,
+                distinctUnloadedNames));
+        }
+
+        return conflicts;
+    }
+
+    private static bool TryNormalizeDirectoryPath(string? path, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            normalized = Path.GetFullPath(path).TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            return !string.IsNullOrWhiteSpace(normalized);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSameOrSubdirectory(string candidate, string directory) =>
+        candidate.Equals(directory, StringComparison.OrdinalIgnoreCase) ||
+        candidate.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsProviderLoadCandidate(Mod mod)
     {
         if (mod.manifest?.id == null ||
             mod.state is not (ModLoadState.None or ModLoadState.Loaded or ModLoadState.DisabledDuplicate) ||
-            (ModSettingsField?.GetValue(null) as ModSettings)?.IsModDisabled(mod) == true)
+            IsModDisabledBySettings(mod))
         {
             return false;
         }

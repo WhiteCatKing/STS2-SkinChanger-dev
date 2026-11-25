@@ -1408,13 +1408,15 @@ internal static partial class SkinService
             var roots = CardArtPackScanRoots();
             if (roots.Count > 0)
             {
-                var scan = CardArtPackScanner.Scan(roots);
+                var excludedDirectories = ManagedSkinModLoader.GetUnloadedManifestedModDirectories();
+                var scan = CardArtPackScanner.Scan(roots, excludedDirectories);
                 foreach (var warning in scan.Warnings)
                 {
                     ModLog.Warn(warning);
                 }
 
                 packs.AddRange(scan.Packs);
+                ReportMixedCardArtDirectories();
             }
 
             packs.AddRange(LooseCardPortraitPackScanner.Scan(LooseCardPortraitProviders(), cardEntries));
@@ -1442,6 +1444,27 @@ internal static partial class SkinService
             // An unreadable pack must never block the normal catalog from finishing.
             ModLog.Warn("接管纯素材卡图包失败：" + exception.GetBaseException().Message);
         }
+    }
+
+    internal static IReadOnlyList<MixedCardArtDirectoryConflict> ReportMixedCardArtDirectories(
+        IEnumerable<Mod>? mods = null,
+        ModSettings? modSettings = null,
+        Action<string>? warn = null)
+    {
+        var conflicts = ManagedSkinModLoader.GetMixedCardArtDirectories(mods, modSettings);
+        if (conflicts.Count == 0)
+        {
+            return conflicts;
+        }
+
+        var logWarn = warn ?? ModLog.Warn;
+        foreach (var conflict in conflicts)
+        {
+            logWarn(Ui.MixedCardArtDirectoryNotice.FormatLogWarning(conflict));
+        }
+
+        Ui.MixedCardArtDirectoryNotice.Report(conflicts);
+        return conflicts;
     }
 
     /// <summary>
@@ -2093,8 +2116,29 @@ internal static partial class SkinService
 
     // 以下读取不持锁：所有写操作都发生在 Godot 主线程，与 UI 读取同线程；
     // LastError 用 volatile 保证异常路径下的可见性。
-    public static string GetCardSelection(string groupId) =>
-        Config.GetSelection(CardSelectionKey(groupId));
+    public static string GetCardSelection(string groupId)
+    {
+        var selected = Config.GetSelection(CardSelectionKey(groupId));
+        if (selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return selected;
+        }
+
+        // If a previously selected pack was disabled/skipped and no longer exists in the active
+        // catalog (including when the whole card group disappeared), fall back to game default
+        // without requiring the user to edit skin_changer.json by hand.
+        var catalog = Catalog;
+        if (catalog != null &&
+            catalog.CardGroups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+                .Options.Any(option =>
+                    option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase)) != true)
+        {
+            return SkinCatalog.BaseOptionId;
+        }
+
+        return selected;
+    }
 
     public static IReadOnlyList<CardPriorityOptionState> GetCardPriorityOptions(string groupId)
     {
@@ -3225,9 +3269,22 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
-            return Config.Selections.GetValueOrDefault(
+            var stored = Config.Selections.GetValueOrDefault(
                 IndividualCardSelectionKey(card),
                 InheritCardSelectionId);
+            if (stored.Equals(InheritCardSelectionId, StringComparison.OrdinalIgnoreCase) ||
+                stored.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                return stored;
+            }
+
+            // If a saved per-card override belongs to a disabled/absent pack that is not
+            // currently available for this card, display "Inherit category" (matching the
+            // actual rendered skin or game default) while keeping the raw choice in Config
+            // so re-enabling the mod restores it automatically.
+            return GetCardLookup(card).OptionsById.ContainsKey(stored)
+                ? stored
+                : InheritCardSelectionId;
         }
     }
 
@@ -10631,6 +10688,17 @@ internal static partial class SkinService
                     Enabled: enableAllByDefault || !hasLegacySelection ||
                              !selectedId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
+            // Legacy config has only Selections["cards:<group>"] without CardSkinPriorities, and
+            // that legacy selection is currently absent (e.g. disabled) while another pack remains
+            // in the pool: keep the absent selection at the head of configuredEntries so
+            // MergeKnownCardPriorityEntries preserves its original top priority slot for re-enable.
+            if (hasLegacySelection &&
+                !string.IsNullOrWhiteSpace(selectedId) &&
+                !selectedId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+                !knownIds.Contains(selectedId))
+            {
+                configuredEntries = [new CardSkinPriorityEntry(selectedId, Enabled: true)];
+            }
         }
 
         Config.CardSkinPriorities[group.Id] = MergeKnownCardPriorityEntries(

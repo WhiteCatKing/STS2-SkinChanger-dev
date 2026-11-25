@@ -17,10 +17,16 @@ namespace STS2SkinChanger.Ui.LoadOrderWarning;
 internal static class LoadOrderWarningController
 {
     private static bool _pending;
+    private static bool _showingPopup;
+    private static bool _restartRequested;
     private static bool _shownThisSession;
     private static bool _autoReorderedThisSession;
     private static LoadOrderPromptPlan? _pendingPlan;
     private static Mod[] _reorderTargets = [];
+
+    internal static bool IsPending => _pending;
+    internal static bool IsShowingOrPending => _pending || _showingPopup;
+    internal static bool IsRestartRequested => _restartRequested;
 
     public static void Schedule()
     {
@@ -177,7 +183,16 @@ internal static class LoadOrderWarningController
         }
 
         _pending = false;
-        TaskHelper.RunSafely(ShowWarning(container, _pendingPlan));
+        _showingPopup = true;
+        try
+        {
+            TaskHelper.RunSafely(ShowWarning(container, _pendingPlan));
+        }
+        catch
+        {
+            _showingPopup = false;
+            throw;
+        }
     }
 
     private static async Task ShowWarning(NModalContainer container, LoadOrderPromptPlan plan)
@@ -297,6 +312,16 @@ internal static class LoadOrderWarningController
                 _pending = true;
             }
         }
+        finally
+        {
+            _showingPopup = false;
+            if (!_restartRequested)
+            {
+                UiInjectionGuard.Run(
+                    "MixedCardArtDirectoryNotice.ScheduleTryShowAfterClose.AfterLoadOrder",
+                    MixedCardArtDirectoryNotice.ScheduleTryShowAfterClose);
+            }
+        }
     }
 
     internal static string BuildPromptMessage(LoadOrderPromptPlan plan)
@@ -324,6 +349,7 @@ internal static class LoadOrderWarningController
             // path completes. This is supported by both game versions and avoids depending on
             // PowerShell (which also made the button unusable on macOS).
             OS.SetRestartOnExit(true);
+            _restartRequested = true;
             ModLog.Info("玩家选择“重启”，正在重启游戏以应用新的 Mod 加载顺序。");
             popup.QueueFree();
             Callable.From(() =>
@@ -436,20 +462,29 @@ internal static class LoadOrderWarningController
 [HarmonyPatch(typeof(NModalContainer), nameof(NModalContainer._Ready))]
 internal static class LoadOrderWarningModalReadyPatch
 {
-    private static void Postfix() =>
+    private static void Postfix()
+    {
         UiInjectionGuard.Run("LoadOrderWarningModalReadyPatch.Postfix", LoadOrderWarningController.TryShow);
+        UiInjectionGuard.Run("MixedCardArtDirectoryNotice.TryShow.Ready", MixedCardArtDirectoryNotice.TryShow);
+    }
 }
 
 [HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]
 internal static class MainMenuLoadOrderWarningPatch
 {
-    private static void Postfix() =>
+    private static void Postfix()
+    {
         UiInjectionGuard.Run("MainMenuLoadOrderWarningPatch.Postfix", LoadOrderWarningController.Schedule);
+        UiInjectionGuard.Run("MixedCardArtDirectoryNotice.OnMainMenuReady", MixedCardArtDirectoryNotice.OnMainMenuReady);
+    }
 }
 
 [HarmonyPatch(typeof(NModalContainer), nameof(NModalContainer.Clear))]
 internal static class LoadOrderWarningModalClosedPatch
 {
-    private static void Postfix() =>
+    private static void Postfix()
+    {
         UiInjectionGuard.Run("LoadOrderWarningModalClosedPatch.Postfix", LoadOrderWarningController.TryShow);
+        UiInjectionGuard.Run("MixedCardArtDirectoryNotice.ScheduleTryShowAfterClose", MixedCardArtDirectoryNotice.ScheduleTryShowAfterClose);
+    }
 }
