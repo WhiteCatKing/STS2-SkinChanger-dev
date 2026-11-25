@@ -53,6 +53,7 @@ public static class TwinAssemblyBehaviorDelegationTests
         {
             VerifySlimmerFirstAlwaysLoadsFullerAndDelegates(root, infoLogs);
             VerifyFullerFirstDirectionPreserved(root, infoLogs);
+            VerifyDirectFullerToSlimmerSwitchKeepsActiveExecutorWithoutTeardownOrReinstall(root);
             VerifyRegistrationConflictStillPrefersFullerBuild(root, infoLogs);
             VerifyReverseDelegationFullerToSlimmerForbidden(root, warnLogs);
             VerifyTemplateCloneDifferentTypesDoesNotDelegate(root, warnLogs);
@@ -243,6 +244,100 @@ public static class TwinAssemblyBehaviorDelegationTests
         finally
         {
             CleanupTestProviders([idSlimA, idFullB], [pathSlimA, pathFullB]);
+        }
+    }
+
+    private static int _spyDeactivateProviderCalls;
+    private static int _spyPatchProviderCallbackCalls;
+    private static int _spySuspendNodeCalls;
+    private static int _spyRestoreNodeCalls;
+
+    private static void SpyCountDeactivateProvider() => _spyDeactivateProviderCalls++;
+    private static void SpyCountPatchProviderCallbacks() => _spyPatchProviderCallbackCalls++;
+    private static void SpyCountSuspendNodes() => _spySuspendNodeCalls++;
+    private static void SpyCountRestoreNodes() => _spyRestoreNodeCalls++;
+
+    private static void VerifyDirectFullerToSlimmerSwitchKeepsActiveExecutorWithoutTeardownOrReinstall(DirectoryInfo root)
+    {
+        // Fresh process selects fuller twin B first while slimmer twin A has NEVER been inspected or
+        // registered as an alias. Direct switch B -> A (without visiting vanilla) must keep B active
+        // across DeactivateProvidersExcept([A]) + ActivateSelectedProviders([A]) with ZERO redundant
+        // teardown and ZERO redundant blueprint re-installation.
+        var asmName = "TwinDirectBToA_" + Guid.NewGuid().ToString("N");
+        var idSlimA = "DirectSlimA_" + Guid.NewGuid().ToString("N");
+        var idFullB = "DirectFullB_" + Guid.NewGuid().ToString("N");
+        var idCloneC = "DirectCloneC_" + Guid.NewGuid().ToString("N");
+
+        var pathSlimA = EmitTwinProviderDll(root, "direct_slim_a.dll", asmName, new Version(0, 3, 5, 0), tag: idSlimA, delta: 100, extraTypes: SlimmerTwinCoreTypes);
+        var pathFullB = EmitTwinProviderDll(root, "direct_full_b.dll", asmName, new Version(0, 3, 16, 0), tag: idFullB, delta: 240, extraTypes: FullerTwinCoreTypes);
+        // Same assembly name but disjoint types (< 0.80 overlap): switching B -> C MUST still deactivate B!
+        var pathCloneC = EmitTwinProviderDll(root, "direct_clone_c.dll", asmName, new Version(1, 0, 0, 0), tag: idCloneC, delta: 99,
+            extraTypes: ["CloneC.One", "CloneC.Two", "CloneC.Three", "CloneC.Four", "CloneC.Five"]);
+
+        var spy = new Harmony("sc.test.twin.direct-b-to-a." + Guid.NewGuid().ToString("N"));
+        try
+        {
+            RegisterTestProvider(idSlimA, pathSlimA, canActivateBehavior: true);
+            RegisterTestProvider(idFullB, pathFullB, canActivateBehavior: true);
+            RegisterTestProvider(idCloneC, pathCloneC, canActivateBehavior: true);
+
+            // Step 1: Activate fuller B first; A is completely untouched/unaliased.
+            ManagedSkinModLoader.ActivateSelectedProviders([idFullB]);
+            Require(ComputeTwinBehaviorValue() == 240 &&
+                    ManagedSkinModLoader.IsProviderActive(idFullB) &&
+                    InitCounts.GetValueOrDefault(idFullB) == 1 &&
+                    ManagedSkinModLoader.ResolveBehaviorProviderId(idSlimA) == idSlimA,
+                "直切前置条件：完整版 B 必须已激活，且精简版 A 尚未建立别名。");
+
+            // Attach spies right before the direct B -> A switch.
+            _spyDeactivateProviderCalls = 0;
+            _spyPatchProviderCallbackCalls = 0;
+            _spySuspendNodeCalls = 0;
+            _spyRestoreNodeCalls = 0;
+            spy.Patch(AccessTools.Method(typeof(ManagedSkinModLoader), "DeactivateProvider"),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(SpyCountDeactivateProvider)));
+            spy.Patch(AccessTools.Method(typeof(ManagedSkinModLoader), "PatchProviderCallbacks"),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(SpyCountPatchProviderCallbacks)));
+            spy.Patch(AccessTools.Method(typeof(ManagedSkinModLoader), "SuspendProviderNodes"),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(SpyCountSuspendNodes)));
+            spy.Patch(AccessTools.Method(typeof(ManagedSkinModLoader), "RestoreProviderNodes"),
+                prefix: new HarmonyMethod(typeof(TwinAssemblyBehaviorDelegationTests), nameof(SpyCountRestoreNodes)));
+
+            // Step 2: Direct switch B -> A (exact MountOverlay order: DeactivateProvidersExcept then ActivateSelectedProviders).
+            ManagedSkinModLoader.DeactivateProvidersExcept([idSlimA]);
+            Require(_spyDeactivateProviderCalls == 0 && _spySuspendNodeCalls == 0,
+                $"B -> A 首次直切在停用阶段不得误拆仍在用的执行者 B：deactivate={_spyDeactivateProviderCalls}, suspend={_spySuspendNodeCalls}");
+            Require(ManagedSkinModLoader.IsProviderActive(idFullB) && ComputeTwinBehaviorValue() == 240,
+                $"DeactivateProvidersExcept([A]) 后执行者 B 必须持续保持在位与补丁生效：active={ManagedSkinModLoader.IsProviderActive(idFullB)}, val={ComputeTwinBehaviorValue()}");
+            // Read-only pre-check must NOT load A's DLL or eagerly initialize anything before activation.
+            Require(!ManagedSkinModLoader.TryGetLoadedProviderAssembly(pathSlimA, out _),
+                "停用筛选阶段不得提前加载精简版 A 的程序集。");
+
+            ManagedSkinModLoader.ActivateSelectedProviders([idSlimA]);
+            Require(_spyDeactivateProviderCalls == 0 &&
+                    _spyPatchProviderCallbackCalls == 0 &&
+                    _spySuspendNodeCalls == 0 &&
+                    _spyRestoreNodeCalls == 0,
+                $"B -> A 首次直切全程不得出现多余停用、节点暂停/恢复或蓝图重挂：deactivate={_spyDeactivateProviderCalls}, patch={_spyPatchProviderCallbackCalls}, suspend={_spySuspendNodeCalls}, restore={_spyRestoreNodeCalls}");
+            Require(ManagedSkinModLoader.ResolveBehaviorProviderId(idSlimA) == idFullB &&
+                    ManagedSkinModLoader.IsBehaviorActiveFor(idSlimA) &&
+                    ManagedSkinModLoader.IsProviderActive(idFullB) &&
+                    ComputeTwinBehaviorValue() == 240 &&
+                    InitCounts.GetValueOrDefault(idFullB) == 1 &&
+                    InitCounts.GetValueOrDefault(idSlimA) == 0,
+                $"B -> A 直切后应建立 A -> B 委托且 B 仅初始化一次：alias={ManagedSkinModLoader.ResolveBehaviorProviderId(idSlimA)}, val={ComputeTwinBehaviorValue()}, initB={InitCounts.GetValueOrDefault(idFullB)}, initA={InitCounts.GetValueOrDefault(idSlimA)}");
+
+            // Step 3: Negative control — switching from B/A to an unrelated low-overlap clone C MUST still deactivate B.
+            ManagedSkinModLoader.DeactivateProvidersExcept([idCloneC]);
+            Require(_spyDeactivateProviderCalls == 1 &&
+                    !ManagedSkinModLoader.IsProviderActive(idFullB) &&
+                    ComputeTwinBehaviorValue() == 0,
+                $"切到同名低重合克隆包 C 时仍必须正常停用 B：deactivate={_spyDeactivateProviderCalls}, activeB={ManagedSkinModLoader.IsProviderActive(idFullB)}, val={ComputeTwinBehaviorValue()}");
+        }
+        finally
+        {
+            spy.UnpatchAll(spy.Id);
+            CleanupTestProviders([idSlimA, idFullB, idCloneC], [pathSlimA, pathFullB, pathCloneC]);
         }
     }
 

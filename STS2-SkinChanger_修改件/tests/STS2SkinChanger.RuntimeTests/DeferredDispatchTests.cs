@@ -19,6 +19,7 @@ internal static class DeferredDispatchTests
             VerifyHalfHpCrabSkipsRetryWhenTargetModAbsent();
             VerifyPostReviewDeferredSitesUseWrapper();
             VerifyReentrancyWarningOnceWithoutTruncation();
+            VerifyCrossFrameEmptyPollsDoNotTriggerReentrancyWhileSameIdleSelfChainStillWarns();
             VerifyThreadSafeBackgroundEnqueue();
             VerifyCrashWatchEmbedsBreadcrumbSupport();
             Console.WriteLine("Deferred dispatch records passed: interleaved FIFO order, cross-frame progression, exception parity, high-risk enter-only & empty-poll counting, crab retry gate, site wiring, caps, reentrancy warning and thread-safe enqueue.");
@@ -558,6 +559,113 @@ internal static class DeferredDispatchTests
                 warnings[0].Contains("widget#1", StringComparison.Ordinal) &&
                 warnings[0].Contains("次数=6", StringComparison.Ordinal),
             $"连续重入超阈值必须且仅告警一次并带任务名/归属/次数：count={warnings.Count}, msg={warnings.FirstOrDefault()}");
+    }
+
+    private static void VerifyCrossFrameEmptyPollsDoNotTriggerReentrancyWhileSameIdleSelfChainStillWarns()
+    {
+        var queue = new Queue<Action>();
+        var warnings = new List<string>();
+        ulong frame = 100;
+        DeferredDispatch.ConfigureForTests(
+            enqueue: queue.Enqueue,
+            frameCounter: () => frame,
+            breadcrumbDirectoryProvider: () => null,
+            warnLogger: warnings.Add);
+
+        // 1) 60 consecutive cross-frame empty polls (like FakeMerchantEventFrame.FitStep waiting on
+        //    ProcessFrame for Spine bounds) must NOT trigger a reentrancy warning, while keeping
+        //    independent idle poll counting intact.
+        var startFrame = frame;
+        for (var i = 0; i < 60; i++)
+        {
+            var didWork = DeferredDispatch.RunTrackedPoll(
+                "FakeMerchantEventFrame.FitStep",
+                "fake_merchant#1",
+                () => false,
+                DeferredDispatchRisk.Normal,
+                startFrame);
+            Require(!didWork, "空轮询应返回 false。");
+            frame++;
+        }
+
+        Require(warnings.Count == 0,
+            $"连续 60 帧跨帧空轮询不得触发重入告警，实际：{string.Join(" | ", warnings)}");
+        Require(DeferredDispatch.GetIdlePollCount("FakeMerchantEventFrame.FitStep", "fake_merchant#1") == 60,
+            $"跨帧空轮询独立计数应为 60，实际：{DeferredDispatch.GetIdlePollCount("FakeMerchantEventFrame.FitStep", "fake_merchant#1")}");
+        Require(DeferredDispatch.SnapshotRecords().Length == 0,
+            "跨帧空轮询不得向环形缓冲刷入每帧记录。");
+
+        // Also verify WrapPollCallback across 60 consecutive frames does not warn either.
+        var wrappedPoll = DeferredDispatch.WrapPollCallback("FakeMerchantEventFrame.WrapStep", "fake_merchant#2", () => false);
+        for (var i = 0; i < 60; i++)
+        {
+            wrappedPoll();
+            frame++;
+        }
+
+        Require(warnings.Count == 0,
+            $"WrapPollCallback 连续 60 帧跨帧空轮询不得触发重入告警，实际：{string.Join(" | ", warnings)}");
+        Require(DeferredDispatch.GetIdlePollCount("FakeMerchantEventFrame.WrapStep", "fake_merchant#2") == 60,
+            $"WrapPollCallback 空轮询计数应为 60，实际：{DeferredDispatch.GetIdlePollCount("FakeMerchantEventFrame.WrapStep", "fake_merchant#2")}");
+
+        // When the skeleton finally becomes ready on the next frame, DONE summarizes all 60 idle polls.
+        var ready = DeferredDispatch.RunTrackedPoll(
+            "FakeMerchantEventFrame.FitStep",
+            "fake_merchant#1",
+            () => true,
+            DeferredDispatchRisk.Normal,
+            startFrame);
+        Require(ready && warnings.Count == 0,
+            $"第 61 帧就绪完成时不得误报重入告警：ready={ready}, warnings={warnings.Count}");
+        var doneRecord = DeferredDispatch.SnapshotRecords().Single();
+        Require(doneRecord.Phase == "DONE" &&
+                doneRecord.Result == "ok(idle=60)" &&
+                doneRecord.StreakCount == 1,
+            $"跨帧等待后首次干活应记录 idle=60 且 streak=1，实际：phase={doneRecord.Phase}, res={doneRecord.Result}, streak={doneRecord.StreakCount}");
+
+        // 2) Same-idle CallDeferred self-requeue chain (frame does NOT advance while queue drains)
+        //    MUST still trigger reentrancy warning at threshold + 1 (51) without truncating execution.
+        frame = 500;
+        var sameIdleCount = 0;
+        void SameIdleSelfChain()
+        {
+            sameIdleCount++;
+            if (sameIdleCount < 60)
+            {
+                DeferredDispatch.CallDeferred("SameIdle.SelfChain", "panel#2", SameIdleSelfChain);
+            }
+        }
+
+        DeferredDispatch.CallDeferred("SameIdle.SelfChain", "panel#2", SameIdleSelfChain);
+        while (queue.Count > 0)
+        {
+            queue.Dequeue()();
+        }
+
+        Require(sameIdleCount == 60,
+            $"同 idle 自续链只观察不截断，应完整跑完 60 次，实际：{sameIdleCount}");
+        Require(warnings.Count == 1 &&
+                warnings[0].Contains("SameIdle.SelfChain", StringComparison.Ordinal) &&
+                warnings[0].Contains("panel#2", StringComparison.Ordinal) &&
+                warnings[0].Contains("次数=51", StringComparison.Ordinal) &&
+                warnings[0].Contains("入队帧=500", StringComparison.Ordinal) &&
+                warnings[0].Contains("执行帧=500", StringComparison.Ordinal),
+            $"同 idle 自续链仍必须触发一次重入告警：count={warnings.Count}, msg={warnings.FirstOrDefault()}");
+
+        // 3) Repeated empty polls within the SAME frame (broken poll loop not awaiting ProcessFrame)
+        //    MUST still trigger a reentrancy warning.
+        frame = 600;
+        for (var i = 0; i < 55; i++)
+        {
+            DeferredDispatch.RunTrackedPoll("BrokenPoll.SameFrameSpin", "spinner#1", () => false, DeferredDispatchRisk.Normal, frame);
+        }
+
+        Require(warnings.Count == 2 &&
+                warnings[1].Contains("BrokenPoll.SameFrameSpin", StringComparison.Ordinal) &&
+                warnings[1].Contains("次数=51", StringComparison.Ordinal),
+            $"同帧空转轮询仍必须触发重入告警：count={warnings.Count}, last={warnings.LastOrDefault()}");
+        Require(DeferredDispatch.GetIdlePollCount("BrokenPoll.SameFrameSpin", "spinner#1") == 55,
+            "同帧空转轮询仍应准确累计空轮询次数。");
     }
 
     private static void VerifyThreadSafeBackgroundEnqueue()

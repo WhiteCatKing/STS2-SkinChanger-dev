@@ -324,7 +324,9 @@ internal static class ManagedSkinModLoader
         {
             if (configuredId.Equals(behaviorProviderId, StringComparison.OrdinalIgnoreCase) ||
                 configuredId.Equals(resolvedTarget, StringComparison.OrdinalIgnoreCase) ||
-                ResolveBehaviorProviderId(configuredId).Equals(resolvedTarget, StringComparison.OrdinalIgnoreCase))
+                ResolveBehaviorProviderId(configuredId).Equals(resolvedTarget, StringComparison.OrdinalIgnoreCase) ||
+                (TryResolveActiveTwinBehaviorExecutor(configuredId, out var twinExecutor) &&
+                 twinExecutor.Equals(resolvedTarget, StringComparison.OrdinalIgnoreCase)))
             {
                 return true;
             }
@@ -1124,14 +1126,19 @@ internal static class ManagedSkinModLoader
     public static string[] ActiveProviderRuntimeIds() => ActiveProviderRuntimes.Keys.ToArray();
     private static bool IsMerchantSkinProvider(string providerId, string? merchantSelection)
     {
-        if (!string.IsNullOrWhiteSpace(merchantSelection) &&
-            string.Equals(providerId, merchantSelection, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(merchantSelection))
+        {
+            return false;
+        }
+
+        if (string.Equals(providerId, merchantSelection, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(providerId, ResolveBehaviorProviderId(merchantSelection), StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        return !string.IsNullOrWhiteSpace(merchantSelection) &&
-               string.Equals(providerId, ResolveBehaviorProviderId(merchantSelection), StringComparison.OrdinalIgnoreCase);
+        return TryResolveActiveTwinBehaviorExecutor(merchantSelection, out var twinBehaviorId) &&
+               string.Equals(providerId, twinBehaviorId, StringComparison.OrdinalIgnoreCase);
     }
     /// <summary>
     /// 选择项 id 可能带 <c>::variant:&lt;key&gt;</c> 或 <c>::source:&lt;tag&gt;</c> 后缀（十字军变体、
@@ -1164,6 +1171,14 @@ internal static class ManagedSkinModLoader
             if (!string.IsNullOrWhiteSpace(behaviorId))
             {
                 selected.Add(NormalizeProviderIdentity(behaviorId));
+            }
+            // If a slimmer twin is selected for the first time while its fuller twin is already
+            // active (alias not yet registered), resolve the still-active executor using read-only
+            // PE metadata & assembly ownership so we keep it alive instead of tearing down and
+            // reinstalling the exact same blueprint moments later.
+            if (TryResolveActiveTwinBehaviorExecutor(providerId, out var activeTwinBehaviorId))
+            {
+                selected.Add(NormalizeProviderIdentity(activeTwinBehaviorId));
             }
         }
         var merchantSelection = SkinService.GetSelectedRuntimeProvider("merchant");
@@ -4364,7 +4379,6 @@ internal static class ManagedSkinModLoader
         }
 
         var logicalId = NormalizeProviderIdentity(requested.ProviderId);
-        var requestedToken = requestedName.GetPublicKeyToken() ?? [];
 
         ProviderAssembly? best = null;
         var bestTypeCount = -1;
@@ -4382,10 +4396,7 @@ internal static class ManagedSkinModLoader
             }
 
             var candidateName = ReadCachedProviderAssemblyName(candidate.AssemblyPath);
-            if (candidateName == null ||
-                !string.Equals(candidateName.Name, requestedName.Name, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(candidateName.CultureName, requestedName.CultureName, StringComparison.OrdinalIgnoreCase) ||
-                !requestedToken.AsSpan().SequenceEqual(candidateName.GetPublicKeyToken() ?? []))
+            if (candidateName == null || !MatchesTwinAssemblyName(requestedName, candidateName))
             {
                 continue;
             }
@@ -4432,6 +4443,92 @@ internal static class ManagedSkinModLoader
         return true;
     }
 
+    private static bool MatchesTwinAssemblyName(AssemblyName left, AssemblyName right) =>
+        !string.IsNullOrWhiteSpace(left.Name) &&
+        string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(left.CultureName, right.CultureName, StringComparison.OrdinalIgnoreCase) &&
+        (left.GetPublicKeyToken() ?? []).AsSpan().SequenceEqual(right.GetPublicKeyToken() ?? []);
+
+    /// <summary>
+    /// Resolves whether an unaliased selection <paramref name="providerId"/> will delegate its
+    /// behavior to an already-active runtime in <see cref="ActiveProviderRuntimes"/>, using only
+    /// cached PE metadata and existing assembly ownership (never loads assemblies or runs initializers).
+    /// Mirrors <see cref="TryReuseSiblingBehavior"/> criteria (same assembly identity, existing owner,
+    /// >= <see cref="TwinAssemblyTypeOverlapThreshold"/> authored-type overlap, slimmer -> fuller).
+    /// </summary>
+    private static bool TryResolveActiveTwinBehaviorExecutor(
+        string providerId,
+        out string activeBehaviorId)
+    {
+        activeBehaviorId = string.Empty;
+        if (string.IsNullOrWhiteSpace(providerId) ||
+            ActiveProviderRuntimes.Count == 0 ||
+            BehaviorProviderAliases.ContainsKey(providerId) ||
+            !ProviderAssemblies.TryGetValue(providerId, out var requested))
+        {
+            return false;
+        }
+
+        var requestedName = ReadCachedProviderAssemblyName(requested.AssemblyPath);
+        if (requestedName == null || string.IsNullOrWhiteSpace(requestedName.Name))
+        {
+            return false;
+        }
+
+        var logicalId = NormalizeProviderIdentity(requested.ProviderId);
+        foreach (var (activeId, activeRuntime) in ActiveProviderRuntimes)
+        {
+            if (activeId.Equals(requested.ProviderId, StringComparison.OrdinalIgnoreCase))
+            {
+                activeBehaviorId = activeId;
+                return true;
+            }
+
+            if (!MatchesTwinAssemblyName(requestedName, activeRuntime.Assembly.GetName()))
+            {
+                continue;
+            }
+
+            var owners = ProviderAssemblies.Values
+                .Where(candidate =>
+                    !string.IsNullOrWhiteSpace(candidate.ProviderId) &&
+                    !candidate.AssemblyPath.Equals(requested.AssemblyPath, StringComparison.OrdinalIgnoreCase) &&
+                    !candidate.ProviderId.Equals(requested.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+                    OwnsLoadedAssembly(candidate, activeRuntime.Assembly) &&
+                    ResolveBehaviorProviderId(candidate.ProviderId).Equals(activeId, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(candidate =>
+                    string.Equals(NormalizeProviderIdentity(candidate.ProviderId), logicalId, StringComparison.OrdinalIgnoreCase));
+
+            foreach (var source in owners)
+            {
+                var sameLogicalId = string.Equals(
+                    NormalizeProviderIdentity(activeId),
+                    logicalId,
+                    StringComparison.OrdinalIgnoreCase);
+                if (!sameLogicalId)
+                {
+                    var overlap = GetAssemblyTypeOverlapRatio(requested.AssemblyPath, source.AssemblyPath);
+                    if (overlap < TwinAssemblyTypeOverlapThreshold)
+                    {
+                        continue;
+                    }
+
+                    var requestedTypeCount = GetAuthoredTypeCount(requested.AssemblyPath);
+                    var sourceTypeCount = GetAuthoredTypeCount(source.AssemblyPath);
+                    if (requestedTypeCount > sourceTypeCount)
+                    {
+                        return false;
+                    }
+                }
+
+                activeBehaviorId = activeId;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool TryReuseSiblingBehavior(
         ProviderAssembly requested,
         AssemblyName name,
@@ -4441,9 +4538,7 @@ internal static class ManagedSkinModLoader
         blockedReverseDelegation = false;
         if (string.IsNullOrWhiteSpace(requested.ProviderId)) return false;
         var loadedName = loaded.GetName();
-        if (!string.Equals(name.Name, loadedName.Name, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(name.CultureName, loadedName.CultureName, StringComparison.OrdinalIgnoreCase) ||
-            !(name.GetPublicKeyToken() ?? []).AsSpan().SequenceEqual(loadedName.GetPublicKeyToken() ?? []))
+        if (!MatchesTwinAssemblyName(name, loadedName))
             return false;
 
         var logicalId = NormalizeProviderIdentity(requested.ProviderId);

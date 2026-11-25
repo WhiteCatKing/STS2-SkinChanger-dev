@@ -2019,14 +2019,14 @@ internal static partial class SkinService
 
                     // Third-party packs cache the resources they swapped; drop those caches so they
                     // reload from the skin that is selected *now* (both sides of the switch).
-                    ProviderRuntimeCacheReset.ResetForSelections(
-                        CollectSelectionTransitionOptions(updates, previousSelections));
                     var requiresVisualOverlay = affectedGroups.Any(id =>
                         !EventSkinPolicy.IsEventGroup(id) ||
                         Catalog.IsEventSelectionVisuallyActive(id, previousSelections[id].Value ?? SkinCatalog.BaseOptionId) ||
                         Catalog.IsEventSelectionVisuallyActive(id, updates[id]));
                     if (requiresVisualOverlay)
                     {
+                        ProviderRuntimeCacheReset.ResetForSelections(
+                            CollectSelectionTransitionOptions(Catalog, updates, previousSelections));
                         MountOverlay(affectedGroups);
                     }
                 }
@@ -6660,6 +6660,8 @@ internal static partial class SkinService
             SpinePages = overlay.SpinePages,
             RelicSpriteTextures = overlay.RelicSpriteTextures,
             RelicCatalog = relicOption == null ? null : new(catalog),
+            RelicGroupId = relicOption == null ? null : groupId,
+            RelicOptionId = relicOption?.Id,
             RelicSources = relicSources,
             RelicRoots = relicOption == null ? [] : normalizedPaths,
             RewrittenRelicUids = rewrittenRelicUids
@@ -6821,7 +6823,7 @@ internal static partial class SkinService
                 continue;
             }
 
-            var previousProvider = catalog.ResolveVisualProviderId(previousSelection);
+            var previousProvider = catalog.ResolveGroupVisualProviderId(update.Key, previousSelection);
             if (catalog.ProviderUsesFullRuntime(previousProvider) &&
                 catalog.GetFullRuntimeProviderGroups(previousProvider).Count > 1)
             {
@@ -6840,6 +6842,60 @@ internal static partial class SkinService
             .Concat(updates.Values)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+    /// <summary>
+    /// Collects only the visual provider IDs participating in a selection transition, filtering out
+    /// text-only event options per group (both outgoing and incoming) so switching between a visual
+    /// event skin and a hybrid DLL pack's text-only event option does not wipe third-party caches
+    /// belonging to that hybrid pack's active non-event groups.
+    /// </summary>
+    internal static string[] CollectSelectionTransitionOptions(
+        SkinCatalog catalog,
+        IReadOnlyDictionary<string, string> updates,
+        IReadOnlyDictionary<string, (bool HadValue, string? Value)> previousSelections)
+    {
+        var visualProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddVisualProviders(string groupId, string optionId)
+        {
+            if (string.IsNullOrWhiteSpace(optionId) ||
+                optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) ||
+                catalog.IsEventOptionTextOnly(groupId, optionId))
+            {
+                return;
+            }
+
+            var providerIds = catalog.GetSelectionProviderIds(groupId, optionId);
+            if (providerIds.Count > 0)
+            {
+                foreach (var providerId in providerIds)
+                {
+                    if (!string.IsNullOrWhiteSpace(providerId) &&
+                        !providerId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        visualProviders.Add(providerId);
+                    }
+                }
+
+                return;
+            }
+
+            var resolved = catalog.ResolveGroupVisualProviderId(groupId, optionId);
+            if (!string.IsNullOrWhiteSpace(resolved) &&
+                !resolved.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                visualProviders.Add(resolved);
+            }
+        }
+
+        foreach (var update in updates)
+        {
+            AddVisualProviders(update.Key, ResolvePreviousSelectionValue(previousSelections, update.Key));
+            AddVisualProviders(update.Key, update.Value);
+        }
+
+        return visualProviders.ToArray();
+    }
 
     private static string ResolvePreviousSelectionValue(
         IReadOnlyDictionary<string, (bool HadValue, string? Value)> previousSelections,
@@ -8709,6 +8765,8 @@ internal static partial class SkinService
         internal WeakReference<SkinCatalog>? RelicCatalog { get; init; }
         internal bool IsRelicCatalog(SkinCatalog catalog) =>
             RelicCatalog?.TryGetTarget(out var owner) == true && ReferenceEquals(owner, catalog);
+        internal string? RelicGroupId { get; init; }
+        internal string? RelicOptionId { get; init; }
         internal CardFileStamp[] RelicSources { get; init; } = [];
         internal string[] RelicRoots { get; init; } = [];
         internal int RewrittenRelicUids { get; init; }

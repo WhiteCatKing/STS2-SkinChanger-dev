@@ -133,6 +133,7 @@ internal static partial class VanillaIntegritySelfCheck
         AccessTools.Field(typeof(SkinService), "RuntimeCanonicalDependencyPaths");
 
     private static int _scheduled;
+    private static Func<Action, bool> _nextProcessFrameScheduler = TryScheduleNextProcessFrameOnSceneTree;
 
     internal static bool AreSelfOverlayHooksBound() =>
         SkinServiceSyncField != null &&
@@ -360,6 +361,73 @@ internal static partial class VanillaIntegritySelfCheck
             budget ?? DefaultBudget,
             NormalizePathSet(selfOverlayPaths),
             selfOverlayIncomplete);
+    }
+
+    internal static IDisposable UseNextProcessFrameSchedulerForTests(Func<Action, bool> scheduler)
+    {
+        ArgumentNullException.ThrowIfNull(scheduler);
+        var previous = _nextProcessFrameScheduler;
+        _nextProcessFrameScheduler = scheduler;
+        return new SchedulerRestoreScope(previous);
+    }
+
+    internal static void StartRuntimeConfirmForTests(
+        IReadOnlyDictionary<string, VanillaIntegrityEntry> gameEntries,
+        IReadOnlyList<VanillaIntegrityModPack> modPacks,
+        IVanillaIntegrityVfsReader? vfsReader,
+        VanillaIntegrityBudget? budget,
+        Action<VanillaIntegrityReport> onCompleted,
+        Func<double>? elapsedMsProvider = null,
+        IReadOnlySet<string>? selfOverlayPaths = null,
+        bool selfOverlayIncomplete = false)
+    {
+        ArgumentNullException.ThrowIfNull(onCompleted);
+        var prepared = PrepareInMemoryScan(gameEntries, modPacks);
+        var runner = new RuntimeConfirmRunner(
+            prepared,
+            Stopwatch.StartNew(),
+            initialMainThreadTicks: 0,
+            initialMainThreadFrames: 1,
+            NormalizePathSet(selfOverlayPaths),
+            initialSelfOverlayComplete: !selfOverlayIncomplete,
+            vfsReader: vfsReader,
+            budget: budget,
+            elapsedMsProvider: elapsedMsProvider,
+            onCompleted: onCompleted,
+            refreshSelfOverlays: false);
+        DeferredDispatch.CallDeferred("VanillaIntegritySelfCheck.Step", runner, runner.StepOnMainThread);
+    }
+
+    private static bool TryScheduleNextProcessFrameOnSceneTree(Action callback)
+    {
+        if (Engine.GetMainLoop() is not SceneTree tree || !GodotObject.IsInstanceValid(tree))
+        {
+            return false;
+        }
+
+        return tree.Connect(
+            SceneTree.SignalName.ProcessFrame,
+            Callable.From(callback),
+            (uint)GodotObject.ConnectFlags.OneShot) == Error.Ok;
+    }
+
+    private sealed class SchedulerRestoreScope : IDisposable
+    {
+        private readonly Func<Action, bool> _previous;
+        private bool _disposed;
+
+        internal SchedulerRestoreScope(Func<Action, bool> previous) => _previous = previous;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _nextProcessFrameScheduler = _previous;
+        }
     }
 
     private static void BeginOnMainThread()
@@ -1390,6 +1458,9 @@ internal static partial class VanillaIntegritySelfCheck
         private readonly PreparedDiskScan _prepared;
         private readonly Stopwatch _totalStopwatch;
         private readonly ConfirmSession _session;
+        private readonly Func<double>? _elapsedMsProvider;
+        private readonly Action<VanillaIntegrityReport>? _onCompleted;
+        private readonly bool _refreshSelfOverlays;
         private long _mainThreadTicks;
         private int _mainThreadFrames;
 
@@ -1399,16 +1470,24 @@ internal static partial class VanillaIntegritySelfCheck
             long initialMainThreadTicks,
             int initialMainThreadFrames,
             HashSet<string> initialSelfOverlayPaths,
-            bool initialSelfOverlayComplete)
+            bool initialSelfOverlayComplete,
+            IVanillaIntegrityVfsReader? vfsReader = null,
+            VanillaIntegrityBudget? budget = null,
+            Func<double>? elapsedMsProvider = null,
+            Action<VanillaIntegrityReport>? onCompleted = null,
+            bool refreshSelfOverlays = true)
         {
             _prepared = prepared;
             _totalStopwatch = totalStopwatch;
+            _elapsedMsProvider = elapsedMsProvider;
+            _onCompleted = onCompleted;
+            _refreshSelfOverlays = refreshSelfOverlays;
             _mainThreadTicks = initialMainThreadTicks;
             _mainThreadFrames = initialMainThreadFrames;
             _session = new ConfirmSession(
                 prepared,
-                GodotVfsReader.Instance,
-                DefaultBudget,
+                vfsReader ?? GodotVfsReader.Instance,
+                budget ?? DefaultBudget,
                 initialSelfOverlayPaths,
                 selfOverlayIncomplete: !initialSelfOverlayComplete);
         }
@@ -1418,7 +1497,7 @@ internal static partial class VanillaIntegritySelfCheck
             var frameWatch = Stopwatch.StartNew();
             try
             {
-                if (_prepared.SuspectGroups.Count > 0)
+                if (_refreshSelfOverlays && _prepared.SuspectGroups.Count > 0)
                 {
                     var (matchedSelfOverlays, complete) = MatchSelfOverlayPathsInMemory(_prepared.SuspectGroups);
                     _session.MergeSelfOverlayPaths(matchedSelfOverlays, complete);
@@ -1426,7 +1505,7 @@ internal static partial class VanillaIntegritySelfCheck
 
                 var completed = _session.StepFrame(
                     isOwnedBySelfOverlay: null,
-                    elapsedMsProvider: () => frameWatch.Elapsed.TotalMilliseconds);
+                    elapsedMsProvider: _elapsedMsProvider ?? (() => frameWatch.Elapsed.TotalMilliseconds));
 
                 frameWatch.Stop();
                 _mainThreadTicks += frameWatch.ElapsedTicks;
@@ -1434,10 +1513,16 @@ internal static partial class VanillaIntegritySelfCheck
 
                 if (!completed)
                 {
-                    // [延迟调度] 原触发时机：单帧 2.5 ms / 2 MiB 预算用尽且仍有剩余待检项；最早可执行帧：下一帧；
+                    // [延迟调度/ProcessFrame] 原触发时机：单帧 2.5 ms / 2 MiB 预算用尽且仍有剩余待检项；
+                    // 最早可执行帧：下一 ProcessFrame（避免 CallDeferred 在同一 idle 周期被连续排空）；
                     // 顺序依赖：主线程单链串行推进同一 ConfirmSession；能否合并：单链串行无需合并；
-                    // 重试上限：按待检条目总数有界收敛；取消条件：completed == true 或异常释放 _session。
-                    DeferredDispatch.CallDeferred("VanillaIntegritySelfCheck.Step", this, StepOnMainThread);
+                    // 重试上限：按待检条目总数有界收敛；取消条件：completed == true、主循环不可用或异常释放 _session。
+                    var nextStep = DeferredDispatch.WrapCallback("VanillaIntegritySelfCheck.Step", this, StepOnMainThread);
+                    if (!_nextProcessFrameScheduler(nextStep))
+                    {
+                        _session.Dispose();
+                    }
+
                     return;
                 }
 
@@ -1449,6 +1534,12 @@ internal static partial class VanillaIntegritySelfCheck
                     TicksToRoundedMs(_mainThreadTicks),
                     _mainThreadFrames);
                 _session.Dispose();
+
+                if (_onCompleted != null)
+                {
+                    _onCompleted(report);
+                    return;
+                }
 
                 var lines = FormatLogLines(report);
                 for (var i = 0; i < lines.Count; i++)

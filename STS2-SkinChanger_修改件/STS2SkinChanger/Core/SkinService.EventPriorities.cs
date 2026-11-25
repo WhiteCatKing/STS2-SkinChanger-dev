@@ -192,15 +192,21 @@ internal static partial class SkinService
         while (true)
         {
             desired = pools.ToDictionary(p => p.Key, p => EventSkinPriorityPolicy.Resolve(p.Value.Entries,
-                p.Value.Group.Options.Where(o => !excluded.Contains(catalog.ResolveVisualProviderId(o.Id))).Select(o => o.Id)),
+                p.Value.Group.Options
+                    .Where(o => o.IsTextOnly || !excluded.Contains(catalog.ResolveGroupVisualProviderId(p.Key, o.Id)))
+                    .Select(o => o.Id)),
                 StringComparer.OrdinalIgnoreCase);
             // Match monster priorities: a non-isolatable runtime provider is eligible only
             // when every group it owns follows this same provider, never by overriding a
             // manual event or a character/merchant outside the event category system.
-            var invalid = desired.Values.Select(catalog.ResolveVisualProviderId).Where(catalog.ProviderUsesFullRuntime)
+            // Text-only event options carry no visual ownership in that event group, so they
+            // do not participate in full-runtime exclusion or cross-group linking.
+            var invalid = desired
+                .Select(pair => catalog.ResolveGroupVisualProviderId(pair.Key, pair.Value))
+                .Where(catalog.ProviderUsesFullRuntime)
                 .Distinct(StringComparer.OrdinalIgnoreCase).Where(provider => catalog.GetFullRuntimeProviderGroups(provider)
                     .Any(id => !desired.TryGetValue(id, out var option) ||
-                        !catalog.ResolveVisualProviderId(option).Equals(provider, StringComparison.OrdinalIgnoreCase)))
+                        !catalog.ResolveGroupVisualProviderId(id, option).Equals(provider, StringComparison.OrdinalIgnoreCase)))
                 .Where(excluded.Add).ToArray();
             if (invalid.Length == 0) break;
         }

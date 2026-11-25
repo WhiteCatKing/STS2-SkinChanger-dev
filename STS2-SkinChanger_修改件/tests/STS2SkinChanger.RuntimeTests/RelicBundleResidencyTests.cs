@@ -171,6 +171,17 @@ internal static class RelicBundleResidencyTests
             catch (AppearanceResourceUnavailableException) { }
             Require(!bundles.Contains(Group) && _nativeLoads == oldLoads,
                 "A replaced source must retire the bundle without decoding the stale catalog bytes.");
+
+            VerifyAdditiveWorkshopHotRegistrationRelicCarryover(
+                root,
+                game,
+                binary,
+                service,
+                setCatalog,
+                setConfig,
+                bundles,
+                () => writes,
+                Invoke);
         }
         finally
         {
@@ -189,7 +200,269 @@ internal static class RelicBundleResidencyTests
             storage.Dispose();
             root.Delete(recursive: true);
         }
-        Console.WriteLine("Relic bundle residency passed: shared preparation, binary UID isolation, lookup churn, selection, pressure and source change.");
+        Console.WriteLine("Relic bundle residency passed: shared preparation, binary UID isolation, lookup churn, selection, pressure, source change, and additive Workshop carryover.");
+    }
+
+    private static void VerifyAdditiveWorkshopHotRegistrationRelicCarryover(
+        DirectoryInfo root,
+        string gamePath,
+        byte[] binarySlice,
+        Type service,
+        MethodInfo setCatalog,
+        MethodInfo setConfig,
+        IDictionary bundles,
+        Func<int> getWrites,
+        Func<string, object?[], object?> invoke)
+    {
+        var sessionPreparedField = AccessTools.Field(service, "_sessionPreparedCount")
+                                   ?? throw new InvalidOperationException("找不到 SkinService._sessionPreparedCount。");
+        var workshopGamePackField = AccessTools.Field(service, "_workshopGamePack")!;
+        var workshopDescriptorsField = AccessTools.Field(service, "_workshopDescriptors")!;
+        var workshopStampsField = AccessTools.Field(service, "_workshopSourceStamps")!;
+        var previousGamePack = workshopGamePackField.GetValue(null);
+        var previousDescriptors = workshopDescriptorsField.GetValue(null);
+        var previousStamps = workshopStampsField.GetValue(null);
+
+        var relicPck = Path.Combine(root.FullName, "workshop_relic_old.pck");
+        var unrelatedPck = Path.Combine(root.FullName, "workshop_unrelated_new.pck");
+        var prevWriter = PckArchive.WriteOutput;
+        PckArchive.WriteOutput = null;
+        try
+        {
+            PckArchive.Write(relicPck, new Dictionary<string, byte[]>
+            {
+                [Sprite + ".remap"] = Encoding.UTF8.GetBytes("[remap]\npath=\"" + Payload + "\"\n"),
+                [Payload] = binarySlice,
+                [Atlas] = FakePng(),
+                [Big] = FakePng()
+            });
+            PckArchive.Write(unrelatedPck, new Dictionary<string, byte[]>
+            {
+                ["res://images/unrelated/extra.png"] = FakePng()
+            });
+        }
+        finally
+        {
+            PckArchive.WriteOutput = prevWriter;
+        }
+
+        var openedArchives = new List<PckArchive>();
+        SkinCatalog BuildRelicFixtureCatalog(string pckPath, bool includeBigIcon, bool includeUnrelated)
+        {
+            var catalog = SkinCatalog.Build(gamePath, []);
+            var archive = PckArchive.Open(pckPath);
+            openedArchives.Add(archive);
+            var group = new SkinGroup(Group, Group);
+            var assets = new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
+            void AddAsset(string path, params string[] archivePaths)
+            {
+                var asset = new ResourceAsset(path);
+                foreach (var file in archivePaths) asset.AddFile(archive, file);
+                assets.Add(path, asset);
+            }
+            AddAsset(Sprite, Sprite + ".remap", Payload);
+            AddAsset(Atlas, Atlas);
+            if (includeBigIcon) AddAsset(Big, Big);
+            group.Options.Add(new("ws-relic", "Workshop Relic", assets));
+            group.Options.Add(new("ws-other", "Other Relic", assets));
+            ((List<SkinGroup>)catalog.Groups).Add(group);
+            if (includeUnrelated)
+            {
+                var unrelatedGroup = new SkinGroup("silent", "Silent");
+                unrelatedGroup.Options.Add(new("ws-unrelated", "Unrelated Skin", new Dictionary<string, ResourceAsset>()));
+                ((List<SkinGroup>)catalog.Groups).Add(unrelatedGroup);
+            }
+            return catalog;
+        }
+
+        static Dictionary<string, (long Length, DateTime Modified)> BuildStamps(params string[] paths) =>
+            paths.ToDictionary(
+                path => path,
+                path => { var info = new FileInfo(path); return (info.Length, info.LastWriteTimeUtc); },
+                StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            invoke("ClearRelicBundleResidency", []);
+            ((IDictionary)AccessTools.Field(service, "PreparedRuntimeOverlays").GetValue(null)!).Clear();
+            ((IDictionary)AccessTools.Field(service, "LastPreparedRuntimeOverlays").GetValue(null)!).Clear();
+
+            using var baselineCatalog = BuildRelicFixtureCatalog(relicPck, includeBigIcon: true, includeUnrelated: false);
+            var config = new SkinConfig();
+            config.Selections[Group] = "ws-relic";
+            setCatalog.Invoke(null, [baselineCatalog]);
+            setConfig.Invoke(null, [config]);
+            var baseDescriptors = new[] { new SkinModDescriptor("ws-relic", "Workshop Relic", relicPck, false, root.FullName, false) };
+            workshopDescriptorsField.SetValue(null, baseDescriptors);
+            workshopStampsField.SetValue(null, BuildStamps(relicPck));
+
+            // 1) Warm relic atlas on baseline catalog.
+            var warmSmall = SkinService.GetRelicIconOverride(Sprite);
+            var warmBig = SkinService.GetRelicBigIconOverride(Big);
+            Require(warmSmall is AtlasTexture && warmBig != null && bundles.Contains(Group),
+                "热身阶段应成功解码并驻留遗物图集。");
+
+            var writesBeforeSwap = getWrites();
+            var mountsBeforeSwap = _mounts;
+            var loadsBeforeSwap = _nativeLoads;
+            var quotaBeforeSwap = (int)sessionPreparedField.GetValue(null)!;
+
+            // 2) Confirmed additive Workshop hot-registration of an unrelated new skin.
+            using var additiveCatalog = BuildRelicFixtureCatalog(relicPck, includeBigIcon: true, includeUnrelated: true);
+            var combinedDescriptors = baseDescriptors
+                .Append(new SkinModDescriptor("ws-unrelated", "Unrelated Skin", unrelatedPck, false, root.FullName, false))
+                .ToArray();
+            var nextConfig = config.CloneForBundleTransaction();
+            invoke("CommitAdditiveWorkshopCatalogSwapLocked", [
+                baselineCatalog,
+                additiveCatalog,
+                nextConfig,
+                combinedDescriptors,
+                BuildStamps(relicPck, unrelatedPck)
+            ]);
+
+            var afterSmall = SkinService.GetRelicIconOverride(Sprite);
+            var afterBig = SkinService.GetRelicBigIconOverride(Big);
+            var afterPrepared = invoke("PrepareSelectedRelicBundle", [additiveCatalog, Group, "ws-relic"]);
+            var quotaAfterSwap = (int)sessionPreparedField.GetValue(null)!;
+
+            Require(ReferenceEquals(afterSmall, warmSmall) && ReferenceEquals(afterBig, warmBig) && afterPrepared != null,
+                "追加无关工坊订阅后，原遗物图集必须直接复用原有已热驻留实例。");
+            Require(getWrites() == writesBeforeSwap,
+                $"追加无关工坊订阅不得重建遗物 PCK：before={writesBeforeSwap}, after={getWrites()}");
+            Require(_mounts == mountsBeforeSwap,
+                $"追加无关工坊订阅不得重新挂载遗物 PCK：before={mountsBeforeSwap}, after={_mounts}");
+            Require(_nativeLoads == loadsBeforeSwap,
+                $"追加无关工坊订阅不得重新解码遗物贴图：before={loadsBeforeSwap}, after={_nativeLoads}");
+            Require(quotaAfterSwap == quotaBeforeSwap,
+                $"追加无关工坊订阅不得重复消耗会话准备配额：before={quotaBeforeSwap}, after={quotaAfterSwap}");
+
+            // 3) If residency was trimmed by pressure (PreparedRuntimeOverlays still warm), another additive
+            //    swap still preserves the prepared PCK so PrepareSelectedRelicBundle does not rebuild or spend quota.
+            invoke("ClearRelicBundleResidency", []);
+            using var additiveCatalog2 = BuildRelicFixtureCatalog(relicPck, includeBigIcon: true, includeUnrelated: true);
+            invoke("CommitAdditiveWorkshopCatalogSwapLocked", [
+                additiveCatalog,
+                additiveCatalog2,
+                nextConfig.CloneForBundleTransaction(),
+                combinedDescriptors,
+                BuildStamps(relicPck, unrelatedPck)
+            ]);
+            var rewarmedPrepared = invoke("PrepareSelectedRelicBundle", [additiveCatalog2, Group, "ws-relic"]);
+            Require(rewarmedPrepared != null &&
+                    getWrites() == writesBeforeSwap &&
+                    (int)sessionPreparedField.GetValue(null)! == quotaBeforeSwap,
+                "驻留被压力清理后仅留准备项时，追加热登记仍须保留已验证的准备 PCK 且不消耗新配额。");
+
+            // Re-warm bundle on additiveCatalog2 for invalidation checks below.
+            var rewarmedSmall = SkinService.GetRelicIconOverride(Sprite);
+            Require(rewarmedSmall != null && bundles.Contains(Group), "准备项复热应恢复驻留。");
+
+            // 4) Negative case A: root resource set changed in new catalog -> MUST invalidate & rebuild.
+            var writesBeforeRootChange = getWrites();
+            var loadsBeforeRootChange = _nativeLoads;
+            using var changedRootsCatalog = BuildRelicFixtureCatalog(relicPck, includeBigIcon: false, includeUnrelated: true);
+            invoke("CommitAdditiveWorkshopCatalogSwapLocked", [
+                additiveCatalog2,
+                changedRootsCatalog,
+                nextConfig.CloneForBundleTransaction(),
+                combinedDescriptors,
+                BuildStamps(relicPck, unrelatedPck)
+            ]);
+            Require(!bundles.Contains(Group),
+                "新目录中遗物根资源集合变化时，必须淘汰旧驻留而不是继续复用。");
+            var rebuiltAfterRootChange = SkinService.GetRelicIconOverride(Sprite);
+            Require(rebuiltAfterRootChange != null &&
+                    getWrites() == writesBeforeRootChange + 1 &&
+                    _nativeLoads > loadsBeforeRootChange,
+                "根资源集合变化后应按新目录重建并解码。");
+
+            // 5) Negative case B: selection changed before swap -> MUST evict old residency.
+            var changedSelectionConfig = nextConfig.CloneForBundleTransaction();
+            changedSelectionConfig.Selections[Group] = "ws-other";
+            using var selectionSwapCatalog = BuildRelicFixtureCatalog(relicPck, includeBigIcon: false, includeUnrelated: true);
+            invoke("CommitAdditiveWorkshopCatalogSwapLocked", [
+                changedRootsCatalog,
+                selectionSwapCatalog,
+                changedSelectionConfig,
+                combinedDescriptors,
+                BuildStamps(relicPck, unrelatedPck)
+            ]);
+            Require(!bundles.Contains(Group),
+                "选择项发生变化时，旧选择的遗物驻留不得被转移。");
+
+            // 6) Negative case C: source file modified on disk before swap -> MUST reject carryover.
+            var warmForSourceCheck = SkinService.GetRelicIconOverride(Sprite);
+            Require(warmForSourceCheck != null && bundles.Contains(Group), "来源变更前应处于驻留态。");
+            File.SetLastWriteTimeUtc(relicPck, File.GetLastWriteTimeUtc(relicPck).AddMinutes(3));
+            using var modifiedSourceCatalog = BuildRelicFixtureCatalog(relicPck, includeBigIcon: false, includeUnrelated: true);
+            invoke("CommitAdditiveWorkshopCatalogSwapLocked", [
+                selectionSwapCatalog,
+                modifiedSourceCatalog,
+                changedSelectionConfig.CloneForBundleTransaction(),
+                combinedDescriptors,
+                BuildStamps(relicPck, unrelatedPck)
+            ]);
+            Require(!bundles.Contains(Group),
+                "旧遗物源包文件签名变化时，热登记转移必须拒绝复用并淘汰旧驻留。");
+
+            // 7) Negative case D: file open throws IOException during carryover source verification ->
+            //    degrade cleanly to cache miss without throwing or disposing the newly published Catalog.
+            var ioConfig = nextConfig.CloneForBundleTransaction();
+            ioConfig.Selections[Group] = "ws-relic";
+            using var ioBaselineCatalog = BuildRelicFixtureCatalog(relicPck, includeBigIcon: true, includeUnrelated: false);
+            setCatalog.Invoke(null, [ioBaselineCatalog]);
+            setConfig.Invoke(null, [ioConfig]);
+            workshopDescriptorsField.SetValue(null, baseDescriptors);
+            workshopStampsField.SetValue(null, BuildStamps(relicPck));
+            workshopGamePackField.SetValue(null, null);
+            var warmBeforeIo = SkinService.GetRelicIconOverride(Sprite);
+            Require(warmBeforeIo != null && bundles.Contains(Group), "I/O 异常对照前遗物应处于驻留态。");
+
+            var lockedProbePath = Path.Combine(root.FullName, "locked_game_probe.pck");
+            var preparedMap = (IDictionary)AccessTools.Field(service, "PreparedRuntimeOverlays").GetValue(null)!;
+            var preparedKeysBeforeIo = preparedMap.Keys.Cast<string>().ToArray();
+            Require(preparedKeysBeforeIo.Length > 0, "I/O 异常对照前应存在已准备的遗物覆盖项。");
+
+            using var ioPublishedCatalog = BuildRelicFixtureCatalog(relicPck, includeBigIcon: true, includeUnrelated: true);
+            using (var exclusiveLock = new FileStream(
+                       lockedProbePath,
+                       FileMode.Create,
+                       System.IO.FileAccess.ReadWrite,
+                       FileShare.None))
+            {
+                exclusiveLock.WriteByte(1);
+                exclusiveLock.Flush();
+                workshopGamePackField.SetValue(null, lockedProbePath);
+                // Must NOT throw IOException even though CaptureRelicBundleSources cannot open lockedProbePath.
+                invoke("CommitAdditiveWorkshopCatalogSwapLocked", [
+                    ioBaselineCatalog,
+                    ioPublishedCatalog,
+                    ioConfig.CloneForBundleTransaction(),
+                    combinedDescriptors,
+                    BuildStamps(relicPck, unrelatedPck)
+                ]);
+            }
+
+            workshopGamePackField.SetValue(null, null);
+            Require(ReferenceEquals(SkinService.Catalog, ioPublishedCatalog),
+                "验源打开文件抛 I/O 时，新目录必须保持已发布状态。");
+            Require(!bundles.Contains(Group) && preparedKeysBeforeIo.All(k => !preparedMap.Contains(k)),
+                "验源打开文件抛 I/O 时，受影响遗物项应降级为缓存未命中并从准备与驻留表中淘汰。");
+            var reloadedAfterIo = SkinService.GetRelicIconOverride(Sprite);
+            Require(reloadedAfterIo != null && bundles.Contains(Group),
+                "新目录未被误释放，I/O 恢复后应能在已发布新目录上正常重建并加载遗物图集。");
+        }
+        finally
+        {
+            foreach (var opened in openedArchives)
+            {
+                try { opened.Dispose(); } catch { }
+            }
+            workshopGamePackField.SetValue(null, previousGamePack);
+            workshopDescriptorsField.SetValue(null, previousDescriptors);
+            workshopStampsField.SetValue(null, previousStamps);
+        }
     }
 
     internal static void Audit(string game, string provider)

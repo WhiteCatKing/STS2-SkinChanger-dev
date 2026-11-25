@@ -2236,7 +2236,7 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyDictionary<string, string> selections) =>
         _groups
             .Where(group => selections.TryGetValue(group.Id, out var selectedId))
-            .Select(group => ResolveVisualProviderId(selections[group.Id]))
+            .Select(group => ResolveGroupVisualProviderId(group.Id, selections[group.Id]))
             .Where(providerId => ProviderUsesInteractiveRuntime(providerId) ||
                 ProviderUsesInstanceAnimation(providerId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -2556,6 +2556,18 @@ internal sealed partial class SkinCatalog : IDisposable
             SelectionUsesProvider(groupId, selectedId, providerId));
     }
 
+    /// <summary>
+    /// Resolves the visual provider ID for a specific (group, option) choice. A text-only event
+    /// option has no visual ownership in that event group even when the same mod is a full-runtime
+    /// DLL provider elsewhere, so it returns <see cref="BaseOptionId"/> for visual linking/swapping.
+    /// </summary>
+    public string ResolveGroupVisualProviderId(string groupId, string? optionId) =>
+        string.IsNullOrWhiteSpace(optionId) ||
+        optionId.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase) ||
+        IsEventOptionTextOnly(groupId, optionId)
+            ? BaseOptionId
+            : ResolveVisualProviderId(optionId);
+
     public IReadOnlyDictionary<string, string> BuildVisualSelectionTransaction(
         string groupId,
         string optionId,
@@ -2568,7 +2580,7 @@ internal sealed partial class SkinCatalog : IDisposable
             return updates;
         }
 
-        var requestedProviderId = ResolveVisualProviderId(optionId);
+        var requestedProviderId = ResolveGroupVisualProviderId(groupId, optionId);
         var isCompanion = IsCompanionGroup(groupId);
         var targetGroupIds = RuntimeProviderScopePolicy.ResolveCharacterSelectionTargets(
             ProviderUsesFullRuntime(requestedProviderId),
@@ -2576,7 +2588,7 @@ internal sealed partial class SkinCatalog : IDisposable
             groupId);
         var displacedProviders = targetGroupIds
             .Select(targetGroupId => selections.TryGetValue(targetGroupId, out var selectedId)
-                ? ResolveVisualProviderId(selectedId)
+                ? ResolveGroupVisualProviderId(targetGroupId, selectedId)
                 : null)
             .Where(providerId =>
                 providerId != null &&

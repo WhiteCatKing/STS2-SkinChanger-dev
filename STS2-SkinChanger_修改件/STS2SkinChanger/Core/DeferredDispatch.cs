@@ -296,7 +296,7 @@ internal static class DeferredDispatch
         {
             lock (Sync)
             {
-                streak = AdvanceStreakLocked(key, executeFrame, nowUtc, isSelfReentry);
+                streak = AdvanceStreakLocked(key, executeFrame, nowUtc, isSelfReentry, isPoll);
                 if (streak > _reentrancyWarnThreshold && WarnedReentrancyKeys.Add(key))
                 {
                     warningMessage =
@@ -459,14 +459,21 @@ internal static class DeferredDispatch
         TaskKey key,
         ulong executeFrame,
         DateTime nowUtc,
-        bool isSelfReentry)
+        bool isSelfReentry,
+        bool isPoll)
     {
         if (ReentrancyStates.TryGetValue(key, out var existing))
         {
-            var isContinuous =
-                isSelfReentry ||
-                (executeFrame >= existing.LastExecuteFrame && executeFrame - existing.LastExecuteFrame <= 2) ||
-                (executeFrame == 0 && existing.LastExecuteFrame == 0 && (nowUtc - existing.LastExecuteUtc) <= TimeSpan.FromMilliseconds(250));
+            var isContinuous = isPoll
+                // Periodic / per-frame polling (e.g. FakeMerchantEventFrame awaiting Spine bounds
+                // across ProcessFrame) is legitimate cross-frame waiting; only count recursive
+                // self-reentry or repeated invocations within the same frame/idle as reentrancy.
+                ? isSelfReentry ||
+                  (executeFrame == existing.LastExecuteFrame &&
+                   (executeFrame != 0 || (nowUtc - existing.LastExecuteUtc) <= TimeSpan.FromMilliseconds(250)))
+                : isSelfReentry ||
+                  (executeFrame >= existing.LastExecuteFrame && executeFrame - existing.LastExecuteFrame <= 2) ||
+                  (executeFrame == 0 && existing.LastExecuteFrame == 0 && (nowUtc - existing.LastExecuteUtc) <= TimeSpan.FromMilliseconds(250));
             var nextStreak = isContinuous ? existing.Streak + 1 : 1;
             ReentrancyStates[key] = new ReentrancyState(executeFrame, nowUtc, nextStreak);
             return nextStreak;

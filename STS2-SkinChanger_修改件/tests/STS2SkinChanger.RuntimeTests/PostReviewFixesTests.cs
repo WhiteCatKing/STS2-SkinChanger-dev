@@ -36,6 +36,7 @@ internal static class PostReviewFixesTests
     private static PackedScene? _stubReplacementScene;
     private static Texture2D? _stubLoadedEventTexture;
     private static Assembly? _stubActiveMultiAssembly;
+    private static readonly Dictionary<string, Assembly> StubActiveAssembliesByProvider = new(StringComparer.OrdinalIgnoreCase);
     private static string? _stubConfigPath;
     private static string? _stubLanguage;
     private static int _runtimeSceneLoadCalls;
@@ -57,12 +58,13 @@ internal static class PostReviewFixesTests
         {
             VerifyEventBackgroundSceneDoubleGuardAndNineAncients();
             VerifyTextOnlyEventOptionsDisplayNoRepackAndFollowCategory();
+            VerifyHybridFullRuntimeDllTextOnlyEventIsolation();
             VerifyFakeMerchantBattleGroupClearsTextOnlyWhenTentAssetsMerged();
             VerifyEventRoomVfxDoesNotDuplicateAcrossTextOnlySwitches();
             VerifyApplySelectionUsesPreviousSelectionsForReassertAndCacheReset();
             VerifyNewlyGuardedHooksIsolateExceptions();
             VerifyFakeMerchantBackgroundNudgeRequiresDebugEnv();
-            Console.WriteLine("Post-review fixes passed: event background double guard (ordinary skipped + 9 Ancients preserved), text-only event detection/localization/no-repack/follow-category, fake-merchant battle/sale/punch-off text-only accuracy, event room VFX non-duplication, ApplySelection previous-selection reassert/cache-reset, newly guarded hook isolation, and STS2SC_DEBUG nudge gate.");
+            Console.WriteLine("Post-review fixes passed: event background double guard (ordinary skipped + 9 Ancients preserved), text-only event detection/localization/no-repack/follow-category, hybrid full-runtime DLL text-only isolation, fake-merchant battle/sale/punch-off text-only accuracy, event room VFX non-duplication, ApplySelection previous-selection reassert/cache-reset, newly guarded hook isolation, and STS2SC_DEBUG nudge gate.");
         }
         finally
         {
@@ -501,6 +503,304 @@ internal static class PostReviewFixesTests
             _suppressMountOverlay = false;
             _runtimeResourceLoadCalls = 0;
             _eventLoadTextureCalls = 0;
+            _mountOverlayCalls = 0;
+            _prepareOverlayCalls = 0;
+            directory.Delete(true);
+        }
+    }
+
+    private static void VerifyHybridFullRuntimeDllTextOnlyEventIsolation()
+    {
+        // Regression for hybrid full-runtime DLL packs that own non-event visual groups AND also
+        // modify only text for an ordinary event (IsTextOnly=true):
+        // 1) Direct selection of the text-only event option must not link/mutate non-event groups or mount overlays.
+        // 2) Switching away to another text-only or base option must not displace the provider's non-event groups or request full reassert.
+        // 3) Region-follow must still select the text-only option without excluding it for owning non-event groups, while still excluding visual event options of that same full-runtime provider.
+        var directory = Directory.CreateTempSubdirectory("sc-hybrid-dll-text-only-event-");
+        var harmony = new Harmony("Gurio.SkinChanger.Tests.HybridDllTextOnlyEvent");
+        var oldCatalog = SkinService.Catalog;
+        var oldConfig = SkinService.Config;
+        var reassertField = AccessTools.Field(typeof(SkinService), "_needsFullOverlayReassert")
+                            ?? throw new InvalidOperationException("找不到 SkinService._needsFullOverlayReassert。");
+        var oldReassert = (bool)reassertField.GetValue(null)!;
+        try
+        {
+            var sceneBytes = Encoding.UTF8.GetBytes("[gd_scene format=3]\n[node name=\"Visuals\" type=\"Node2D\"]\n");
+            var baseline = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["res://scenes/creature_visuals/jaw_worm.tscn"] = sceneBytes,
+                ["res://scenes/creature_visuals/gremlin_nob.tscn"] = sceneBytes
+            };
+            AddSyntheticEventTexture(baseline, "res://images/events/punch_off.png", 1);
+            AddSyntheticEventTexture(baseline, "res://images/events/alpha.png", 2);
+            baseline["res://localization/eng/events.json"] = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["PUNCH_OFF.title"] = "Punch Off",
+                ["PUNCH_OFF.pages.INITIAL.description"] = "Original punch body",
+                ["ALPHA.title"] = "Alpha",
+                ["ALPHA.pages.INITIAL.description"] = "Original alpha body"
+            }));
+            baseline["res://localization/zhs/events.json"] = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["PUNCH_OFF.title"] = "重拳出击",
+                ["PUNCH_OFF.pages.INITIAL.description"] = "原版重拳正文",
+                ["ALPHA.title"] = "事件甲",
+                ["ALPHA.pages.INITIAL.description"] = "原版甲正文"
+            }));
+
+            // HybridFullDll: full-runtime DLL owning jaw_worm + gremlin_nob, visual+text on event:alpha,
+            // and TEXT-ONLY on event:punch_off.
+            var hybridFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["res://scenes/creature_visuals/jaw_worm.tscn"] = Encoding.UTF8.GetBytes("[gd_scene format=3]\n[node name=\"HybridJaw\" type=\"Node2D\"]\n"),
+                ["res://scenes/creature_visuals/gremlin_nob.tscn"] = Encoding.UTF8.GetBytes("[gd_scene format=3]\n[node name=\"HybridNob\" type=\"Node2D\"]\n")
+            };
+            AddSyntheticEventTexture(hybridFiles, "res://images/events/alpha.png", 7);
+            hybridFiles["res://hybrid/localization/eng/events.json"] = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["ALPHA.pages.INITIAL.description"] = "Hybrid visual alpha body",
+                ["PUNCH_OFF.pages.INITIAL.description"] = "Hybrid text-only punch body"
+            }));
+            hybridFiles["res://hybrid/localization/zhs/events.json"] = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["PUNCH_OFF.pages.INITIAL.description"] = "混合包仅文本重拳正文"
+            }));
+
+            // OtherFullDll: another full-runtime DLL owning jaw_worm + gremlin_nob (active on non-event groups).
+            var otherFullFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["res://scenes/creature_visuals/jaw_worm.tscn"] = Encoding.UTF8.GetBytes("[gd_scene format=3]\n[node name=\"OtherJaw\" type=\"Node2D\"]\n"),
+                ["res://scenes/creature_visuals/gremlin_nob.tscn"] = Encoding.UTF8.GetBytes("[gd_scene format=3]\n[node name=\"OtherNob\" type=\"Node2D\"]\n")
+            };
+
+            // PureTextPack: non-DLL text-only option for event:punch_off.
+            var pureTextFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["res://pure/localization/eng/events.json"] = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Dictionary<string, string>
+                {
+                    ["PUNCH_OFF.pages.INITIAL.description"] = "Pure text punch body"
+                }))
+            };
+
+            // VisualPunchPack: visual (portrait + text) event pack for event:punch_off.
+            var visualPunchFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            AddSyntheticEventTexture(visualPunchFiles, "res://images/events/punch_off.png", 12);
+            visualPunchFiles["res://vispunch/localization/eng/events.json"] = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["PUNCH_OFF.pages.INITIAL.description"] = "Visual punch body"
+            }));
+
+            var gamePath = Path.Combine(directory.FullName, "game.pck");
+            var hybridPath = Path.Combine(directory.FullName, "hybrid.pck");
+            var otherFullPath = Path.Combine(directory.FullName, "other_full.pck");
+            var pureTextPath = Path.Combine(directory.FullName, "pure_text.pck");
+            var visualPunchPath = Path.Combine(directory.FullName, "visual_punch.pck");
+            PckArchive.Write(gamePath, baseline);
+            PckArchive.Write(hybridPath, hybridFiles);
+            PckArchive.Write(otherFullPath, otherFullFiles);
+            PckArchive.Write(pureTextPath, pureTextFiles);
+            PckArchive.Write(visualPunchPath, visualPunchFiles);
+
+            var descriptors = new[]
+            {
+                new SkinModDescriptor("HybridFullDll", "HybridFullDll", hybridPath, AffectsGameplay: false, RootPath: directory.FullName, HasDll: true),
+                new SkinModDescriptor("OtherFullDll", "OtherFullDll", otherFullPath, AffectsGameplay: false, RootPath: directory.FullName, HasDll: true),
+                new SkinModDescriptor("PureTextPack", "PureTextPack", pureTextPath, AffectsGameplay: false, RootPath: directory.FullName, HasDll: false),
+                new SkinModDescriptor("VisualPunchPack", "VisualPunchPack", visualPunchPath, AffectsGameplay: false, RootPath: directory.FullName, HasDll: false)
+            };
+            using var catalog = SkinCatalog.Build(gamePath, descriptors);
+
+            Require(catalog.ProviderUsesFullRuntime("HybridFullDll") &&
+                    catalog.GetFullRuntimeProviderGroups("HybridFullDll").Count == 2,
+                $"夹具中的 HybridFullDll 必须是非事件多分组全量运行时提供者，实际分组数={catalog.GetFullRuntimeProviderGroups("HybridFullDll").Count}。");
+            Require(catalog.IsEventOptionTextOnly("event:punch_off", "HybridFullDll") &&
+                    !catalog.IsEventOptionTextOnly("event:alpha", "HybridFullDll"),
+                "HybridFullDll 在 event:punch_off 上必须是仅文本项，在 event:alpha 上必须是有图非仅文本项。");
+
+            _stubConfigPath = Path.Combine(directory.FullName, "hybrid_config.json");
+            _suppressMountOverlay = true;
+            _mountOverlayCalls = 0;
+            _prepareOverlayCalls = 0;
+            harmony.Patch(
+                AccessTools.PropertyGetter(typeof(SkinService), "ConfigPath"),
+                prefix: new HarmonyMethod(typeof(PostReviewFixesTests), nameof(StubConfigPath)));
+            harmony.Patch(
+                AccessTools.Method(typeof(SkinService), "MountOverlay", [typeof(IReadOnlySet<string>), typeof(bool)]),
+                prefix: new HarmonyMethod(typeof(PostReviewFixesTests), nameof(CountAndSuppressMountOverlay)));
+            harmony.Patch(
+                AccessTools.Method(typeof(SkinService), "GetOrPrepareRuntimeOverlay"),
+                prefix: new HarmonyMethod(typeof(PostReviewFixesTests), nameof(FailIfPrepareRuntimeOverlayCalled)));
+
+            var config = new SkinConfig();
+            config.Selections["jaw_worm"] = "OtherFullDll";
+            config.Selections["gremlin_nob"] = "OtherFullDll";
+            config.Selections["event:punch_off"] = SkinCatalog.BaseOptionId;
+            config.Selections["event:alpha"] = SkinCatalog.BaseOptionId;
+            config.VisualProviderPriority.Add("OtherFullDll");
+            AccessTools.Property(typeof(SkinService), nameof(SkinService.Catalog)).SetValue(null, catalog);
+            AccessTools.Property(typeof(SkinService), nameof(SkinService.Config)).SetValue(null, config);
+            reassertField.SetValue(null, false);
+
+            // Case 1: Direct selection of HybridFullDll's text-only event option.
+            Require(SkinService.ApplySelection("event:punch_off", "HybridFullDll"),
+                "直接选择混合 DLL 包的仅文本事件项应成功：" + SkinService.LastError);
+            Require(config.Selections["event:punch_off"] == "HybridFullDll",
+                "直接选择后 event:punch_off 应切到 HybridFullDll。");
+            Require(config.Selections["jaw_worm"] == "OtherFullDll" &&
+                    config.Selections["gremlin_nob"] == "OtherFullDll",
+                $"选择混合 DLL 包的仅文本事件项绝不能联动或重置其它非事件分组：jaw_worm={config.Selections["jaw_worm"]}, gremlin_nob={config.Selections["gremlin_nob"]}");
+            Require(_mountOverlayCalls == 0 && _prepareOverlayCalls == 0 && !(bool)reassertField.GetValue(null)!,
+                $"直接选择仅文本事件项不得挂载覆盖层、生成私有包或触发全量重申：mounts={_mountOverlayCalls}, prepares={_prepareOverlayCalls}, reassert={reassertField.GetValue(null)}");
+            Require(!config.VisualProviderPriority.Contains("HybridFullDll", StringComparer.OrdinalIgnoreCase),
+                "仅文本事件项不得写入 VisualProviderPriority。");
+            Require(catalog.TryResolveEventText("PUNCH_OFF.pages.INITIAL.description", "zhs", config.Selections, out var directZh) &&
+                    directZh == "混合包仅文本重拳正文",
+                $"直接选择后事件文本必须正常生效，实际：{directZh}");
+
+            // Case 2: Switch away from HybridFullDll's text-only event option while HybridFullDll IS selected on non-event groups.
+            config.Selections["jaw_worm"] = "HybridFullDll";
+            config.Selections["gremlin_nob"] = "HybridFullDll";
+            config.VisualProviderPriority.Clear();
+            config.VisualProviderPriority.Add("HybridFullDll");
+            _mountOverlayCalls = 0;
+            _prepareOverlayCalls = 0;
+            reassertField.SetValue(null, false);
+
+            Require(SkinService.ApplySelection("event:punch_off", "PureTextPack"),
+                "从混合 DLL 仅文本事件项切到另一个仅文本项应成功：" + SkinService.LastError);
+            Require(config.Selections["event:punch_off"] == "PureTextPack" &&
+                    config.Selections["jaw_worm"] == "HybridFullDll" &&
+                    config.Selections["gremlin_nob"] == "HybridFullDll",
+                $"切走混合 DLL 仅文本事件项时不得把该包拥有的非事件分组退回原版：jaw_worm={config.Selections["jaw_worm"]}, gremlin_nob={config.Selections["gremlin_nob"]}");
+            Require(_mountOverlayCalls == 0 && _prepareOverlayCalls == 0 && !(bool)reassertField.GetValue(null)!,
+                $"切走混合 DLL 仅文本事件项不得触发覆盖挂载或 FindReplacedMultiGroupFullRuntimeProvider 全量重申：mounts={_mountOverlayCalls}, reassert={reassertField.GetValue(null)}");
+            Require(catalog.TryResolveEventText("PUNCH_OFF.pages.INITIAL.description", "eng", config.Selections, out var switchedEn) &&
+                    switchedEn == "Pure text punch body",
+                $"切到 PureTextPack 后事件文本应生效，实际：{switchedEn}");
+
+            // Also verify switching HybridFullDll (text-only) -> Game Default leaves non-event groups untouched.
+            Require(SkinService.ApplySelection("event:punch_off", "HybridFullDll"), "重选混合包仅文本项应成功。");
+            Require(SkinService.ApplySelection("event:punch_off", SkinCatalog.BaseOptionId), "切回原版应成功。");
+            Require(config.Selections["jaw_worm"] == "HybridFullDll" &&
+                    config.Selections["gremlin_nob"] == "HybridFullDll" &&
+                    _mountOverlayCalls == 0 &&
+                    !(bool)reassertField.GetValue(null)!,
+                "混合包仅文本事件项切回原版不得影响非事件分组或触发覆盖挂载/全量重申。");
+            Require(catalog.TryResolveEventText("PUNCH_OFF.pages.INITIAL.description", "eng", config.Selections, out var baseEn) &&
+                    baseEn == "Original punch body",
+                $"切回原版后事件文本应恢复基线，实际：{baseEn}");
+
+            // Case 3: Region-follow with HybridFullDll enabled at top priority in act1 (containing both visual event:alpha and text-only event:punch_off).
+            config.Selections["jaw_worm"] = "OtherFullDll";
+            config.Selections["gremlin_nob"] = "OtherFullDll";
+            config.Selections["event:punch_off"] = SkinCatalog.BaseOptionId;
+            config.Selections["event:alpha"] = SkinCatalog.BaseOptionId;
+            config.EventSkinPriorities.RegionGroups["act1"] = ["event:alpha", "event:punch_off"];
+            config.EventSkinPriorities.Priorities["act1"] =
+            [
+                new EventSkinPriorityEntry("HybridFullDll", true),
+                new EventSkinPriorityEntry("PureTextPack", true)
+            ];
+            config.EventSkinPriorities.ManualGroups = ["event:punch_off"];
+            _mountOverlayCalls = 0;
+            _prepareOverlayCalls = 0;
+            reassertField.SetValue(null, false);
+
+            Require(SkinService.FollowEventCategoryPriority("event:punch_off"),
+                "事件跟随地区优先级选择混合 DLL 包的仅文本选项应成功：" + SkinService.LastError);
+            Require(config.Selections["event:punch_off"] == "HybridFullDll",
+                $"混合 DLL 包的仅文本事件项在按地区跟随时不得因拥有非事件分组而被静默排除，实际：{config.Selections["event:punch_off"]}");
+            Require(config.Selections["event:alpha"] == SkinCatalog.BaseOptionId,
+                $"同包带图事件 event:alpha 仍须因拥有非事件全量分组而被地区跟随安全排除，实际：{config.Selections["event:alpha"]}");
+            Require(config.Selections["jaw_worm"] == "OtherFullDll" &&
+                    config.Selections["gremlin_nob"] == "OtherFullDll",
+                $"按地区跟随仅文本事件项不得改动非事件分组：jaw_worm={config.Selections["jaw_worm"]}, gremlin_nob={config.Selections["gremlin_nob"]}");
+            Require(_mountOverlayCalls == 0 && _prepareOverlayCalls == 0 && !(bool)reassertField.GetValue(null)!,
+                $"按地区跟随解析到混合包仅文本项不得触发覆盖挂载或私有打包：mounts={_mountOverlayCalls}, prepares={_prepareOverlayCalls}");
+            Require(catalog.TryResolveEventText("PUNCH_OFF.pages.INITIAL.description", "zhs", config.Selections, out var followZh) &&
+                    followZh == "混合包仅文本重拳正文",
+                $"按地区跟随命中混合包仅文本项后事件语言表应生效，实际：{followZh}");
+
+            // Case 4: Visual <-> Hybrid text-only round-trip on the SAME event group (event:punch_off).
+            // The visual side requires MountOverlay, but ProviderRuntimeCacheReset must ONLY receive the
+            // real visual provider (VisualPunchPack) and MUST NOT wipe HybridFullDll's active cache used
+            // by its non-event groups (jaw_worm / gremlin_nob).
+            var hybridAsm = BuildSyntheticCacheAssembly(out var hybridCacheField);
+            var visualPunchAsm = BuildSyntheticCacheAssembly(out var visualPunchCacheField);
+            var hybridCacheDict = (Dictionary<string, object>)hybridCacheField.GetValue(null)!;
+            var visualPunchCacheDict = (Dictionary<string, object>)visualPunchCacheField.GetValue(null)!;
+            StubActiveAssembliesByProvider["HybridFullDll"] = hybridAsm;
+            StubActiveAssembliesByProvider["VisualPunchPack"] = visualPunchAsm;
+            harmony.Patch(
+                AccessTools.Method(typeof(ManagedSkinModLoader), nameof(ManagedSkinModLoader.GetActiveProviderAssembly)),
+                prefix: new HarmonyMethod(typeof(PostReviewFixesTests), nameof(StubGetActiveProviderAssembly)));
+
+            config.Selections["jaw_worm"] = "HybridFullDll";
+            config.Selections["gremlin_nob"] = "HybridFullDll";
+            config.Selections["event:punch_off"] = "VisualPunchPack";
+            hybridCacheDict["jaw_worm_hurt"] = new object();
+            visualPunchCacheDict["punch_off_art"] = new object();
+            _mountOverlayCalls = 0;
+            _prepareOverlayCalls = 0;
+            reassertField.SetValue(null, false);
+
+            // 4a) VisualPunchPack -> HybridFullDll (text-only)
+            Require(SkinService.ApplySelection("event:punch_off", "HybridFullDll"),
+                "同事件从带图项切到混合包仅文本项应成功：" + SkinService.LastError);
+            Require(_mountOverlayCalls == 1 &&
+                    config.Selections["event:punch_off"] == "HybridFullDll" &&
+                    config.Selections["jaw_worm"] == "HybridFullDll" &&
+                    config.Selections["gremlin_nob"] == "HybridFullDll" &&
+                    !(bool)reassertField.GetValue(null)!,
+                $"带图 -> 混合仅文本互切应仅挂载一次覆盖还原带图项，不得改动非事件组或触发全量重申：mounts={_mountOverlayCalls}, reassert={reassertField.GetValue(null)}");
+            Require(visualPunchCacheDict.Count == 0,
+                "带图 -> 混合仅文本互切时，真正退出的带图提供者 VisualPunchPack 仍应正常清空其第三方缓存。");
+            Require(hybridCacheDict.Count == 1,
+                "带图 -> 混合仅文本互切时，纯文本侧 HybridFullDll 的原始 ID 不得送入第三方缓存重置，其在非事件组仍在用的缓存必须保留。");
+
+            var filteredOutgoing = SkinService.CollectSelectionTransitionOptions(
+                catalog,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["event:punch_off"] = "HybridFullDll" },
+                new Dictionary<string, (bool HadValue, string? Value)>(StringComparer.OrdinalIgnoreCase) { ["event:punch_off"] = (true, "VisualPunchPack") });
+            Require(filteredOutgoing.SequenceEqual(["VisualPunchPack"], StringComparer.OrdinalIgnoreCase),
+                $"按视觉所有权过滤后仅应提交带图提供者 VisualPunchPack，实际：{string.Join(",", filteredOutgoing)}");
+
+            // 4b) HybridFullDll (text-only) -> VisualPunchPack
+            visualPunchCacheDict["punch_off_art"] = new object();
+            _mountOverlayCalls = 0;
+            reassertField.SetValue(null, false);
+            Require(SkinService.ApplySelection("event:punch_off", "VisualPunchPack"),
+                "同事件从混合包仅文本项切回带图项应成功：" + SkinService.LastError);
+            Require(_mountOverlayCalls == 1 &&
+                    config.Selections["event:punch_off"] == "VisualPunchPack" &&
+                    config.Selections["jaw_worm"] == "HybridFullDll" &&
+                    config.Selections["gremlin_nob"] == "HybridFullDll" &&
+                    !(bool)reassertField.GetValue(null)!,
+                $"混合仅文本 -> 带图互切应仅挂载一次覆盖且不改动非事件组或触发全量重申：mounts={_mountOverlayCalls}, reassert={reassertField.GetValue(null)}");
+            Require(visualPunchCacheDict.Count == 0,
+                "混合仅文本 -> 带图互切时，切入的带图提供者 VisualPunchPack 仍应正常清空其第三方缓存。");
+            Require(hybridCacheDict.Count == 1,
+                "混合仅文本 -> 带图互切时，切出的仅文本侧 HybridFullDll 不得送入第三方缓存重置，其在非事件组仍在用的缓存必须保留。");
+
+            var filteredIncoming = SkinService.CollectSelectionTransitionOptions(
+                catalog,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["event:punch_off"] = "VisualPunchPack" },
+                new Dictionary<string, (bool HadValue, string? Value)>(StringComparer.OrdinalIgnoreCase) { ["event:punch_off"] = (true, "HybridFullDll") });
+            Require(filteredIncoming.SequenceEqual(["VisualPunchPack"], StringComparer.OrdinalIgnoreCase),
+                $"按视觉所有权过滤后仅应提交带图提供者 VisualPunchPack，实际：{string.Join(",", filteredIncoming)}");
+            Require(catalog.TryResolveEventText("PUNCH_OFF.pages.INITIAL.description", "eng", config.Selections, out var visualEn) &&
+                    visualEn == "Visual punch body",
+                $"切回带图项后事件语言表应切回 VisualPunchPack，实际：{visualEn}");
+        }
+        finally
+        {
+            harmony.UnpatchAll(harmony.Id);
+            StubActiveAssembliesByProvider.Clear();
+            AccessTools.Property(typeof(SkinService), nameof(SkinService.Catalog)).SetValue(null, oldCatalog);
+            AccessTools.Property(typeof(SkinService), nameof(SkinService.Config)).SetValue(null, oldConfig);
+            reassertField.SetValue(null, oldReassert);
+            _stubConfigPath = null;
+            _suppressMountOverlay = false;
             _mountOverlayCalls = 0;
             _prepareOverlayCalls = 0;
             directory.Delete(true);
@@ -1051,6 +1351,12 @@ internal static class PostReviewFixesTests
 
     private static bool StubGetActiveProviderAssembly(string providerId, ref Assembly? __result)
     {
+        if (StubActiveAssembliesByProvider.TryGetValue(providerId, out var mapped))
+        {
+            __result = mapped;
+            return false;
+        }
+
         if (_stubActiveMultiAssembly != null &&
             string.Equals(providerId, "MultiFullPack", StringComparison.OrdinalIgnoreCase))
         {

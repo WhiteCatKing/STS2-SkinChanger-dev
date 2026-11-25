@@ -126,18 +126,32 @@ internal static partial class SkinService
                 // Don't Dispose the old catalog: ResourceFile holders in existing overlays keep
                 // their PckArchive/FileStream alive. Once those references disappear, normal
                 // FileStream finalization releases the handles. Do not retain entire catalogs.
-                Catalog = staged;
-                CardSourceChecks.Clear();
-                Config = nextConfig;
+                // Transfer catalog ownership before invoking any post-swap cache validation so
+                // the outer finally block can never dispose a catalog already published to Catalog.
+                var published = staged;
                 staged = null;
-                _workshopDescriptors = combined;
-                _workshopSourceStamps = nextStamps;
-                _cardLookupCache = new System.Runtime.CompilerServices.ConditionalWeakTable<CardModel, CardLookup>();
-                CardCoverageCache.Clear();
+                CommitAdditiveWorkshopCatalogSwapLocked(baseline, published, nextConfig, combined, nextStamps);
             }
             return WorkshopLoadReason.None;
         }
         finally { staged?.Dispose(); WorkshopRegistrationGate.Release(); }
+    }
+
+    private static void CommitAdditiveWorkshopCatalogSwapLocked(
+        SkinCatalog previousCatalog,
+        SkinCatalog nextCatalog,
+        SkinConfig nextConfig,
+        SkinModDescriptor[] combinedDescriptors,
+        Dictionary<string, (long Length, DateTime Modified)> nextSourceStamps)
+    {
+        Catalog = nextCatalog;
+        CardSourceChecks.Clear();
+        Config = nextConfig;
+        _workshopDescriptors = combinedDescriptors;
+        _workshopSourceStamps = nextSourceStamps;
+        _cardLookupCache = new System.Runtime.CompilerServices.ConditionalWeakTable<CardModel, CardLookup>();
+        CardCoverageCache.Clear();
+        CarryOverValidatedRelicOverlaysOnAdditiveCatalogSwap(previousCatalog, nextCatalog);
     }
 
     private static Dictionary<string, (long Length, DateTime Modified)> WorkshopSourceStamps(IEnumerable<SkinModDescriptor> mods) =>

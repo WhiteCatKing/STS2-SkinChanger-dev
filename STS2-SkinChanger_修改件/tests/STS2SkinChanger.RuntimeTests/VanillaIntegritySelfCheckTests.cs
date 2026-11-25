@@ -1,5 +1,7 @@
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using STS2SkinChanger.Core;
@@ -27,6 +29,7 @@ internal static class VanillaIntegritySelfCheckTests
         VerifyNativeModSourceRulesExcludeInactiveHasPckFalseAndLegacyFallback();
         VerifySelfOverlayExclusionDowngradesToSuspect();
         VerifyBudgetedMultiFrameConfirmationAndOverBudgetFallback();
+        VerifyRuntimeConfirmContinuationAdvancesAcrossProcessFrames();
         VerifyStableAndBetaAncientTemplateDiscovery();
         VerifyRealPckArchiveScanRoundtrip();
         VerifyMainMenuPatchAndSelfOverlayHooksBindCleanly();
@@ -501,6 +504,186 @@ internal static class VanillaIntegritySelfCheckTests
                 timeSession.FramesUsed == 4 &&
                 timeSession.Findings.Single().Severity == VanillaIntegritySeverity.Confirmed,
             $"512 KiB 按 128 KiB 时间截断应恰好 4 帧完成并确认，实际帧数：{timeFrames}。");
+    }
+
+    private static void VerifyRuntimeConfirmContinuationAdvancesAcrossProcessFrames()
+    {
+        var gameEntries = BuildBaseGameEntries();
+        var atlasBytes = new byte[448 * 1024];
+        var portraitBytes = new byte[256 * 1024];
+        for (var i = 0; i < atlasBytes.Length; i++)
+        {
+            atlasBytes[i] = (byte)((i * 17 + 3) & 0xFF);
+        }
+
+        for (var i = 0; i < portraitBytes.Length; i++)
+        {
+            portraitBytes[i] = (byte)((i * 29 + 11) & 0xFF);
+        }
+
+        var nativePack = new VanillaIntegrityModPack(
+            ModId: "multi.batch.native",
+            DisplayName: "Multi Batch Native",
+            IsManagedBySkinChanger: false,
+            Entries: new Dictionary<string, VanillaIntegrityEntry>(StringComparer.OrdinalIgnoreCase)
+            {
+                [CardAtlasCtexPath] = MakeEntry(CardAtlasCtexPath, atlasBytes),
+                [SelectPortraitCtexPath] = MakeEntry(SelectPortraitCtexPath, portraitBytes)
+            });
+
+        var vfsReader = new CountingMemoryVfsReader(new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [CardAtlasCtexPath] = atlasBytes,
+            [SelectPortraitCtexPath] = portraitBytes
+        });
+
+        var tightBudget = new VanillaIntegrityBudget(
+            MaxConfirmFileBytes: 1024 * 1024,
+            MaxTotalConfirmBytes: 2 * 1024 * 1024,
+            PerFrameByteBudget: 200 * 1024,
+            ChunkBytes: 64 * 1024,
+            PerFrameTimeBudgetMs: 100.0);
+
+        var deferredQueue = new Queue<Action>();
+        var processFrameQueue = new Queue<Action>();
+        var warnings = new List<string>();
+        ulong frame = 10;
+
+        try
+        {
+            DeferredDispatch.ConfigureForTests(
+                enqueue: deferredQueue.Enqueue,
+                frameCounter: () => frame,
+                breadcrumbDirectoryProvider: () => null,
+                warnLogger: warnings.Add);
+
+            VanillaIntegrityReport? completedReport = null;
+            using (VanillaIntegritySelfCheck.UseNextProcessFrameSchedulerForTests(callback =>
+                   {
+                       processFrameQueue.Enqueue(callback);
+                       return true;
+                   }))
+            {
+                var fifoEvents = new List<string>();
+                VanillaIntegritySelfCheck.StartRuntimeConfirmForTests(
+                    gameEntries,
+                    [nativePack],
+                    vfsReader,
+                    tightBudget,
+                    report => completedReport = report,
+                    elapsedMsProvider: () => 0.1);
+                DeferredDispatch.CallDeferred("Test.FifoSibling", "ui#1", () => fifoEvents.Add($"fifo@f{frame}"));
+
+                // Simulate Godot draining CallDeferred to completion inside a SINGLE idle cycle
+                // without advancing the frame counter.
+                while (deferredQueue.Count > 0)
+                {
+                    deferredQueue.Dequeue()();
+                }
+
+                Require(fifoEvents.SequenceEqual(["fifo@f10"]),
+                    $"其它依赖 FIFO 的 CallDeferred 回调仍应在同一 idle 按顺序执行：{string.Join(",", fifoEvents)}");
+                Require(completedReport == null,
+                    "预算用尽后的自检续约不得在同一 idle 周期内被 CallDeferred 连续跑完。");
+                Require(vfsReader.TotalBytesRead > 0 && vfsReader.TotalBytesRead <= tightBudget.PerFrameByteBudget,
+                    $"首帧仅应消耗单帧预算（<= {tightBudget.PerFrameByteBudget} B），实际：{vfsReader.TotalBytesRead} B。");
+                Require(processFrameQueue.Count == 1,
+                    $"首帧预算耗尽后应挂出 1 个一次性 ProcessFrame 续约，实际：{processFrameQueue.Count}。");
+
+                var guard = 0;
+                while (processFrameQueue.Count > 0 && guard++ < 20)
+                {
+                    frame++;
+                    var beforeBytes = vfsReader.TotalBytesRead;
+                    var batchCount = processFrameQueue.Count;
+                    Require(batchCount == 1,
+                        $"单链分帧续约每帧只应挂出 1 个回调，实际：{batchCount}。");
+                    processFrameQueue.Dequeue()();
+
+                    // Continuation must never fall back to CallDeferred while ProcessFrame is available.
+                    Require(deferredQueue.Count == 0,
+                        "分帧续约不得再次入队 CallDeferred 导致同 idle 连续执行。");
+                    var deltaBytes = vfsReader.TotalBytesRead - beforeBytes;
+                    Require(deltaBytes <= tightBudget.PerFrameByteBudget,
+                        $"第 {frame} 帧读取字节超过单帧预算：delta={deltaBytes}, budget={tightBudget.PerFrameByteBudget}。");
+                }
+            }
+
+            Require(completedReport != null, "多批候选应在后续 ProcessFrame 中全部完成。");
+            Require(completedReport!.ConfirmedCount == 2 && completedReport.SuspectCount == 0,
+                $"两份候选资源应全部确认：confirmed={completedReport.ConfirmedCount}, suspect={completedReport.SuspectCount}。");
+
+            var stepRecords = DeferredDispatch.SnapshotRecords()
+                .Where(r => r.TaskName == "VanillaIntegritySelfCheck.Step" && r.Phase == "DONE")
+                .ToArray();
+            Require(stepRecords.Length >= 4,
+                $"704 KiB 候选在 200 KiB 帧预算下至少应拆成 4 步执行，实际：{stepRecords.Length}。");
+            Require(completedReport.MainThreadFrames == stepRecords.Length + 1,
+                $"报告主线程帧数应与初始快照(1)+分帧步数({stepRecords.Length})一致，实际：{completedReport.MainThreadFrames}。");
+            Require(stepRecords[0].ExecuteFrame == 10,
+                $"第 1 步应在初始帧 10 执行，实际：{stepRecords[0].ExecuteFrame}。");
+            for (var i = 1; i < stepRecords.Length; i++)
+            {
+                Require(stepRecords[i].ExecuteFrame == stepRecords[i - 1].ExecuteFrame + 1,
+                    $"第 {i + 1} 步执行帧号必须严格推进到下一帧：prev={stepRecords[i - 1].ExecuteFrame}, curr={stepRecords[i].ExecuteFrame}。");
+                Require(stepRecords[i].EnqueueFrame == stepRecords[i - 1].ExecuteFrame,
+                    $"第 {i + 1} 步入队帧应等于上一步执行帧：expected={stepRecords[i - 1].ExecuteFrame}, actual={stepRecords[i].EnqueueFrame}。");
+            }
+
+            // If ProcessFrame scheduler is unavailable (e.g. main loop shutting down), stop cleanly.
+            var abortedReport = false;
+            using (VanillaIntegritySelfCheck.UseNextProcessFrameSchedulerForTests(_ => false))
+            {
+                VanillaIntegritySelfCheck.StartRuntimeConfirmForTests(
+                    gameEntries,
+                    [nativePack],
+                    vfsReader,
+                    tightBudget,
+                    _ => abortedReport = true,
+                    elapsedMsProvider: () => 0.1);
+                while (deferredQueue.Count > 0)
+                {
+                    deferredQueue.Dequeue()();
+                }
+            }
+
+            Require(!abortedReport && deferredQueue.Count == 0,
+                "主循环不可用导致 ProcessFrame 无法挂接时应安全释放并停止，不得回退同 idle 自排。");
+
+            // Structural guard: StepOnMainThread uses WrapCallback (not CallDeferred), and default scheduler uses OneShot ProcessFrame.
+            var runnerType = typeof(VanillaIntegritySelfCheck).GetNestedType("RuntimeConfirmRunner", BindingFlags.NonPublic)
+                             ?? throw new InvalidOperationException("找不到 RuntimeConfirmRunner。");
+            var stepMethod = runnerType.GetMethod("StepOnMainThread", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                             ?? throw new InvalidOperationException("找不到 RuntimeConfirmRunner.StepOnMainThread。");
+            var stepCalls = PatchProcessor.GetOriginalInstructions(stepMethod)
+                .Select(i => i.operand)
+                .OfType<MethodInfo>()
+                .ToArray();
+            Require(stepCalls.Any(m => m.DeclaringType == typeof(DeferredDispatch) && m.Name == nameof(DeferredDispatch.WrapCallback)),
+                "RuntimeConfirmRunner.StepOnMainThread 必须经 DeferredDispatch.WrapCallback 保留任务记录。");
+            Require(!stepCalls.Any(m => m.DeclaringType == typeof(DeferredDispatch) && m.Name == nameof(DeferredDispatch.CallDeferred)),
+                "RuntimeConfirmRunner.StepOnMainThread 不得再通过 CallDeferred 自续。");
+
+            var schedulerMethod = typeof(VanillaIntegritySelfCheck).GetMethod(
+                                      "TryScheduleNextProcessFrameOnSceneTree",
+                                      BindingFlags.Static | BindingFlags.NonPublic)
+                                  ?? throw new InvalidOperationException("找不到 TryScheduleNextProcessFrameOnSceneTree。");
+            var schedulerInstructions = PatchProcessor.GetOriginalInstructions(schedulerMethod);
+            Require(schedulerInstructions.Any(i =>
+                        (i.operand is FieldInfo f &&
+                         f.DeclaringType == typeof(SceneTree.SignalName) &&
+                         f.Name == nameof(SceneTree.SignalName.ProcessFrame)) ||
+                        (i.operand is MethodInfo m &&
+                         m.DeclaringType == typeof(SceneTree.SignalName) &&
+                         m.Name == "get_ProcessFrame")),
+                "默认续约调度器必须挂接 SceneTree.SignalName.ProcessFrame。");
+            Require(schedulerInstructions.Any(i => i.operand is MethodInfo m && m.Name == nameof(GodotObject.Connect)),
+                "默认续约调度器必须通过一次性 Connect(OneShot) 挂接下一 ProcessFrame。");
+        }
+        finally
+        {
+            DeferredDispatch.ResetDefaultsForTests();
+        }
     }
 
     private static void VerifyStableAndBetaAncientTemplateDiscovery()

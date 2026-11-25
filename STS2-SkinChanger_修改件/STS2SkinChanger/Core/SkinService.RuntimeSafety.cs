@@ -162,6 +162,204 @@ internal static partial class SkinService
         throw new AppearanceResourceUnavailableException("遗物皮肤资源包已变更，等待重新扫描。");
     }
 
+    /// <summary>
+    /// Transfers already-validated relic prepared overlays and resident bundles across a confirmed
+    /// additive Workshop hot-registration swap so unchanged relic atlases do not rebuild PCKs,
+    /// re-decode textures, or consume extra session preparation quota. Any entry whose selection,
+    /// source file stamps, or root resource set no longer matches is dropped so it reloads cleanly.
+    /// </summary>
+    private static void CarryOverValidatedRelicOverlaysOnAdditiveCatalogSwap(
+        SkinCatalog previousCatalog,
+        SkinCatalog nextCatalog)
+    {
+        if (ReferenceEquals(previousCatalog, nextCatalog))
+        {
+            return;
+        }
+
+        var reboundByPrevious = new Dictionary<PreparedRuntimeOverlay, PreparedRuntimeOverlay>(
+            ReferenceEqualityComparer.Instance);
+        var failedPrevious = new HashSet<PreparedRuntimeOverlay>(ReferenceEqualityComparer.Instance);
+
+        bool TryRebindOverlay(PreparedRuntimeOverlay previous, out PreparedRuntimeOverlay rebound)
+        {
+            if (reboundByPrevious.TryGetValue(previous, out rebound!))
+            {
+                return true;
+            }
+
+            if (failedPrevious.Contains(previous) ||
+                !previous.IsRelicCatalog(previousCatalog) ||
+                string.IsNullOrWhiteSpace(previous.RelicGroupId) ||
+                string.IsNullOrWhiteSpace(previous.RelicOptionId) ||
+                previous.RelicRoots.Length == 0)
+            {
+                failedPrevious.Add(previous);
+                rebound = null!;
+                return false;
+            }
+
+            try
+            {
+                if (previous.OverlayPath != null && !File.Exists(previous.OverlayPath))
+                {
+                    failedPrevious.Add(previous);
+                    rebound = null!;
+                    return false;
+                }
+
+                var nextOption = nextCatalog.Groups
+                    .FirstOrDefault(group => group.Id.Equals(previous.RelicGroupId, StringComparison.OrdinalIgnoreCase))?
+                    .Options.FirstOrDefault(option => option.Id.Equals(previous.RelicOptionId, StringComparison.OrdinalIgnoreCase));
+                if (nextOption == null)
+                {
+                    failedPrevious.Add(previous);
+                    rebound = null!;
+                    return false;
+                }
+
+                var nextRoots = nextCatalog.GetProviderRelicResourcePaths(previous.RelicGroupId, nextOption)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Order(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (nextRoots.Length != previous.RelicRoots.Length ||
+                    !nextRoots.SequenceEqual(previous.RelicRoots, StringComparer.OrdinalIgnoreCase))
+                {
+                    failedPrevious.Add(previous);
+                    rebound = null!;
+                    return false;
+                }
+
+                var keySelection = ProviderSettingsVariantOptions.ContractOf(nextOption.Id) != null
+                    ? ProviderSettingsVariantOptions.FamilyBaseId(nextOption.Id)
+                    : nextOption.Id;
+                var expectedKey = RuntimeOverlayKey(
+                    previous.RelicGroupId,
+                    keySelection,
+                    nextRoots,
+                    includeProviderDependencies: false,
+                    reuseMountedPrivateDependencies: false,
+                    isolateRelicCanonicalPaths: true);
+                if (!expectedKey.Equals(previous.Key, StringComparison.OrdinalIgnoreCase))
+                {
+                    failedPrevious.Add(previous);
+                    rebound = null!;
+                    return false;
+                }
+
+                var nextSources = CaptureRelicBundleSources(nextCatalog, nextOption);
+                if (!RelicSourceStampsMatch(previous.RelicSources, nextSources) ||
+                    !nextSources.All(stamp => stamp.IsCurrent()))
+                {
+                    failedPrevious.Add(previous);
+                    rebound = null!;
+                    return false;
+                }
+
+                rebound = previous with
+                {
+                    RelicCatalog = new WeakReference<SkinCatalog>(nextCatalog),
+                    RelicSources = nextSources
+                };
+                reboundByPrevious[previous] = rebound;
+                return true;
+            }
+            catch (Exception)
+            {
+                // Treat any per-entry verification or file I/O failure as a cache miss so the
+                // published catalog swap succeeds and this relic bundle reloads cleanly on demand.
+                failedPrevious.Add(previous);
+                rebound = null!;
+                return false;
+            }
+        }
+
+        foreach (var (key, prepared) in PreparedRuntimeOverlays.ToArray())
+        {
+            if (!prepared.IsRelicCatalog(previousCatalog))
+            {
+                continue;
+            }
+
+            if (TryRebindOverlay(prepared, out var rebound))
+            {
+                PreparedRuntimeOverlays[key] = rebound;
+            }
+            else
+            {
+                PreparedRuntimeOverlays.Remove(key);
+            }
+        }
+
+        foreach (var (groupId, prepared) in LastPreparedRuntimeOverlays.ToArray())
+        {
+            if (!prepared.IsRelicCatalog(previousCatalog))
+            {
+                continue;
+            }
+
+            if (TryRebindOverlay(prepared, out var rebound))
+            {
+                LastPreparedRuntimeOverlays[groupId] = rebound;
+            }
+            else
+            {
+                LastPreparedRuntimeOverlays.Remove(groupId);
+            }
+        }
+
+        foreach (var (groupId, bundle) in RelicBundles.ToArray())
+        {
+            if (!bundle.Prepared.IsRelicCatalog(previousCatalog))
+            {
+                continue;
+            }
+
+            var currentSelection = Config.GetSelection(groupId);
+            var selectionMatchesPrepared =
+                string.Equals(bundle.Prepared.RelicOptionId, bundle.Selection, StringComparison.OrdinalIgnoreCase) ||
+                (ProviderSettingsVariantOptions.ContractOf(bundle.Selection) != null &&
+                 string.Equals(
+                     ProviderSettingsVariantOptions.FamilyBaseId(bundle.Selection),
+                     ProviderSettingsVariantOptions.FamilyBaseId(bundle.Prepared.RelicOptionId ?? string.Empty),
+                     StringComparison.OrdinalIgnoreCase));
+            if (currentSelection.Equals(bundle.Selection, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(bundle.Prepared.RelicGroupId, groupId, StringComparison.OrdinalIgnoreCase) &&
+                selectionMatchesPrepared &&
+                TryRebindOverlay(bundle.Prepared, out var reboundPrepared))
+            {
+                var reboundBundle = bundle with { Prepared = reboundPrepared };
+                reboundBundle.LastUse = bundle.LastUse;
+                RelicBundles[groupId] = reboundBundle;
+            }
+            else
+            {
+                RelicBundles.Remove(groupId);
+            }
+        }
+    }
+
+    private static bool RelicSourceStampsMatch(CardFileStamp[] expected, CardFileStamp[] actual)
+    {
+        if (expected.Length != actual.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            if (!expected[i].PhysicalPath.Equals(actual[i].PhysicalPath, StringComparison.OrdinalIgnoreCase) ||
+                expected[i].Length != actual[i].Length ||
+                expected[i].ModifiedUtcTicks != actual[i].ModifiedUtcTicks)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static readonly Regex RelicRemapTarget = new(@"(?m)^[ \t]*path(?:\.[a-zA-Z0-9_]+)?[ \t]*=[ \t]*""(?<path>res://[^""]+)""",
         RegexOptions.CultureInvariant);
 
