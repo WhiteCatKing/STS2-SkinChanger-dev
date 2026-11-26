@@ -73,12 +73,79 @@ internal static class UiInjectionGuardTests
 
     internal static void Run()
     {
+        VerifyEmbarkCleanupCannotBlockRunStart();
         VerifyExceptionIsolationAndCounting();
         VerifyHarmonyPostfixChainSurvivesFailure();
         VerifyRunWhenInTreeOfflineContract();
         var (classCount, hookCount, programmaticCount) = VerifyAllUiInjectionPatchesGuarded();
         Console.WriteLine(
             $"UI injection guard passed: {classCount} patch classes ({hookCount} hooks) + {programmaticCount} programmatic UI hooks verified, exception isolation & postfix chain preserved.");
+    }
+
+    private sealed partial class EmbarkFixture : Control
+    {
+        internal bool OriginalRan;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal void Embark() => OriginalRan = true;
+    }
+
+    private static bool SkipModLog() => false;
+
+    private static void FailCharacterSelectCleanup() =>
+        throw new InvalidOperationException("synthetic character select cleanup failure");
+
+    /// <summary>
+    /// 1.0.41.23: the single-player and multiplayer embark prefixes clean up the character select
+    /// UI before the game's own run start. A failure in that cleanup must be logged, never thrown
+    /// out of the prefix, or the player could not start a run.
+    /// </summary>
+    private static void VerifyEmbarkCleanupCannotBlockRunStart()
+    {
+        // Each embark prefix has two cleanup steps outside its own try: leaving the character
+        // select scope first, hiding the selector last. Fail each one in turn.
+        foreach (var type in new[] { typeof(SingleplayerEmbarkSkinSelectorPatch), typeof(MultiplayerEmbarkSkinSelectorPatch) })
+        foreach (var failLeave in new[] { true, false })
+        {
+            var failingPoint = failLeave ? "LeaveCharacterSelect" : "HideCharacterSelector";
+            var harmony = new Harmony("sc-tests.embark-cleanup." + type.Name + "." + failingPoint);
+            var logs = new List<string>();
+            try
+            {
+                // The game's logger needs the engine; keep both the guard's report and the
+                // prefix's own catch inside the test process.
+                UiInjectionGuard.ResetForTests();
+                UiInjectionGuard.ErrorLoggerForTests = logs.Add;
+                var skip = new HarmonyMethod(AccessTools.Method(typeof(UiInjectionGuardTests), nameof(SkipModLog)));
+                var fail = new HarmonyMethod(AccessTools.Method(typeof(UiInjectionGuardTests), nameof(FailCharacterSelectCleanup)));
+                foreach (var level in new[] { "Info", "Warn", "Error" })
+                {
+                    harmony.Patch(AccessTools.Method(typeof(ModLog), level), prefix: skip);
+                }
+                // The step that does not fail is skipped: both touch native Godot nodes, which do
+                // not exist without the engine.
+                harmony.Patch(AccessTools.Method(typeof(CharacterSelectUiScope), nameof(CharacterSelectUiScope.Leave)),
+                    prefix: failLeave ? fail : skip);
+                harmony.Patch(AccessTools.Method(typeof(ContextualSkinControls), nameof(ContextualSkinControls.HideCharacterSelector)),
+                    prefix: failLeave ? skip : fail);
+
+                var fixture = (EmbarkFixture)RuntimeHelpers.GetUninitializedObject(typeof(EmbarkFixture));
+                harmony.Patch(AccessTools.Method(typeof(EmbarkFixture), nameof(EmbarkFixture.Embark)),
+                    prefix: new HarmonyMethod(AccessTools.Method(type, "Prefix")));
+                Exception? escaped = null;
+                try { fixture.Embark(); }
+                catch (Exception error) { escaped = error; }
+                Require(escaped == null && fixture.OriginalRan,
+                    $"{type.Name}: 开局前的 {failingPoint} 出错时必须只记日志、继续原版开局；escaped={escaped?.Message}, original={fixture.OriginalRan}。");
+                Require(logs.Any(line => line.Contains(failingPoint, StringComparison.Ordinal)),
+                    $"{type.Name}: {failingPoint} 失败必须经界面注入隔离记录日志。");
+            }
+            finally
+            {
+                harmony.UnpatchAll(harmony.Id);
+                UiInjectionGuard.ResetForTests();
+            }
+        }
     }
 
     private static void VerifyExceptionIsolationAndCounting()

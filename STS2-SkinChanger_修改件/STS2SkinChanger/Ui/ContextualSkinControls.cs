@@ -4251,7 +4251,8 @@ internal static class SingleplayerEmbarkSkinSelectorPatch
 {
     private static void Prefix(Control __instance)
     {
-        CharacterSelectUiScope.Leave(__instance);
+        // 开局前的界面清理出错时只记日志，不能拦住原版开局。
+        UiInjectionGuard.Run("SingleplayerEmbark.LeaveCharacterSelect", () => CharacterSelectUiScope.Leave(__instance));
         try
         {
             var groupId = ContextualSkinControls.GetLocalLobbyCharacter(CharacterSelectScreenAccess.Lobby(__instance)).Id.Entry.ToLowerInvariant();
@@ -4273,7 +4274,7 @@ internal static class SingleplayerEmbarkSkinSelectorPatch
         {
             ModLog.Error("开始单人对局前应用皮肤包失败，将继续使用当前外观：" + error);
         }
-        ContextualSkinControls.HideCharacterSelector(__instance);
+        UiInjectionGuard.Run("SingleplayerEmbark.HideCharacterSelector", () => ContextualSkinControls.HideCharacterSelector(__instance));
     }
 }
 
@@ -4282,7 +4283,8 @@ internal static class MultiplayerEmbarkSkinSelectorPatch
 {
     private static void Prefix(Control __instance)
     {
-        CharacterSelectUiScope.Leave(__instance);
+        // 开局前的界面清理出错时只记日志，不能拦住原版开局。
+        UiInjectionGuard.Run("MultiplayerEmbark.LeaveCharacterSelect", () => CharacterSelectUiScope.Leave(__instance));
         try
         {
             var groupId = ContextualSkinControls.GetLocalLobbyCharacter(CharacterSelectScreenAccess.Lobby(__instance)).Id.Entry.ToLowerInvariant();
@@ -4304,7 +4306,7 @@ internal static class MultiplayerEmbarkSkinSelectorPatch
         {
             ModLog.Error("开始多人对局前应用皮肤包失败，将继续使用当前外观：" + error);
         }
-        ContextualSkinControls.HideCharacterSelector(__instance);
+        UiInjectionGuard.Run("MultiplayerEmbark.HideCharacterSelector", () => ContextualSkinControls.HideCharacterSelector(__instance));
     }
 }
 

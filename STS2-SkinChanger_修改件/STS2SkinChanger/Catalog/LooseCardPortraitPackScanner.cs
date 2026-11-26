@@ -102,9 +102,12 @@ internal static class LooseCardPortraitPackScanner
             var entries = new List<CardArtPackCard>();
             foreach (var image in images)
             {
+                // Same source path as the registered entry, so a name shared by two card pools
+                // resolves to the pool this image sits in instead of being dropped as ambiguous.
                 if (SkinCatalog.ResolveCardForPortraitStem(
                         Path.GetFileNameWithoutExtension(image),
-                        cards) == null)
+                        cards,
+                        BuildSourcePath(image, pathToken, root)) == null)
                 {
                     continue;
                 }
@@ -140,6 +143,9 @@ internal static class LooseCardPortraitPackScanner
                 .ToArray());
     }
 
+    private static string BuildSourcePath(string imagePath, string pathToken, string root) =>
+        $"res://{pathToken}/{Path.GetRelativePath(root, imagePath).Replace(Path.DirectorySeparatorChar, '/')}";
+
     private static bool TryReadCard(
         string imagePath,
         string pathToken,
@@ -160,8 +166,6 @@ internal static class LooseCardPortraitPackScanner
             if (stamp.Length <= 0 || stamp.Length > MaxImageBytes) return false;
             var bytes = new byte[(int)stamp.Length];
             stream.ReadExactly(bytes);
-            var relative = Path.GetRelativePath(root, imagePath)
-                .Replace(Path.DirectorySeparatorChar, '/');
             // Card Art Editor's full-art mode composes artwork onto the whole card instead of into
             // the framed art window, so the picture's own shape selects the canvas, exactly as it
             // does for a bundle entry.
@@ -171,7 +175,7 @@ internal static class LooseCardPortraitPackScanner
                     ? "full_art"
                     : "art_window";
             entry = new CardArtPackCard(
-                $"res://{pathToken}/{relative}",
+                BuildSourcePath(imagePath, pathToken, root),
                 Path.GetFileNameWithoutExtension(imagePath),
                 bytes,
                 displayMode,

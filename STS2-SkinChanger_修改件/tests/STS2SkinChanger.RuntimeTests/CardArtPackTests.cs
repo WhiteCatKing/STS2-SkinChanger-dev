@@ -27,6 +27,7 @@ internal static class CardArtPackTests
         CheckDisabledAndUnloadedModsSkippedAndFallbackToDefault();
         CheckAncientAndSameNameOwnership();
         CheckLooseProviderFolder();
+        CheckLooseProviderPoolScopedSharedName();
         CheckRealPacks();
         Console.WriteLine(
             "Card art pack contracts passed: bundle parsing, master-over-crop preference, " +
@@ -89,6 +90,55 @@ internal static class CardArtPackTests
     /// while a folder that holds something else must not. Everything here runs on synthetic files:
     /// no game, no provider code, no initializer.
     /// </summary>
+    /// <summary>
+    /// 1.0.41.23: a loose folder laid out by card pool must resolve a name that another pool also
+    /// uses to the pool the image sits in. Before, the pre-filter resolved by file name alone, the
+    /// shared name came back ambiguous, and a folder with exactly the minimum number of images fell
+    /// below the threshold and vanished from the dropdown.
+    /// </summary>
+    private static void CheckLooseProviderPoolScopedSharedName()
+    {
+        var root = Directory.CreateTempSubdirectory("sts2-loose-card-art-pool-");
+        try
+        {
+            var provider = Path.Combine(root.FullName, "PoolCards");
+            var portraits = Path.Combine(provider, "card_portraits", "silent");
+            Directory.CreateDirectory(portraits);
+            var cards = new List<CardCatalogEntry>
+            {
+                new("SharedName", "res://images/packed/card_portraits/silent/shared_name.png",
+                    "silent", "silent", "silent"),
+                new("SharedName", "res://images/packed/card_portraits/defect/shared_name.png",
+                    "defect", "defect", "defect")
+            };
+            File.WriteAllBytes(Path.Combine(portraits, "shared_name.png"), MakePng(608, 416, withAlpha: false));
+            for (var index = 1; index < LooseCardPortraitPackPolicy.MinimumCards; index++)
+            {
+                var name = $"pool_card_{index:00}";
+                cards.Add(new CardCatalogEntry(
+                    $"PoolCard{index:00}",
+                    $"res://images/packed/card_portraits/silent/{name}.png",
+                    "silent",
+                    "silent",
+                    "silent"));
+                File.WriteAllBytes(Path.Combine(portraits, name + ".png"), MakePng(608, 416, withAlpha: false));
+            }
+
+            var packs = LooseCardPortraitPackScanner.Scan(
+                [new LooseCardPortraitProvider("PoolCards", "Pool Cards", provider)],
+                cards);
+            Require(packs.Count == 1,
+                $"a pool-scoped loose folder at the minimum size must stay a card pack, got {packs.Count}.");
+            Require(packs[0].Cards.Count == LooseCardPortraitPackPolicy.MinimumCards &&
+                    packs[0].Cards.Any(card => card.SourcePath.EndsWith("/silent/shared_name.png", StringComparison.Ordinal)),
+                $"a name shared with another pool must resolve to the image's own pool, got {packs[0].Cards.Count} cards.");
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     private static void CheckLooseProviderFolder()
     {
         var root = Directory.CreateTempSubdirectory("sts2-loose-card-art-");

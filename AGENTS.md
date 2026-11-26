@@ -10,6 +10,7 @@
 - [STS2-SkinChanger_修改件/docs/agents/pitfalls-checklist.md](STS2-SkinChanger_修改件/docs/agents/pitfalls-checklist.md) — 踩坑复盘与按症状排查清单。
 - [docs/owner-checklist.md](docs/owner-checklist.md) — 给作者本人的合作注意事项（含「什么时候该叫 AI 停下来」）。
 - [CHANGELOG.md](CHANGELOG.md) — 版本变更记录。
+- [docs/handoff/README.md](docs/handoff/README.md) — 两边（云 ↔ 白猫）的交接规矩和索引。推要对方合并的分支、把问题转给对方时，照它写交接文件，跟代码一起推。开工前先看索引里有没有对方给你的、还没处理的交接。
 
 ## 约束
 

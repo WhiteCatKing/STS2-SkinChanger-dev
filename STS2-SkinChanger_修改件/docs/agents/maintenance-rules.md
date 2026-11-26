@@ -68,6 +68,13 @@
 - **同名程序集姊妹包行为委托**（`Core/ManagedSkinModLoader.cs`：`GetOrLoadProviderAssembly`、`TryFindRicherTwinSibling`、`TryReuseSiblingBehavior`、`GetAssemblyTypeOverlapRatio`、`DeactivateProvidersExcept`、`ActivateSelectedProviders`、`IsProviderAssemblyFor`）：不同逻辑 ID 但程序集简单名、culture、公钥令牌一致且已登记的姊妹包，须经只读 PE 元数据核验作者类型定义全名集合 Jaccard 重合度 `>= 0.80`（`TwinAssemblyTypeOverlapThreshold`，按双文件戳缓存）；所有程序集加载入口统一在 `GetOrLoadProviderAssembly` 决策，首次加载其中任意一份时优先加载作者类型数更全的那份，并**只允许精简版 → 更全版单向委托**（写入 `BehaviorProviderAliases`，资源仍取自所选包）；若更全版已被提前加载的精简版占坑，必须拒绝反向委托并打出明确警告。同逻辑 ID 原路径不加此阈值与方向限制；类型重合不足的模板克隆 Mod 拒绝委托并保留原冲突警告。停用须保留执行者；重选经蓝图重挂补丁且不重复初始化；`IsProviderAssemblyFor` 与重放入口须识别别名。测试：`TwinAssemblyBehaviorDelegationTests`、`ProviderAssemblyReuseTests`（门禁 `twin-assembly-behavior-delegation`）。
 - **事件图鉴背景双层拦截、仅文本事件标注与跳过重打包、`ApplySelection` 旧选择快照与调试热键门控**（`Ui/EventCompendiumPreview.cs`、`Ui/ContextualSkinControls.cs`、`Catalog/SkinCatalog.Events.cs`、`Core/Features/Event/EventSkinRuntime.cs`、`Core/ModLocalization.Events.cs`、`Core/SkinService.EventPriorities.cs`、`Core/SkinService.cs`、`Core/Features/Background/FakeMerchantBackgroundNudge.cs`）：普通事件预览在调 `CreateBackgroundScene` 前先判定是否存在背景场景，`ReplaceCachedScene` 遇 `result == null` 或事件无 `HasEventResource` 时跳过接管，9 个先古照常替换；仅改事件本地化文本而无图/场景资源的事件候选项按包内实际资源标 `SkinOption.IsTextOnly`，经 `ModLocalization.FormatEventOptionLabel` 追加 15 语本地化后缀（中文 `（仅文本）` / 英文 ` (text only)`），直接选中或经「跟随分类」解析命中时均不生成私有包、不重打包原版事件图、不记入 `VisualProviderPriority` 也不视为视觉已生效，同时文本替换照常工作；`SkinService.ApplySelection` 必须使用切换前 `previousSelections` 判断多分组整包替换（`RequestFullOverlayReassert`）并把旧/新选择一并交给 `ProviderRuntimeCacheReset`；`FakeMerchantBackgroundNudge.Attach` 仅在 `STS2SC_DEBUG == "1"` 时挂载，默认不监听不吞键。测试：`PostReviewFixesTests`（门禁 `postreview-event-bg-selection-nudge-guards`）。
 
+1.0.41.23 新增（2026-11-26）：
+- **禁用的卡图 Mod 不再被接管**（`Core/ManagedSkinModLoader.cs` 的 `GetUnloadedManifestedModDirectories` / `GetMixedCardArtDirectories`，`Catalog/CardArtPackScanner.cs` 的 `Scan(roots, excludedDirectories)`）：扫描 `*.cardartpack.json` 时跳过有清单但未加载的 Mod 目录（禁用、缺依赖、版本不符、未接管的重复项）；没有清单的纯素材包照常发现。已选卡图在目录里找不到时，`SkinService.GetCardSelection` 回到 `__base__`，`GetCardOverrideSelection` 返回「跟随分类」，存档原值不删，重新启用后恢复；旧格式 `Selections.cards:<组>` 迁移时暂缺项保留在优先表首位。启用和未加载的 Mod 清单混放在同一目录且带卡图包时，**不按包判断归属**（试过会误伤正常布局），改为每次启动弹一次单按钮提示（`Ui/MixedCardArtDirectoryNotice.cs`），排在加载顺序弹窗之后、点重启后不弹，不加开关。门禁：`CardArtPackTests`。
+- **散图卡图包按图片所在卡池解析同名卡**（`Catalog/LooseCardPortraitPackScanner.cs` 的 `BuildSourcePath`）：预筛 `ResolveCardForPortraitStem` 必须传和登记时相同的来源路径，否则跨池同名卡被判为歧义、刚好够 20 张的包整包消失。门禁：`CardArtPackTests.CheckLooseProviderPoolScopedSharedName`。
+- **开局前的清理不能拦住开局**（`Ui/ContextualSkinControls.cs` 的 `SingleplayerEmbarkSkinSelectorPatch` / `MultiplayerEmbarkSkinSelectorPatch`）：`CharacterSelectUiScope.Leave` 和末尾 `HideCharacterSelector` 各包一层 `UiInjectionGuard.Run`；以后在这两个 Prefix 里加步骤，放进已有的 try 或同样包起来。门禁：`UiInjectionGuardTests.VerifyEmbarkCleanupCannotBlockRunStart`。
+- **原版完整性自检跨帧续约按逐帧轮询记录**（`Core/VanillaIntegritySelfCheck.cs`）：预算用完后经一次性 `ProcessFrame` 续约，回调用 `DeferredDispatch.RunTrackedPoll(..., enqueueFrameOverride: CurrentFrame())`，不能用 `WrapCallback`，否则跨 50 帧以上的合法自检会误报连续重入。门禁：`VanillaIntegritySelfCheckTests`。
+- **追加工坊订阅热登记时转移已验证的运行时缓存**（`Core/SkinService.Workshop.cs`、`Core/SkinService.RuntimeSafety.cs`）：新目录发布前先转出暂存所有权，按选择、源文件签名、根资源集合逐项核对后，把 `PreparedRuntimeOverlays` 与 `RelicBundles` 记到新目录名下；验源失败按未命中处理，不重建已热的遗物图集。
+
 ## 改完必须做
 
 1. 正式版和测试版**两种引用都构建一次**，都要 0 错误（`AnyCPU`）：
@@ -91,6 +98,7 @@
 
 - 改了什么（文件和函数）、为什么改（根因）、怎么验证的（构建、哪些测试组、实机步骤）、还剩什么没做或没验证。
 - 无法离线验证的画面问题，写明「需实机确认」和具体步骤。
+- 要让另一边（云 ↔ 白猫）知道、接手或合并的，另写交接文件放进仓库根目录的 `docs/handoff/`，格式见那里的 `README.md`。
 
 ## 排查第三方 Mod 时
 

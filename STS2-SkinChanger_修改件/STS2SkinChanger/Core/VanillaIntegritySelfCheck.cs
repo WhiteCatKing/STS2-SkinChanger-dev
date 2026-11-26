@@ -1517,7 +1517,14 @@ internal static partial class VanillaIntegritySelfCheck
                     // 最早可执行帧：下一 ProcessFrame（避免 CallDeferred 在同一 idle 周期被连续排空）；
                     // 顺序依赖：主线程单链串行推进同一 ConfirmSession；能否合并：单链串行无需合并；
                     // 重试上限：按待检条目总数有界收敛；取消条件：completed == true、主循环不可用或异常释放 _session。
-                    var nextStep = DeferredDispatch.WrapCallback("VanillaIntegritySelfCheck.Step", this, StepOnMainThread);
+                    // 跨真实帧续约属于逐帧等待：按轮询记录，保留实际入队帧，同帧递归仍会告警。
+                    var enqueueFrame = DeferredDispatch.CurrentFrame();
+                    Action nextStep = () => DeferredDispatch.RunTrackedPoll(
+                        "VanillaIntegritySelfCheck.Step", this, () =>
+                        {
+                            StepOnMainThread();
+                            return true;
+                        }, enqueueFrameOverride: enqueueFrame);
                     if (!_nextProcessFrameScheduler(nextStep))
                     {
                         _session.Dispose();

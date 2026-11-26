@@ -509,7 +509,7 @@ internal static class VanillaIntegritySelfCheckTests
     private static void VerifyRuntimeConfirmContinuationAdvancesAcrossProcessFrames()
     {
         var gameEntries = BuildBaseGameEntries();
-        var atlasBytes = new byte[448 * 1024];
+        var atlasBytes = new byte[14 * 1024 * 1024];
         var portraitBytes = new byte[256 * 1024];
         for (var i = 0; i < atlasBytes.Length; i++)
         {
@@ -537,13 +537,9 @@ internal static class VanillaIntegritySelfCheckTests
             [SelectPortraitCtexPath] = portraitBytes
         });
 
-        var tightBudget = new VanillaIntegrityBudget(
-            MaxConfirmFileBytes: 1024 * 1024,
-            MaxTotalConfirmBytes: 2 * 1024 * 1024,
-            PerFrameByteBudget: 200 * 1024,
-            ChunkBytes: 64 * 1024,
-            PerFrameTimeBudgetMs: 100.0);
-
+        // Default budget with every frame over its time slice: the 14 MiB atlas then needs more
+        // continuations than DeferredDispatch's 50-reentry warning threshold.
+        var tightBudget = VanillaIntegritySelfCheck.DefaultBudget;
         var deferredQueue = new Queue<Action>();
         var processFrameQueue = new Queue<Action>();
         var warnings = new List<string>();
@@ -571,7 +567,7 @@ internal static class VanillaIntegritySelfCheckTests
                     vfsReader,
                     tightBudget,
                     report => completedReport = report,
-                    elapsedMsProvider: () => 0.1);
+                    elapsedMsProvider: () => 3.0);
                 DeferredDispatch.CallDeferred("Test.FifoSibling", "ui#1", () => fifoEvents.Add($"fifo@f{frame}"));
 
                 // Simulate Godot draining CallDeferred to completion inside a SINGLE idle cycle
@@ -591,7 +587,7 @@ internal static class VanillaIntegritySelfCheckTests
                     $"首帧预算耗尽后应挂出 1 个一次性 ProcessFrame 续约，实际：{processFrameQueue.Count}。");
 
                 var guard = 0;
-                while (processFrameQueue.Count > 0 && guard++ < 20)
+                while (processFrameQueue.Count > 0 && guard++ < 100)
                 {
                     frame++;
                     var beforeBytes = vfsReader.TotalBytesRead;
@@ -613,11 +609,12 @@ internal static class VanillaIntegritySelfCheckTests
             Require(completedReport!.ConfirmedCount == 2 && completedReport.SuspectCount == 0,
                 $"两份候选资源应全部确认：confirmed={completedReport.ConfirmedCount}, suspect={completedReport.SuspectCount}。");
 
+            Require(warnings.Count == 0, $"合法的跨帧自检不应触发重入告警：frames={completedReport.MainThreadFrames}, warnings={string.Join(" | ", warnings)}");
             var stepRecords = DeferredDispatch.SnapshotRecords()
                 .Where(r => r.TaskName == "VanillaIntegritySelfCheck.Step" && r.Phase == "DONE")
                 .ToArray();
-            Require(stepRecords.Length >= 4,
-                $"704 KiB 候选在 200 KiB 帧预算下至少应拆成 4 步执行，实际：{stepRecords.Length}。");
+            Require(stepRecords.Length > 50,
+                $"14 MiB 候选在默认预算、每帧超时下应跨过 50 次重入告警门槛，实际步数：{stepRecords.Length}。");
             Require(completedReport.MainThreadFrames == stepRecords.Length + 1,
                 $"报告主线程帧数应与初始快照(1)+分帧步数({stepRecords.Length})一致，实际：{completedReport.MainThreadFrames}。");
             Require(stepRecords[0].ExecuteFrame == 10,
@@ -640,7 +637,7 @@ internal static class VanillaIntegritySelfCheckTests
                     vfsReader,
                     tightBudget,
                     _ => abortedReport = true,
-                    elapsedMsProvider: () => 0.1);
+                    elapsedMsProvider: () => 3.0);
                 while (deferredQueue.Count > 0)
                 {
                     deferredQueue.Dequeue()();
@@ -650,7 +647,7 @@ internal static class VanillaIntegritySelfCheckTests
             Require(!abortedReport && deferredQueue.Count == 0,
                 "主循环不可用导致 ProcessFrame 无法挂接时应安全释放并停止，不得回退同 idle 自排。");
 
-            // Structural guard: StepOnMainThread uses WrapCallback (not CallDeferred), and default scheduler uses OneShot ProcessFrame.
+            // Structural guard: StepOnMainThread records each continuation as a poll step (not WrapCallback / CallDeferred), and default scheduler uses OneShot ProcessFrame.
             var runnerType = typeof(VanillaIntegritySelfCheck).GetNestedType("RuntimeConfirmRunner", BindingFlags.NonPublic)
                              ?? throw new InvalidOperationException("找不到 RuntimeConfirmRunner。");
             var stepMethod = runnerType.GetMethod("StepOnMainThread", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
@@ -659,8 +656,9 @@ internal static class VanillaIntegritySelfCheckTests
                 .Select(i => i.operand)
                 .OfType<MethodInfo>()
                 .ToArray();
-            Require(stepCalls.Any(m => m.DeclaringType == typeof(DeferredDispatch) && m.Name == nameof(DeferredDispatch.WrapCallback)),
-                "RuntimeConfirmRunner.StepOnMainThread 必须经 DeferredDispatch.WrapCallback 保留任务记录。");
+            Require(stepCalls.Any(m => m.DeclaringType == typeof(DeferredDispatch) && m.Name == nameof(DeferredDispatch.CurrentFrame)) &&
+                    !stepCalls.Any(m => m.DeclaringType == typeof(DeferredDispatch) && m.Name == nameof(DeferredDispatch.WrapCallback)),
+                "RuntimeConfirmRunner.StepOnMainThread 跨帧续约必须按逐帧轮询记录（RunTrackedPoll + 实际入队帧），不能用 WrapCallback，否则合法的长自检会误报连续重入。");
             Require(!stepCalls.Any(m => m.DeclaringType == typeof(DeferredDispatch) && m.Name == nameof(DeferredDispatch.CallDeferred)),
                 "RuntimeConfirmRunner.StepOnMainThread 不得再通过 CallDeferred 自续。");
 
